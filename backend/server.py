@@ -31,6 +31,7 @@ from docx import Document
 import io
 import httpx
 import json
+import redis as redis_client_lib
 from urllib.parse import quote, urlparse
 from openai_helper import build_embedding_client, EmbeddingGenerationError
 
@@ -212,6 +213,11 @@ RETENTION_EMAIL_BATCH_SIZE = int(os.environ.get("RETENTION_EMAIL_BATCH_SIZE", "3
 RETENTION_EMAIL_MIN_DAYS_BETWEEN_SENDS = int(
     os.environ.get("RETENTION_EMAIL_MIN_DAYS_BETWEEN_SENDS", "5")
 )
+REDIS_WAKE_ON_ACTIVITY = os.environ.get("REDIS_WAKE_ON_ACTIVITY", "true").lower() == "true"
+REDIS_WAKE_INTERVAL_SECONDS = float(os.environ.get("REDIS_WAKE_INTERVAL_SECONDS", "30"))
+REDIS_WAKE_TIMEOUT_SECONDS = float(os.environ.get("REDIS_WAKE_TIMEOUT_SECONDS", "2"))
+_raw_redis_url = (os.environ.get("REDIS_BROKER_URL") or os.environ.get("REDIS_URL") or "").strip()
+REDIS_WAKE_URL = _raw_redis_url or "redis://localhost:6379/0"
 SIGNUP_OTP_TTL_MINUTES = int(os.environ.get("SIGNUP_OTP_TTL_MINUTES", "10"))
 SIGNUP_OTP_LENGTH = int(os.environ.get("SIGNUP_OTP_LENGTH", "6"))
 SIGNUP_OTP_MAX_ATTEMPTS = int(os.environ.get("SIGNUP_OTP_MAX_ATTEMPTS", "5"))
@@ -321,6 +327,8 @@ _LLM_ROUTER_LOCK = asyncio.Lock()
 _LLM_ROUTER_NEXT_INDEX = 0
 _NVIDIA_MODEL_ROUTER_LOCK = asyncio.Lock()
 _NVIDIA_MODEL_ROUTER_NEXT_INDEX = 0
+_REDIS_WAKE_LOCK = asyncio.Lock()
+_REDIS_WAKE_LAST_ATTEMPT_TS = 0.0
 
 security = HTTPBearer()
 embedding_client = build_embedding_client(
@@ -336,6 +344,35 @@ mpesa_service = MPesaService()
 
 app = FastAPI(title="Exam OS API")
 api_router = APIRouter(prefix="/api")
+
+
+def _redis_wake_ping_sync() -> None:
+    client = redis_client_lib.from_url(
+        REDIS_WAKE_URL,
+        socket_connect_timeout=max(0.2, REDIS_WAKE_TIMEOUT_SECONDS),
+        socket_timeout=max(0.2, REDIS_WAKE_TIMEOUT_SECONDS),
+        health_check_interval=0,
+    )
+    client.ping()
+
+
+async def maybe_wake_redis_on_activity(force: bool = False) -> None:
+    global _REDIS_WAKE_LAST_ATTEMPT_TS
+    if not REDIS_WAKE_ON_ACTIVITY:
+        return
+    now = time.time()
+    if not force and now - _REDIS_WAKE_LAST_ATTEMPT_TS < max(1.0, REDIS_WAKE_INTERVAL_SECONDS):
+        return
+    async with _REDIS_WAKE_LOCK:
+        now = time.time()
+        if not force and now - _REDIS_WAKE_LAST_ATTEMPT_TS < max(1.0, REDIS_WAKE_INTERVAL_SECONDS):
+            return
+        _REDIS_WAKE_LAST_ATTEMPT_TS = now
+        try:
+            await asyncio.to_thread(_redis_wake_ping_sync)
+            logger.info("redis_wake_ping_success url=%s", REDIS_WAKE_URL.split("@")[-1])
+        except Exception as exc:
+            logger.warning("redis_wake_ping_failed error=%s", exc)
 
 
 class UserRegister(BaseModel):
@@ -2761,6 +2798,7 @@ async def decode_token(token: str, expected_type: str, check_revoked: bool = Tru
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Dict[str, Any]:
     payload = await decode_token(credentials.credentials, "access")
+    await maybe_wake_redis_on_activity()
     user = await db.users.find_one({"id": payload["user_id"]}, {"_id": 0})
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
@@ -4140,18 +4178,33 @@ async def queue_generation_content(
 
         process_generation_job.delay(job_id)
     except Exception as exc:
-        logger.error("generation_job_enqueue_failed user_id=%s job_id=%s error=%s", current_user["id"], job_id, exc)
-        await db.generation_jobs.update_one(
-            {"job_id": job_id},
-            {
-                "$set": {
-                    "status": "failed",
-                    "error": f"Queue enqueue failed: {str(exc)}",
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
-                }
-            },
+        logger.warning(
+            "generation_job_enqueue_first_attempt_failed user_id=%s job_id=%s error=%s",
+            current_user["id"],
+            job_id,
+            exc,
         )
-        raise HTTPException(status_code=503, detail="Generation queue is unavailable")
+        await maybe_wake_redis_on_activity(force=True)
+        try:
+            process_generation_job.delay(job_id)
+        except Exception as retry_exc:
+            logger.error(
+                "generation_job_enqueue_failed user_id=%s job_id=%s error=%s",
+                current_user["id"],
+                job_id,
+                retry_exc,
+            )
+            await db.generation_jobs.update_one(
+                {"job_id": job_id},
+                {
+                    "$set": {
+                        "status": "failed",
+                        "error": f"Queue enqueue failed: {str(retry_exc)}",
+                        "completed_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                },
+            )
+            raise HTTPException(status_code=503, detail="Generation queue is unavailable")
 
     return GenerationJobEnqueueResponse(
         job_id=job_id,
