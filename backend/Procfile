@@ -1,0 +1,2 @@
+web: uvicorn server:app --host 0.0.0.0 --port ${PORT:-8000}
+worker: celery -A task_queue.celery_app worker --loglevel=info

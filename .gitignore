@@ -1,0 +1,14 @@
+# Secrets and local env
+backend/.env
+**/.env
+**/.env.*
+
+# Python cache/build artifacts
+__pycache__/
+*.py[cod]
+
+# Local uploads
+backend/uploads/
+
+# Android local build state
+frontend/android/.kotlin/

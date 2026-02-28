@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+motor
+pymongo
+pydantic[email]
+bcrypt
+PyJWT
+aiofiles
+pypdf
+cryptography>=3.1
+python-docx
+httpx
+python-multipart
+celery
+redis
+firebase-admin
