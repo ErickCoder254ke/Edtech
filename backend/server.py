@@ -226,6 +226,9 @@ SIGNUP_OTP_VERIFY_PER_MIN_LIMIT = int(os.environ.get("SIGNUP_OTP_VERIFY_PER_MIN_
 SIGNUP_OTP_PEPPER = os.environ.get("SIGNUP_OTP_PEPPER", JWT_SECRET)
 SIGNUP_EMAIL_AGENT_NAME = os.environ.get("SIGNUP_EMAIL_AGENT_NAME", "Erick")
 GENERATION_JOB_ESTIMATE_MINUTES = int(os.environ.get("GENERATION_JOB_ESTIMATE_MINUTES", "3"))
+GENERATION_JOB_QUEUE_TIMEOUT_SECONDS = int(
+    os.environ.get("GENERATION_JOB_QUEUE_TIMEOUT_SECONDS", "300")
+)
 CLASS_ESCROW_PLATFORM_FEE_PERCENT = float(os.environ.get("CLASS_ESCROW_PLATFORM_FEE_PERCENT", "10"))
 CLASS_MIN_FEE_KES = int(os.environ.get("CLASS_MIN_FEE_KES", "50"))
 CLASS_MAX_FEE_KES = int(os.environ.get("CLASS_MAX_FEE_KES", "20000"))
@@ -1596,6 +1599,41 @@ def build_job_status_response(job_doc: Dict[str, Any]) -> JobStatusResponse:
         result_reference=norm.get("result_reference"),
         error=norm.get("error"),
     )
+
+
+async def mark_stale_generation_jobs(user_id: Optional[str] = None) -> int:
+    timeout_seconds = max(30, GENERATION_JOB_QUEUE_TIMEOUT_SECONDS)
+    now = datetime.now(timezone.utc)
+    cutoff_iso = (now - timedelta(seconds=timeout_seconds)).isoformat()
+    query: Dict[str, Any] = {
+        "status": "queued",
+        "created_at": {"$lte": cutoff_iso},
+    }
+    if user_id:
+        query["user_id"] = user_id
+    result = await db.generation_jobs.update_many(
+        query,
+        {
+            "$set": {
+                "status": "failed",
+                "progress": 100,
+                "completed_at": now.isoformat(),
+                "error": (
+                    "Queue timeout: worker did not pick this job in time. "
+                    "Please retry generation."
+                ),
+            }
+        },
+    )
+    modified = int(getattr(result, "modified_count", 0))
+    if modified > 0:
+        logger.warning(
+            "generation_jobs_marked_stale_failed count=%s user_id=%s timeout_seconds=%s",
+            modified,
+            user_id or "*",
+            timeout_seconds,
+        )
+    return modified
 
 
 def normalize_meeting_link(raw_link: str) -> str:
@@ -4176,7 +4214,17 @@ async def queue_generation_content(
     try:
         from tasks.exam_generation import process_generation_job
 
-        process_generation_job.delay(job_id)
+        async_result = process_generation_job.delay(job_id)
+        await db.generation_jobs.update_one(
+            {"job_id": job_id},
+            {"$set": {"worker_task_id": async_result.id}},
+        )
+        logger.info(
+            "generation_job_enqueued user_id=%s job_id=%s worker_task_id=%s",
+            current_user["id"],
+            job_id,
+            async_result.id,
+        )
     except Exception as exc:
         logger.warning(
             "generation_job_enqueue_first_attempt_failed user_id=%s job_id=%s error=%s",
@@ -4186,7 +4234,17 @@ async def queue_generation_content(
         )
         await maybe_wake_redis_on_activity(force=True)
         try:
-            process_generation_job.delay(job_id)
+            async_result = process_generation_job.delay(job_id)
+            await db.generation_jobs.update_one(
+                {"job_id": job_id},
+                {"$set": {"worker_task_id": async_result.id}},
+            )
+            logger.info(
+                "generation_job_enqueued_retry_success user_id=%s job_id=%s worker_task_id=%s",
+                current_user["id"],
+                job_id,
+                async_result.id,
+            )
         except Exception as retry_exc:
             logger.error(
                 "generation_job_enqueue_failed user_id=%s job_id=%s error=%s",
@@ -4219,6 +4277,7 @@ async def get_generation_job_status(
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     await ensure_rate_limit(current_user["id"], "jobs_status_user", JOB_STATUS_PER_MIN_LIMIT)
+    await mark_stale_generation_jobs(user_id=current_user["id"])
     job_doc = await db.generation_jobs.find_one(
         {"job_id": job_id, "user_id": current_user["id"]},
         {"_id": 0},
@@ -4235,6 +4294,7 @@ async def list_generation_jobs(
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     await ensure_rate_limit(current_user["id"], "jobs_status_user", JOB_STATUS_PER_MIN_LIMIT)
+    await mark_stale_generation_jobs(user_id=current_user["id"])
     safe_limit = max(1, min(limit, 200))
     query: Dict[str, Any] = {"user_id": current_user["id"]}
     if status:
@@ -5654,6 +5714,7 @@ async def runtime_config():
         "signup_otp_length": SIGNUP_OTP_LENGTH,
         "signup_email_agent_name": SIGNUP_EMAIL_AGENT_NAME,
         "refresh_rotation_grace_seconds": REFRESH_ROTATION_GRACE_SECONDS,
+        "generation_job_queue_timeout_seconds": GENERATION_JOB_QUEUE_TIMEOUT_SECONDS,
     }
 
 @app.on_event("startup")
@@ -5724,6 +5785,8 @@ async def startup_checks():
         raise RuntimeError("RETENTION_EMAIL_BATCH_SIZE must be greater than zero")
     if RETENTION_EMAIL_MIN_DAYS_BETWEEN_SENDS < 0:
         raise RuntimeError("RETENTION_EMAIL_MIN_DAYS_BETWEEN_SENDS cannot be negative")
+    if GENERATION_JOB_QUEUE_TIMEOUT_SECONDS < 30:
+        raise RuntimeError("GENERATION_JOB_QUEUE_TIMEOUT_SECONDS must be at least 30")
     if RETENTION_INSIGHTS_ENABLED and not BREVO_API_KEY2:
         raise RuntimeError("RETENTION_INSIGHTS_ENABLED=true requires BREVO_API_KEY2")
     logger.info("Using MPesa service implementation from backend/mpesa_service.py")
