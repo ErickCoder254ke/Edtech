@@ -13,3 +13,8 @@ backend/uploads/
 # Android local build state
 frontend/android/.kotlin/
 frontend/android/app/google-services.json
+build/
+.gradle/
+.flutter/
+android/app/build/
+*.apk

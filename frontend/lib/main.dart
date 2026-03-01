@@ -35,8 +35,6 @@ class _ExamOsAppState extends State<ExamOsApp> {
   late final PushNotificationService _pushNotificationService;
   Session? _session;
   bool _onboardingCompleted = false;
-  bool _backendReachable = true;
-  String? _backendError;
   bool _booting = true;
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   AppLinks? _appLinks;
@@ -93,11 +91,7 @@ class _ExamOsAppState extends State<ExamOsApp> {
 
   Future<void> _restoreSession() async {
     try {
-      final results = await Future.wait<dynamic>([
-        SharedPreferences.getInstance(),
-        _apiClient.healthCheck().timeout(const Duration(seconds: 6)),
-      ], eagerError: false);
-      final prefs = results[0] as SharedPreferences;
+      final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(_sessionKey);
       _onboardingCompleted = prefs.getBool(_onboardingKey) ?? false;
       if (raw != null && raw.isNotEmpty) {
@@ -105,14 +99,6 @@ class _ExamOsAppState extends State<ExamOsApp> {
         _session = Session.fromJson(decoded);
         _registerPushToken(_session!);
       }
-      _backendReachable = true;
-      _backendError = null;
-    } on TimeoutException {
-      _backendReachable = false;
-      _backendError = 'Service is temporarily unavailable. Please try again.';
-    } on ApiException {
-      _backendReachable = false;
-      _backendError = 'Service is temporarily unavailable. Please try again.';
     } catch (_) {}
     if (mounted) {
       setState(() => _booting = false);
@@ -135,11 +121,6 @@ class _ExamOsAppState extends State<ExamOsApp> {
     if (mounted) {
       setState(() => _onboardingCompleted = true);
     }
-  }
-
-  Future<void> _retryBackendCheck() async {
-    setState(() => _booting = true);
-    await _restoreSession();
   }
 
   Future<void> _registerPushToken(Session session) async {
@@ -180,7 +161,7 @@ class _ExamOsAppState extends State<ExamOsApp> {
   }
 
   void _openResetScreenIfReady() {
-    if (_booting || !_backendReachable) return;
+    if (_booting) return;
     final token = _pendingResetToken;
     if (token == null || token.isEmpty) return;
     final navigator = _navigatorKey.currentState;
@@ -208,11 +189,6 @@ class _ExamOsAppState extends State<ExamOsApp> {
       themeMode: ThemeMode.dark,
       home: _booting
           ? const _BootScreen()
-          : !_backendReachable
-          ? _BackendUnavailableScreen(
-              message: _backendError ?? 'Backend unavailable.',
-              onRetry: _retryBackendCheck,
-            )
           : !_onboardingCompleted
           ? OnboardingScreen(onComplete: _completeOnboarding)
           : _session == null
@@ -318,49 +294,6 @@ class _BootAnimationState extends State<_BootAnimation>
             ),
           );
         },
-      ),
-    );
-  }
-}
-
-class _BackendUnavailableScreen extends StatelessWidget {
-  const _BackendUnavailableScreen({
-    required this.message,
-    required this.onRetry,
-  });
-
-  final String message;
-  final Future<void> Function() onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.cloud_off_rounded, size: 48),
-              const SizedBox(height: 14),
-              const Text(
-                'Cannot Reach Backend',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                message,
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 18),
-              ElevatedButton.icon(
-                onPressed: onRetry,
-                icon: const Icon(Icons.refresh_rounded),
-                label: const Text('Retry'),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }

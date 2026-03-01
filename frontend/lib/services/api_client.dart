@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
@@ -1417,6 +1418,10 @@ class ApiClient {
   }) async {
     try {
       return await request();
+    } on SocketException {
+      throw ApiException(
+        networkMessage ?? 'No internet connection. Check your network and try again.',
+      );
     } on TimeoutException {
       throw ApiException(
         timeoutMessage ??
@@ -1434,6 +1439,8 @@ class ApiClient {
   ) async {
     try {
       return await request();
+    } on SocketException {
+      throw ApiException('No internet connection. Check your network and try again.');
     } on TimeoutException {
       throw ApiException(
         'Upload timed out. Please retry on a stronger connection.',

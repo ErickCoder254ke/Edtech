@@ -7182,7 +7182,26 @@ async def startup_checks():
     await db.runtime_settings.create_index("id", unique=True)
     await db.documents.create_index("user_id")
     await db.documents.create_index([("user_id", 1), ("uploaded_at", -1)])
-    await db.documents.create_index([("user_id", 1), ("source_note_id", 1)], unique=True, sparse=True)
+    try:
+        existing_doc_indexes = await db.documents.list_indexes().to_list(200)
+        legacy_source_index_exists = any(
+            str(idx.get("name", "")) == "user_id_1_source_note_id_1"
+            for idx in existing_doc_indexes
+        )
+        if legacy_source_index_exists:
+            await db.documents.drop_index("user_id_1_source_note_id_1")
+            logger.info("documents_legacy_source_note_index_dropped name=user_id_1_source_note_id_1")
+    except Exception as exc:
+        logger.warning("documents_legacy_source_note_index_drop_failed error=%s", exc)
+    try:
+        await db.documents.create_index(
+            [("user_id", 1), ("source_note_id", 1)],
+            unique=True,
+            partialFilterExpression={"source_note_id": {"$type": "string", "$ne": ""}},
+            name="uniq_user_source_note_non_empty",
+        )
+    except DuplicateKeyError as exc:
+        logger.warning("documents_source_note_unique_index_skipped reason=duplicate_data error=%s", exc)
     await db.document_chunks.create_index("document_id")
     await db.document_chunks.create_index("user_id")
     await db.generations.create_index("user_id")
