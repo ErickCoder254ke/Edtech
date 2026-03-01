@@ -123,9 +123,24 @@ class _AdminTeacherVerificationScreenState extends State<AdminTeacherVerificatio
   Future<void> _openLink(String? link) async {
     final raw = (link ?? '').trim();
     if (raw.isEmpty) return;
-    final uri = Uri.tryParse(raw);
+    final uri = _buildPreviewUri(raw);
     if (uri == null) return;
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
+    final opened = await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
+    if (!opened) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  Uri? _buildPreviewUri(String rawUrl) {
+    final parsed = Uri.tryParse(rawUrl);
+    if (parsed == null) return null;
+    final looksPdf =
+        parsed.path.toLowerCase().endsWith('.pdf') ||
+        rawUrl.toLowerCase().contains('.pdf?');
+    if (!looksPdf) return parsed;
+    return Uri.parse(
+      'https://docs.google.com/gview?embedded=1&url=${Uri.encodeComponent(rawUrl)}',
+    );
   }
 
   bool _isImageUrl(String? link) {
@@ -133,7 +148,11 @@ class _AdminTeacherVerificationScreenState extends State<AdminTeacherVerificatio
     return raw.endsWith('.png') ||
         raw.endsWith('.jpg') ||
         raw.endsWith('.jpeg') ||
-        raw.endsWith('.webp');
+        raw.endsWith('.webp') ||
+        raw.contains('.png?') ||
+        raw.contains('.jpg?') ||
+        raw.contains('.jpeg?') ||
+        raw.contains('.webp?');
   }
 
   Future<void> _previewDocument(String? link, String title) async {

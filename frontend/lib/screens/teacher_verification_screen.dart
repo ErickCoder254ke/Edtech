@@ -150,9 +150,24 @@ class _TeacherVerificationScreenState extends State<TeacherVerificationScreen> {
   Future<void> _openLink(String? link) async {
     final raw = (link ?? '').trim();
     if (raw.isEmpty) return;
-    final uri = Uri.tryParse(raw);
+    final uri = _buildPreviewUri(raw);
     if (uri == null) return;
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
+    final opened = await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
+    if (!opened) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  Uri? _buildPreviewUri(String rawUrl) {
+    final parsed = Uri.tryParse(rawUrl);
+    if (parsed == null) return null;
+    final looksPdf =
+        parsed.path.toLowerCase().endsWith('.pdf') ||
+        rawUrl.toLowerCase().contains('.pdf?');
+    if (!looksPdf) return parsed;
+    return Uri.parse(
+      'https://docs.google.com/gview?embedded=1&url=${Uri.encodeComponent(rawUrl)}',
+    );
   }
 
   @override

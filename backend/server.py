@@ -1774,7 +1774,11 @@ async def upload_teacher_verification_file(
     public_id = f"{document_type}_{uuid.uuid4().hex[:12]}"
     signature_payload = f"folder={folder}&public_id={public_id}&timestamp={timestamp}{CLOUDINARY_API_SECRET}"
     signature = hashlib.sha1(signature_payload.encode("utf-8")).hexdigest()
-    url = f"https://api.cloudinary.com/v1_1/{CLOUDINARY_CLOUD_NAME}/auto/upload"
+    filename = (file.filename or "").strip().lower()
+    content_type = (file.content_type or "").strip().lower()
+    is_pdf = filename.endswith(".pdf") or content_type == "application/pdf"
+    resource_type = "raw" if is_pdf else "auto"
+    url = f"https://api.cloudinary.com/v1_1/{CLOUDINARY_CLOUD_NAME}/{resource_type}/upload"
     data = {
         "api_key": CLOUDINARY_API_KEY,
         "timestamp": str(timestamp),
