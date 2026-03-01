@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReturnDocument
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import DuplicateKeyError, OperationFailure
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict, EmailStr, ValidationError
 from typing import List, Optional, Dict, Any, Tuple
@@ -248,6 +248,8 @@ ALERT_QUEUED_JOB_MAX_AGE_MINUTES = int(os.environ.get("ALERT_QUEUED_JOB_MAX_AGE_
 ALERT_PAYMENT_CALLBACK_FAILURES_24H = int(os.environ.get("ALERT_PAYMENT_CALLBACK_FAILURES_24H", "8"))
 ALERT_EMAIL_FAILURE_RATE_THRESHOLD = float(os.environ.get("ALERT_EMAIL_FAILURE_RATE_THRESHOLD", "0.15"))
 ALERT_PUSH_FAILURE_RATE_THRESHOLD = float(os.environ.get("ALERT_PUSH_FAILURE_RATE_THRESHOLD", "0.20"))
+ADMIN_DB_RESET_ENABLED = os.environ.get("ADMIN_DB_RESET_ENABLED", "false").strip().lower() == "true"
+ADMIN_DB_RESET_TOKEN = os.environ.get("ADMIN_DB_RESET_TOKEN", "").strip()
 RUNTIME_SETTINGS_DOC_ID = "runtime_settings"
 
 
@@ -710,6 +712,12 @@ class CbcNoteCategoriesResponse(BaseModel):
 class AdminAlertAcknowledgeRequest(BaseModel):
     alert_key: str
     note: Optional[str] = None
+
+
+class AdminDatabaseResetRequest(BaseModel):
+    confirm_phrase: str
+    confirm_token: Optional[str] = None
+    dry_run: bool = False
 
 
 class TopicCreateRequest(BaseModel):
@@ -6176,6 +6184,60 @@ async def admin_get_retention_campaign(
     return retention_campaign_response_model(doc)
 
 
+@api_router.post("/v1/admin/database/clear")
+async def admin_clear_database(
+    payload: AdminDatabaseResetRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    ensure_admin_user(current_user)
+    await ensure_rate_limit(current_user["id"], "admin_withdraw_user", ADMIN_WITHDRAW_PER_MIN_LIMIT)
+
+    if not ADMIN_DB_RESET_ENABLED:
+        raise HTTPException(status_code=403, detail="Database reset endpoint is disabled")
+    if (payload.confirm_phrase or "").strip().upper() != "CLEAR_DATABASE":
+        raise HTTPException(status_code=400, detail='confirm_phrase must be exactly "CLEAR_DATABASE"')
+    if ADMIN_DB_RESET_TOKEN and (payload.confirm_token or "").strip() != ADMIN_DB_RESET_TOKEN:
+        raise HTTPException(status_code=403, detail="Invalid reset token")
+
+    collection_names = [
+        name
+        for name in await db.list_collection_names()
+        if not name.startswith("system.")
+    ]
+    summary: List[Dict[str, Any]] = []
+    total_documents = 0
+
+    for name in collection_names:
+        coll = db[name]
+        count = int(await coll.count_documents({}))
+        total_documents += count
+        if payload.dry_run:
+            summary.append({"collection": name, "documents": count, "deleted": 0})
+            continue
+        result = await coll.delete_many({})
+        summary.append(
+            {
+                "collection": name,
+                "documents": count,
+                "deleted": int(result.deleted_count),
+            }
+        )
+
+    logger.warning(
+        "admin_database_clear requested_by=%s dry_run=%s collections=%s total_documents=%s",
+        current_user["id"],
+        payload.dry_run,
+        len(summary),
+        total_documents,
+    )
+    return {
+        "success": True,
+        "dry_run": bool(payload.dry_run),
+        "collections": summary,
+        "total_documents": total_documents,
+    }
+
+
 @api_router.post("/v1/classes/{class_id}/reviews", response_model=ClassReviewResponse)
 async def create_class_review(
     class_id: str,
@@ -7194,14 +7256,23 @@ async def startup_checks():
     except Exception as exc:
         logger.warning("documents_legacy_source_note_index_drop_failed error=%s", exc)
     try:
+        # Normalize old nullable/empty values so unique partial index can build safely.
+        await db.documents.update_many({"source_note_id": None}, {"$unset": {"source_note_id": ""}})
+        await db.documents.update_many({"source_note_id": ""}, {"$unset": {"source_note_id": ""}})
+    except Exception as exc:
+        logger.warning("documents_source_note_cleanup_failed error=%s", exc)
+    try:
         await db.documents.create_index(
             [("user_id", 1), ("source_note_id", 1)],
             unique=True,
-            partialFilterExpression={"source_note_id": {"$type": "string", "$ne": ""}},
+            partialFilterExpression={"source_note_id": {"$type": "string"}},
             name="uniq_user_source_note_non_empty",
         )
     except DuplicateKeyError as exc:
         logger.warning("documents_source_note_unique_index_skipped reason=duplicate_data error=%s", exc)
+    except OperationFailure as exc:
+        logger.warning("documents_source_note_unique_index_unsupported error=%s", exc)
+        await db.documents.create_index([("user_id", 1), ("source_note_id", 1)], sparse=True)
     await db.document_chunks.create_index("document_id")
     await db.document_chunks.create_index("user_id")
     await db.generations.create_index("user_id")
