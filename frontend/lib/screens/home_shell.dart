@@ -14,6 +14,7 @@ import 'exam_configurator_screen.dart';
 import 'jobs_screen.dart';
 import 'library_screen.dart';
 import 'notifications_screen.dart';
+import 'notes_catalog_screen.dart';
 import 'profile_screen.dart';
 import 'private_tutors_screen.dart';
 import 'subscriptions_screen.dart';
@@ -139,6 +140,19 @@ class _HomeShellState extends State<HomeShell> {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => PrivateTutorsScreen(
+          apiClient: widget.apiClient,
+          session: widget.session,
+          onSessionUpdated: widget.onSessionUpdated,
+          onSessionInvalid: widget.onLogout,
+        ),
+      ),
+    );
+  }
+
+  void _openNotesCatalogPage() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => NotesCatalogScreen(
           apiClient: widget.apiClient,
           session: widget.session,
           onSessionUpdated: widget.onSessionUpdated,
@@ -469,6 +483,15 @@ class _HomeShellState extends State<HomeShell> {
                     onTap: () {
                       Navigator.of(context).pop();
                       _openPrivateTutorsPage();
+                    },
+                  ),
+                  _MenuNavTile(
+                    icon: Icons.menu_book_outlined,
+                    title: 'CBC Notes',
+                    subtitle: 'Pick category and generate from uploaded notes',
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      _openNotesCatalogPage();
                     },
                   ),
                   _MenuNavTile(

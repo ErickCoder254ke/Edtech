@@ -169,6 +169,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     final firebase = (_integrationStatus['firebase'] as Map<String, dynamic>?) ?? const {};
     final brevo = (_integrationStatus['brevo'] as Map<String, dynamic>?) ?? const {};
     final queue = (_integrationStatus['queue'] as Map<String, dynamic>?) ?? const {};
+    final payments = (_integrationStatus['payments'] as Map<String, dynamic>?) ?? const {};
 
     final alerts = <_SystemAlert>[];
 
@@ -205,6 +206,22 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       );
     }
 
+    final queuedStale = (queue['queued_stale_count'] as num?)?.toInt() ?? 0;
+    final queuedAgeThreshold = (queue['queued_alert_age_minutes'] as num?)?.toInt() ?? 10;
+    final oldestQueuedAge = (queue['oldest_queued_age_minutes'] as num?)?.toInt();
+    if (queuedStale > 0) {
+      alerts.add(
+        _SystemAlert(
+          key: 'generation_jobs_stuck_queued',
+          level: queuedStale >= 5 ? _AlertLevel.critical : _AlertLevel.warning,
+          title: 'Generation jobs stuck in queue',
+          detail:
+              '$queuedStale jobs older than $queuedAgeThreshold min. '
+              '${oldestQueuedAge != null ? 'Oldest: $oldestQueuedAge min.' : ''}',
+        ),
+      );
+    }
+
     if (firebase['enabled'] == true && firebase['ready'] != true) {
       alerts.add(
         const _SystemAlert(
@@ -217,6 +234,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     }
 
     final emailsFailed = (brevo['emails_failed_24h'] as num?)?.toInt() ?? 0;
+    final emailFailureRate = (brevo['email_failure_rate_24h'] as num?)?.toDouble() ?? 0;
+    final emailFailureRateThreshold =
+        (brevo['email_failure_rate_threshold'] as num?)?.toDouble() ?? 0.15;
     if (emailsFailed > 20) {
       alerts.add(
         _SystemAlert(
@@ -224,6 +244,50 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           level: _AlertLevel.warning,
           title: 'High email failures',
           detail: '$emailsFailed Brevo email sends failed in the last 24h.',
+        ),
+      );
+    }
+    if (emailFailureRate >= emailFailureRateThreshold) {
+      alerts.add(
+        _SystemAlert(
+          key: 'brevo_failure_rate_high',
+          level: _AlertLevel.warning,
+          title: 'Email failure rate elevated',
+          detail:
+              'Failure rate ${(emailFailureRate * 100).toStringAsFixed(1)}% '
+              '(threshold ${(emailFailureRateThreshold * 100).toStringAsFixed(1)}%).',
+        ),
+      );
+    }
+
+    final pushFailureRate = (queue['push_failure_rate_24h'] as num?)?.toDouble() ?? 0;
+    final pushFailureRateThreshold =
+        (queue['push_failure_rate_threshold'] as num?)?.toDouble() ?? 0.2;
+    if (pushFailureRate >= pushFailureRateThreshold) {
+      alerts.add(
+        _SystemAlert(
+          key: 'push_failure_rate_high',
+          level: _AlertLevel.warning,
+          title: 'Push delivery failures elevated',
+          detail:
+              'Failure rate ${(pushFailureRate * 100).toStringAsFixed(1)}% '
+              '(threshold ${(pushFailureRateThreshold * 100).toStringAsFixed(1)}%).',
+        ),
+      );
+    }
+
+    final callbackFailed24h = (payments['callbacks_failed_24h'] as num?)?.toInt() ?? 0;
+    final callbackThreshold =
+        (payments['callback_failure_alert_threshold_24h'] as num?)?.toInt() ?? 8;
+    if (callbackFailed24h >= callbackThreshold) {
+      alerts.add(
+        _SystemAlert(
+          key: 'payment_callback_failures_high',
+          level: _AlertLevel.critical,
+          title: 'Payment callback failures high',
+          detail:
+              '$callbackFailed24h failed callbacks in 24h '
+              '(threshold $callbackThreshold). Check callback URL and M-Pesa logs.',
         ),
       );
     }

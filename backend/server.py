@@ -243,6 +243,11 @@ CLASS_ESCROW_PLATFORM_FEE_PERCENT = float(os.environ.get("CLASS_ESCROW_PLATFORM_
 CLASS_MIN_FEE_KES = int(os.environ.get("CLASS_MIN_FEE_KES", "50"))
 CLASS_MAX_FEE_KES = int(os.environ.get("CLASS_MAX_FEE_KES", "20000"))
 PLATFORM_WITHDRAWAL_MIN_KES = int(os.environ.get("PLATFORM_WITHDRAWAL_MIN_KES", "100"))
+CLASS_JOIN_PAYMENT_LOCK_SECONDS = int(os.environ.get("CLASS_JOIN_PAYMENT_LOCK_SECONDS", "20"))
+ALERT_QUEUED_JOB_MAX_AGE_MINUTES = int(os.environ.get("ALERT_QUEUED_JOB_MAX_AGE_MINUTES", "10"))
+ALERT_PAYMENT_CALLBACK_FAILURES_24H = int(os.environ.get("ALERT_PAYMENT_CALLBACK_FAILURES_24H", "8"))
+ALERT_EMAIL_FAILURE_RATE_THRESHOLD = float(os.environ.get("ALERT_EMAIL_FAILURE_RATE_THRESHOLD", "0.15"))
+ALERT_PUSH_FAILURE_RATE_THRESHOLD = float(os.environ.get("ALERT_PUSH_FAILURE_RATE_THRESHOLD", "0.20"))
 RUNTIME_SETTINGS_DOC_ID = "runtime_settings"
 
 
@@ -509,7 +514,8 @@ class DocumentChunk(BaseModel):
 
 
 class GenerationRequest(BaseModel):
-    document_ids: List[str]
+    document_ids: List[str] = Field(default_factory=list)
+    cbc_note_ids: List[str] = Field(default_factory=list)
     generation_type: str
     topic: Optional[str] = None
     difficulty: str = "medium"
@@ -683,6 +689,22 @@ class TeacherVerificationAuditEntryResponse(BaseModel):
     action: str
     comment: Optional[str] = None
     at: datetime
+
+
+class CbcNoteResponse(BaseModel):
+    id: str
+    title: str
+    description: Optional[str] = None
+    grade: int
+    subject: str
+    cloudinary_url: str
+    file_size: int
+    updated_at: datetime
+
+
+class CbcNoteCategoriesResponse(BaseModel):
+    grades: List[int]
+    subjects_by_grade: Dict[str, List[str]]
 
 
 class AdminAlertAcknowledgeRequest(BaseModel):
@@ -1461,12 +1483,94 @@ async def retrieve_relevant_chunks(
 
         if not chunks:
             raise HTTPException(status_code=404, detail="No relevant chunks found for selected documents")
-
         chunks.sort(key=lambda c: c.get("score", 0), reverse=True)
         return chunks[:top_k]
     except Exception as e:
         logger.error("Vector search failed: %s", e)
         raise HTTPException(status_code=500, detail="Vector search failed; check Atlas index configuration")
+
+
+def _tokenize_query_for_rank(text: str) -> List[str]:
+    tokens = re.findall(r"[a-z0-9]{3,}", (text or "").lower())
+    return [t for t in tokens if t not in {"exam", "quiz", "notes", "grade", "topic", "the", "and"}]
+
+
+async def ensure_cbc_note_chunks(note_doc: Dict[str, Any]) -> None:
+    note_id = str(note_doc.get("id") or "").strip()
+    if not note_id:
+        return
+    existing_count = await db.cbc_note_chunks.count_documents({"note_id": note_id}, limit=1)
+    if existing_count > 0:
+        return
+
+    note_url = str(note_doc.get("cloudinary_url") or "").strip()
+    if not note_url:
+        raise HTTPException(status_code=502, detail="Selected shared note has no file URL")
+
+    try:
+        async with httpx.AsyncClient(timeout=90) as client_http:
+            response = await client_http.get(note_url)
+            response.raise_for_status()
+            file_content = response.content
+    except Exception as exc:
+        logger.error("cbc_note_chunk_prep_download_failed note_id=%s error=%s", note_id, exc)
+        raise HTTPException(status_code=502, detail="Unable to prepare shared note for generation")
+
+    text = extract_text_from_pdf(file_content)
+    chunks = chunk_text(text)
+    if not chunks:
+        raise HTTPException(status_code=400, detail="Shared note has no extractable text")
+
+    now = datetime.now(timezone.utc).isoformat()
+    docs = []
+    for idx, chunk in enumerate(chunks):
+        docs.append(
+            {
+                "id": str(uuid.uuid4()),
+                "note_id": note_id,
+                "chunk_index": idx,
+                "text": chunk,
+                "created_at": now,
+            }
+        )
+    if docs:
+        await db.cbc_note_chunks.insert_many(docs, ordered=False)
+
+
+async def retrieve_relevant_shared_note_chunks(
+    note_ids: List[str],
+    query: str,
+    top_k: int = 10,
+) -> List[Dict[str, Any]]:
+    if not note_ids:
+        return []
+    raw_chunks = await db.cbc_note_chunks.find(
+        {"note_id": {"$in": note_ids}},
+        {"_id": 0, "note_id": 1, "chunk_index": 1, "text": 1},
+    ).to_list(max(200, top_k * 30))
+    if not raw_chunks:
+        return []
+    query_tokens = _tokenize_query_for_rank(query)
+    scored: List[Dict[str, Any]] = []
+    for item in raw_chunks:
+        text = str(item.get("text") or "")
+        lowered = text.lower()
+        score = 0.0
+        for token in query_tokens:
+            if token in lowered:
+                score += 1.0
+        if query_tokens:
+            score = score / max(len(query_tokens), 1)
+        scored.append(
+            {
+                "text": text,
+                "document_id": f"note:{item.get('note_id')}",
+                "chunk_index": int(item.get("chunk_index") or 0),
+                "score": score,
+            }
+        )
+    scored.sort(key=lambda c: c.get("score", 0), reverse=True)
+    return scored[:top_k]
 
 
 def normalize_datetime_fields(doc: Dict[str, Any], fields: List[str]) -> Dict[str, Any]:
@@ -3782,6 +3886,11 @@ async def mpesa_callback(payload: Dict[str, Any], background_tasks: BackgroundTa
         "merchant_request_id": merchant_request_id,
         "callback_payload": callback,
     }
+    callback_logged_type = "unknown"
+    callback_logged_status = "accepted"
+    callback_logged_user_id: Optional[str] = None
+    callback_logged_class_id: Optional[str] = None
+    callback_logged_payment_id: Optional[str] = None
 
     receipt = None
     paid_phone = None
@@ -3809,9 +3918,31 @@ async def mpesa_callback(payload: Dict[str, Any], background_tasks: BackgroundTa
             {"_id": 0},
         )
     if not subscription_payment and not class_payment:
+        try:
+            await db.mpesa_callback_logs.insert_one(
+                {
+                    "id": str(uuid.uuid4()),
+                    "checkout_request_id": checkout_request_id,
+                    "merchant_request_id": merchant_request_id,
+                    "payment_type": callback_logged_type,
+                    "status": callback_logged_status,
+                    "result_code": result_code,
+                    "result_desc": str(result_desc),
+                    "user_id": None,
+                    "class_id": None,
+                    "payment_id": None,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+        except Exception as exc:
+            logger.warning("mpesa_callback_log_failed checkout_request_id=%s error=%s", checkout_request_id, exc)
         return {"ResultCode": 0, "ResultDesc": "Accepted"}
 
     if subscription_payment and result_code == "0":
+        callback_logged_type = "subscription"
+        callback_logged_status = "paid"
+        callback_logged_user_id = subscription_payment.get("user_id")
+        callback_logged_payment_id = subscription_payment.get("id")
         was_already_paid = str(subscription_payment.get("status", "")).lower() == "paid"
         updates.update(
             {
@@ -3905,14 +4036,23 @@ async def mpesa_callback(payload: Dict[str, Any], background_tasks: BackgroundTa
             {"$set": updates},
         )
     elif subscription_payment:
+        callback_logged_type = "subscription"
+        callback_logged_status = "failed"
+        callback_logged_user_id = subscription_payment.get("user_id")
+        callback_logged_payment_id = subscription_payment.get("id")
         updates["status"] = "failed"
         await db.subscription_payments.update_one(
             {"checkout_request_id": checkout_request_id},
             {"$set": updates},
         )
     elif class_payment:
+        callback_logged_type = "class_join"
+        callback_logged_user_id = class_payment.get("student_id")
+        callback_logged_class_id = class_payment.get("class_id")
+        callback_logged_payment_id = class_payment.get("id")
         class_updates = dict(updates)
         if result_code == "0":
+            callback_logged_status = "paid"
             was_already_paid = str(class_payment.get("status", "")).lower() == "paid"
             class_updates.update(
                 {
@@ -3974,11 +4114,30 @@ async def mpesa_callback(payload: Dict[str, Any], background_tasks: BackgroundTa
                     upsert=True,
                 )
         else:
+            callback_logged_status = "failed"
             class_updates["status"] = "failed"
             await db.class_payments.update_one(
                 {"checkout_request_id": checkout_request_id},
                 {"$set": class_updates},
             )
+    try:
+        await db.mpesa_callback_logs.insert_one(
+            {
+                "id": str(uuid.uuid4()),
+                "checkout_request_id": checkout_request_id,
+                "merchant_request_id": merchant_request_id,
+                "payment_type": callback_logged_type,
+                "status": callback_logged_status,
+                "result_code": result_code,
+                "result_desc": str(result_desc),
+                "user_id": callback_logged_user_id,
+                "class_id": callback_logged_class_id,
+                "payment_id": callback_logged_payment_id,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+    except Exception as exc:
+        logger.warning("mpesa_callback_log_failed checkout_request_id=%s error=%s", checkout_request_id, exc)
     return {"ResultCode": 0, "ResultDesc": "Accepted"}
 
 
@@ -4122,6 +4281,114 @@ async def delete_account(
     }
 
 
+def build_cbc_note_response(note_doc: Dict[str, Any]) -> CbcNoteResponse:
+    norm = normalize_datetime_fields(note_doc, ["updated_at"])
+    return CbcNoteResponse(
+        id=str(norm.get("id") or ""),
+        title=str(norm.get("title") or "CBC Note"),
+        description=norm.get("description"),
+        grade=int(norm.get("grade") or 0),
+        subject=str(norm.get("subject") or "General"),
+        cloudinary_url=str(norm.get("cloudinary_url") or ""),
+        file_size=int(norm.get("bytes") or norm.get("file_size") or 0),
+        updated_at=norm.get("updated_at") or datetime.now(timezone.utc),
+    )
+
+
+async def ingest_cbc_note_as_document(
+    *,
+    note_doc: Dict[str, Any],
+    current_user: Dict[str, Any],
+) -> DocumentMetadata:
+    existing = await db.documents.find_one(
+        {"user_id": current_user["id"], "source_note_id": str(note_doc.get("id") or "")},
+        {"_id": 0},
+    )
+    if existing:
+        return DocumentMetadata(**normalize_datetime_fields(existing, ["uploaded_at"]))
+
+    entitlement = await get_generation_entitlement(current_user["id"])
+    if entitlement["is_free"] and entitlement["document_used"] >= FREE_PLAN_MAX_DOCUMENTS:
+        raise HTTPException(
+            status_code=402,
+            detail=(
+                f"Free plan allows only {FREE_PLAN_MAX_DOCUMENTS} document upload. "
+                "Subscribe to upload more documents."
+            ),
+        )
+
+    note_url = str(note_doc.get("cloudinary_url") or "").strip()
+    if not note_url:
+        raise HTTPException(status_code=502, detail="Selected note is missing file URL")
+
+    try:
+        async with httpx.AsyncClient(timeout=90) as client_http:
+            response = await client_http.get(note_url)
+            response.raise_for_status()
+            file_content = response.content
+            content_type = response.headers.get("content-type", "")
+    except Exception as exc:
+        logger.error(
+            "cbc_note_download_failed user_id=%s note_id=%s error=%s",
+            current_user["id"],
+            note_doc.get("id"),
+            exc,
+        )
+        raise HTTPException(status_code=502, detail="Failed to download selected note")
+
+    if not file_content:
+        raise HTTPException(status_code=400, detail="Selected note file is empty")
+    if len(file_content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"Note exceeds max size of {MAX_UPLOAD_BYTES} bytes")
+
+    fallback_name = re.sub(r"[^a-zA-Z0-9]+", "_", str(note_doc.get("title") or "cbc_note")).strip("_").lower()
+    filename = str(note_doc.get("filename") or f"{fallback_name or 'cbc_note'}.pdf")
+    detect_mime(file_content, "pdf", content_type or "application/pdf")
+    text = extract_text_from_pdf(file_content)
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="No text content found in selected note")
+
+    doc_id = str(uuid.uuid4())
+    safe_filename = Path(filename).name
+    file_path = UPLOAD_DIR / f"{doc_id}_{safe_filename}"
+    async with aiofiles.open(file_path, "wb") as f:
+        await f.write(file_content)
+
+    chunks = chunk_text(text)
+    if not chunks:
+        raise HTTPException(status_code=400, detail="Selected note could not be chunked")
+
+    doc_metadata = DocumentMetadata(
+        id=doc_id,
+        user_id=current_user["id"],
+        filename=safe_filename,
+        file_type="pdf",
+        file_path=str(file_path),
+        file_size=len(file_content),
+        total_chunks=len(chunks),
+        keywords=extract_keywords(text),
+    )
+    doc_dict = doc_metadata.model_dump()
+    doc_dict["uploaded_at"] = doc_dict["uploaded_at"].isoformat()
+    doc_dict["source_note_id"] = str(note_doc.get("id") or "")
+    doc_dict["source_note_url"] = note_url
+    doc_dict["source_note_title"] = str(note_doc.get("title") or "")
+    doc_dict["source_note_grade"] = int(note_doc.get("grade") or 0)
+    doc_dict["source_note_subject"] = str(note_doc.get("subject") or "")
+    await db.documents.insert_one(doc_dict)
+    try:
+        await embed_chunks_parallel(doc_id, current_user["id"], chunks)
+    except HTTPException as exc:
+        await db.documents.delete_one({"id": doc_id})
+        await db.document_chunks.delete_many({"document_id": doc_id})
+        if file_path.exists():
+            file_path.unlink()
+        raise exc
+
+    await increment_usage_counter(current_user["id"], "documents_uploaded_total", 1)
+    return doc_metadata
+
+
 @api_router.post("/documents/upload", response_model=DocumentMetadata)
 async def upload_document(
     request: Request,
@@ -4215,6 +4482,89 @@ async def list_documents(
     safe_limit = max(1, min(limit, 200))
     docs = await db.documents.find({"user_id": current_user["id"]}, {"_id": 0}).sort("uploaded_at", -1).to_list(safe_limit)
     return [DocumentMetadata(**normalize_datetime_fields(doc, ["uploaded_at"])) for doc in docs]
+
+
+@api_router.get("/v1/notes/categories", response_model=CbcNoteCategoriesResponse)
+async def list_cbc_note_categories(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    await ensure_rate_limit(current_user["id"], "topic_read_user", TOPIC_READ_PER_MIN_LIMIT)
+    pipeline = [
+        {"$match": {"active": {"$ne": False}}},
+        {"$group": {"_id": {"grade": "$grade", "subject": "$subject"}}},
+    ]
+    rows = await db.cbc_notes.aggregate(pipeline).to_list(5000)
+    subject_map: Dict[str, set] = {}
+    for row in rows:
+        gid = row.get("_id") or {}
+        grade = int(gid.get("grade") or 0)
+        subject = str(gid.get("subject") or "").strip()
+        if grade <= 0 or not subject:
+            continue
+        key = str(grade)
+        subject_map.setdefault(key, set()).add(subject)
+    grades = sorted(int(g) for g in subject_map.keys())
+    return CbcNoteCategoriesResponse(
+        grades=grades,
+        subjects_by_grade={k: sorted(v) for k, v in subject_map.items()},
+    )
+
+
+@api_router.get("/v1/notes", response_model=List[CbcNoteResponse])
+async def list_cbc_notes(
+    grade: Optional[int] = None,
+    subject: Optional[str] = None,
+    q: Optional[str] = None,
+    limit: int = 100,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    await ensure_rate_limit(current_user["id"], "topic_read_user", TOPIC_READ_PER_MIN_LIMIT)
+    query: Dict[str, Any] = {"active": {"$ne": False}}
+    if grade is not None:
+        query["grade"] = int(grade)
+    if subject:
+        query["subject"] = {"$regex": f"^{re.escape(subject.strip())}$", "$options": "i"}
+    if q and q.strip():
+        term = q.strip()
+        query["$or"] = [
+            {"title": {"$regex": re.escape(term), "$options": "i"}},
+            {"subject": {"$regex": re.escape(term), "$options": "i"}},
+            {"description": {"$regex": re.escape(term), "$options": "i"}},
+        ]
+    safe_limit = max(1, min(limit, 500))
+    docs = await db.cbc_notes.find(query, {"_id": 0}).sort([("grade", 1), ("subject", 1), ("title", 1)]).to_list(safe_limit)
+    return [build_cbc_note_response(doc) for doc in docs]
+
+
+@api_router.post("/v1/notes/{note_id}/import")
+async def import_cbc_note_to_library(
+    note_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    await ensure_rate_limit(current_user["id"], "topic_read_user", TOPIC_READ_PER_MIN_LIMIT)
+    note_doc = await db.cbc_notes.find_one({"id": note_id, "active": {"$ne": False}}, {"_id": 0})
+    if not note_doc:
+        raise HTTPException(status_code=404, detail="Note not found")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.user_saved_notes.update_one(
+        {"user_id": current_user["id"], "note_id": note_id},
+        {
+            "$set": {
+                "user_id": current_user["id"],
+                "note_id": note_id,
+                "title": str(note_doc.get("title") or ""),
+                "grade": int(note_doc.get("grade") or 0),
+                "subject": str(note_doc.get("subject") or ""),
+                "updated_at": now_iso,
+            },
+            "$setOnInsert": {
+                "id": str(uuid.uuid4()),
+                "created_at": now_iso,
+            },
+        },
+        upsert=True,
+    )
+    return {"message": "Shared note saved for quick access", "note_id": note_id}
 
 
 @api_router.delete("/documents/{document_id}")
@@ -4467,23 +4817,53 @@ async def run_generation_pipeline(
     request: GenerationRequest,
     generation_id: Optional[str] = None,
 ) -> GenerationResponse:
-    if not request.document_ids:
-        raise HTTPException(status_code=400, detail="At least one document must be selected")
+    selected_doc_ids = list(dict.fromkeys(request.document_ids or []))
+    selected_note_ids = list(dict.fromkeys(request.cbc_note_ids or []))
+    if not selected_doc_ids and not selected_note_ids:
+        raise HTTPException(status_code=400, detail="Select at least one document or shared note")
 
-    docs = await db.documents.find(
-        {"id": {"$in": request.document_ids}, "user_id": user_id},
-        {"_id": 0},
-    ).to_list(100)
-    if len(docs) != len(request.document_ids):
-        raise HTTPException(status_code=403, detail="Some documents not found or access denied")
+    if selected_doc_ids:
+        docs = await db.documents.find(
+            {"id": {"$in": selected_doc_ids}, "user_id": user_id},
+            {"_id": 0},
+        ).to_list(max(100, len(selected_doc_ids)))
+        if len(docs) != len(selected_doc_ids):
+            raise HTTPException(status_code=403, detail="Some documents not found or access denied")
+
+    note_docs: List[Dict[str, Any]] = []
+    if selected_note_ids:
+        note_docs = await db.cbc_notes.find(
+            {"id": {"$in": selected_note_ids}, "active": {"$ne": False}},
+            {"_id": 0},
+        ).to_list(max(100, len(selected_note_ids)))
+        if len(note_docs) != len(selected_note_ids):
+            raise HTTPException(status_code=404, detail="Some shared notes were not found")
+        for note in note_docs:
+            await ensure_cbc_note_chunks(note)
 
     retrieval_query = f"{request.generation_type} {request.topic or ''}".strip()
-    relevant_chunks = await retrieve_relevant_chunks(
-        user_id,
-        request.document_ids,
-        retrieval_query,
-        top_k=RETRIEVAL_TOP_K,
-    )
+    relevant_chunks: List[Dict[str, Any]] = []
+    if selected_doc_ids:
+        relevant_chunks.extend(
+            await retrieve_relevant_chunks(
+                user_id,
+                selected_doc_ids,
+                retrieval_query,
+                top_k=max(1, RETRIEVAL_TOP_K // (2 if selected_note_ids else 1)),
+            )
+        )
+    if selected_note_ids:
+        relevant_chunks.extend(
+            await retrieve_relevant_shared_note_chunks(
+                selected_note_ids,
+                retrieval_query,
+                top_k=max(1, RETRIEVAL_TOP_K // (2 if selected_doc_ids else 1)),
+            )
+        )
+    if not relevant_chunks:
+        raise HTTPException(status_code=404, detail="No relevant chunks found for selected sources")
+    relevant_chunks.sort(key=lambda c: c.get("score", 0), reverse=True)
+    relevant_chunks = relevant_chunks[:RETRIEVAL_TOP_K]
     logger.info(
         "generation_retrieval_success user_id=%s type=%s chunks=%s",
         user_id,
@@ -4582,24 +4962,36 @@ async def queue_generation_content(
     request: GenerationRequest,
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
+    selected_doc_ids = list(dict.fromkeys(request.document_ids or []))
+    selected_note_ids = list(dict.fromkeys(request.cbc_note_ids or []))
+    request.document_ids = selected_doc_ids
+    request.cbc_note_ids = selected_note_ids
     logger.info(
-        "generation_job_request_start user_id=%s type=%s docs=%s",
+        "generation_job_request_start user_id=%s type=%s docs=%s shared_notes=%s",
         current_user["id"],
         request.generation_type,
-        len(request.document_ids or []),
+        len(selected_doc_ids),
+        len(selected_note_ids),
     )
     await ensure_rate_limit(current_user["id"], "generate_user", GEN_PER_MIN_LIMIT)
     await consume_generation_quota(current_user["id"], request.generation_type)
 
-    if not request.document_ids:
-        raise HTTPException(status_code=400, detail="At least one document must be selected")
-
-    docs = await db.documents.find(
-        {"id": {"$in": request.document_ids}, "user_id": current_user["id"]},
-        {"_id": 0, "id": 1},
-    ).to_list(100)
-    if len(docs) != len(request.document_ids):
-        raise HTTPException(status_code=403, detail="Some documents not found or access denied")
+    if not selected_doc_ids and not selected_note_ids:
+        raise HTTPException(status_code=400, detail="Select at least one document or shared note")
+    if selected_doc_ids:
+        docs = await db.documents.find(
+            {"id": {"$in": selected_doc_ids}, "user_id": current_user["id"]},
+            {"_id": 0, "id": 1},
+        ).to_list(max(100, len(selected_doc_ids)))
+        if len(docs) != len(selected_doc_ids):
+            raise HTTPException(status_code=403, detail="Some documents not found or access denied")
+    if selected_note_ids:
+        notes = await db.cbc_notes.find(
+            {"id": {"$in": selected_note_ids}, "active": {"$ne": False}},
+            {"_id": 0, "id": 1},
+        ).to_list(max(100, len(selected_note_ids)))
+        if len(notes) != len(selected_note_ids):
+            raise HTTPException(status_code=404, detail="Some shared notes were not found")
 
     job_id = str(uuid.uuid4())
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -4861,6 +5253,8 @@ async def join_class_session(
         raise HTTPException(status_code=404, detail="Class not found")
     if class_doc.get("status") in {"cancelled"}:
         raise HTTPException(status_code=409, detail="Class is cancelled")
+    if class_doc.get("status") == "completed":
+        raise HTTPException(status_code=409, detail="Class is already completed")
     now_iso = datetime.now(timezone.utc).isoformat()
     if class_doc.get("scheduled_end_at", "") < now_iso:
         raise HTTPException(status_code=409, detail="Class has already ended")
@@ -4905,6 +5299,40 @@ async def join_class_session(
             "payment_status": "free",
         }
 
+    paid_payment = await db.class_payments.find_one(
+        {
+            "class_id": class_id,
+            "student_id": current_user["id"],
+            "status": "paid",
+        },
+        {"_id": 0, "id": 1},
+        sort=[("updated_at", -1)],
+    )
+    if paid_payment:
+        enrollment = {
+            "id": str(uuid.uuid4()),
+            "class_id": class_id,
+            "student_id": current_user["id"],
+            "joined_at": now_iso,
+            "payment_status": "paid",
+            "payment_id": paid_payment.get("id"),
+        }
+        join_result = await db.class_enrollments.update_one(
+            {"class_id": class_id, "student_id": current_user["id"]},
+            {"$setOnInsert": enrollment, "$set": {"payment_status": "paid"}},
+            upsert=True,
+        )
+        if join_result.upserted_id is not None:
+            await db.class_sessions.update_one({"id": class_id}, {"$inc": {"join_count": 1}})
+        return {
+            "message": "Class join recorded",
+            "class_id": class_id,
+            "meeting_link": class_doc["meeting_link"],
+            "scheduled_start_at": class_doc["scheduled_start_at"],
+            "requires_payment": False,
+            "payment_status": "paid",
+        }
+
     existing_pending_payment = await db.class_payments.find_one(
         {
             "class_id": class_id,
@@ -4926,6 +5354,59 @@ async def join_class_session(
 
     if not mpesa_service.enabled:
         raise HTTPException(status_code=500, detail="M-Pesa is not configured for class payments")
+
+    lock_id = f"{class_id}:{current_user['id']}"
+    now_dt = datetime.now(timezone.utc)
+    now_iso = now_dt.isoformat()
+    lock_until_iso = (now_dt + timedelta(seconds=max(3, CLASS_JOIN_PAYMENT_LOCK_SECONDS))).isoformat()
+    lock_filter = {
+        "lock_id": lock_id,
+        "$or": [
+            {"locked_until": {"$exists": False}},
+            {"locked_until": {"$lte": now_iso}},
+        ],
+    }
+    lock_update = {
+        "$set": {"lock_id": lock_id, "locked_until": lock_until_iso, "updated_at": now_iso},
+        "$setOnInsert": {"created_at": now_iso},
+    }
+    lock_acquired = False
+    try:
+        lock_result = await db.class_join_payment_locks.update_one(
+            lock_filter,
+            lock_update,
+            upsert=True,
+        )
+        lock_acquired = bool(
+            lock_result.upserted_id is not None
+            or lock_result.matched_count > 0
+            or lock_result.modified_count > 0
+        )
+    except DuplicateKeyError:
+        lock_acquired = False
+    if not lock_acquired:
+        pending_after_lock = await db.class_payments.find_one(
+            {
+                "class_id": class_id,
+                "student_id": current_user["id"],
+                "status": "pending",
+            },
+            {"_id": 0, "checkout_request_id": 1, "amount_kes": 1, "created_at": 1},
+            sort=[("created_at", -1)],
+        )
+        if pending_after_lock and pending_after_lock.get("checkout_request_id"):
+            return {
+                "message": "Payment already initiated. Complete M-Pesa prompt on your phone.",
+                "class_id": class_id,
+                "requires_payment": True,
+                "payment_status": "pending",
+                "checkout_request_id": pending_after_lock.get("checkout_request_id"),
+                "amount_kes": int(pending_after_lock.get("amount_kes", fee_kes)),
+            }
+        raise HTTPException(
+            status_code=409,
+            detail="Payment is already being initiated for this class. Please retry in a moment.",
+        )
 
     phone_number = ((payload.phone_number if payload else None) or "").strip()
     if not phone_number:
@@ -4962,15 +5443,42 @@ async def join_class_session(
         "created_at": now_iso,
         "updated_at": now_iso,
     }
-    await db.class_payments.insert_one(payment_doc)
-    return {
-        "message": "STK push sent to customer phone",
-        "class_id": class_id,
-        "requires_payment": True,
-        "payment_status": "pending",
-        "checkout_request_id": payment_doc["checkout_request_id"],
-        "amount_kes": fee_kes,
-    }
+    try:
+        await db.class_payments.insert_one(payment_doc)
+        return {
+            "message": "STK push sent to customer phone",
+            "class_id": class_id,
+            "requires_payment": True,
+            "payment_status": "pending",
+            "checkout_request_id": payment_doc["checkout_request_id"],
+            "amount_kes": fee_kes,
+        }
+    except DuplicateKeyError:
+        pending_duplicate = await db.class_payments.find_one(
+            {
+                "class_id": class_id,
+                "student_id": current_user["id"],
+                "status": "pending",
+            },
+            {"_id": 0, "checkout_request_id": 1, "amount_kes": 1, "created_at": 1},
+            sort=[("created_at", -1)],
+        )
+        if pending_duplicate and pending_duplicate.get("checkout_request_id"):
+            return {
+                "message": "Payment already initiated. Complete M-Pesa prompt on your phone.",
+                "class_id": class_id,
+                "requires_payment": True,
+                "payment_status": "pending",
+                "checkout_request_id": pending_duplicate.get("checkout_request_id"),
+                "amount_kes": int(pending_duplicate.get("amount_kes", fee_kes)),
+            }
+        raise HTTPException(status_code=409, detail="A duplicate payment request was blocked.")
+    finally:
+        await db.class_join_payment_locks.update_one(
+            {"lock_id": lock_id},
+            {"$set": {"locked_until": datetime.now(timezone.utc).isoformat(), "updated_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True,
+        )
 
 
 @api_router.post("/v1/classes/{class_id}/complete", response_model=ClassSessionResponse)
@@ -5293,6 +5801,44 @@ async def admin_integrations_status(
     push_generation_failed_24h = await db.notification_delivery_logs.count_documents(
         {"category": "generation_status", "status": "failed", "created_at": {"$gte": since_24h}}
     )
+    callback_failed_24h = await db.mpesa_callback_logs.count_documents(
+        {"result_code": {"$ne": "0"}, "created_at": {"$gte": since_24h}}
+    )
+    callback_total_24h = await db.mpesa_callback_logs.count_documents(
+        {"created_at": {"$gte": since_24h}}
+    )
+    queued_before_iso = (now - timedelta(minutes=max(1, ALERT_QUEUED_JOB_MAX_AGE_MINUTES))).isoformat()
+    queued_stale_24h = await db.generation_jobs.count_documents(
+        {
+            "status": {"$in": ["queued", "processing", "retrying"]},
+            "created_at": {"$lte": queued_before_iso},
+        }
+    )
+    oldest_queued = await db.generation_jobs.find_one(
+        {"status": {"$in": ["queued", "processing", "retrying"]}},
+        {"_id": 0, "created_at": 1},
+        sort=[("created_at", 1)],
+    )
+    oldest_queued_age_minutes: Optional[int] = None
+    if oldest_queued and oldest_queued.get("created_at"):
+        try:
+            oldest_dt = datetime.fromisoformat(str(oldest_queued["created_at"]))
+            if oldest_dt.tzinfo is None:
+                oldest_dt = oldest_dt.replace(tzinfo=timezone.utc)
+            oldest_queued_age_minutes = max(0, int((now - oldest_dt).total_seconds() // 60))
+        except Exception:
+            oldest_queued_age_minutes = None
+    email_total_24h = int(email_sent_24h) + int(email_failed_24h)
+    push_total_24h = int(push_generation_sent_24h) + int(push_generation_failed_24h)
+    callback_failure_rate = (
+        float(callback_failed_24h) / float(callback_total_24h) if int(callback_total_24h) > 0 else 0.0
+    )
+    email_failure_rate = (
+        float(email_failed_24h) / float(email_total_24h) if email_total_24h > 0 else 0.0
+    )
+    push_failure_rate = (
+        float(push_generation_failed_24h) / float(push_total_24h) if push_total_24h > 0 else 0.0
+    )
 
     return {
         "localpro": {
@@ -5314,6 +5860,9 @@ async def admin_integrations_status(
             "sender_email": BREVO_SENDER_EMAIL,
             "emails_sent_24h": int(email_sent_24h),
             "emails_failed_24h": int(email_failed_24h),
+            "emails_total_24h": int(email_total_24h),
+            "email_failure_rate_24h": email_failure_rate,
+            "email_failure_rate_threshold": ALERT_EMAIL_FAILURE_RATE_THRESHOLD,
         },
         "queue": {
             "redis_url": REDIS_WAKE_URL.split("@")[-1],
@@ -5323,6 +5872,18 @@ async def admin_integrations_status(
             "generation_failed_24h": int(generation_failed_24h),
             "push_generation_sent_24h": int(push_generation_sent_24h),
             "push_generation_failed_24h": int(push_generation_failed_24h),
+            "push_generation_total_24h": int(push_total_24h),
+            "push_failure_rate_24h": push_failure_rate,
+            "push_failure_rate_threshold": ALERT_PUSH_FAILURE_RATE_THRESHOLD,
+            "queued_stale_count": int(queued_stale_24h),
+            "oldest_queued_age_minutes": oldest_queued_age_minutes,
+            "queued_alert_age_minutes": ALERT_QUEUED_JOB_MAX_AGE_MINUTES,
+        },
+        "payments": {
+            "callbacks_total_24h": int(callback_total_24h),
+            "callbacks_failed_24h": int(callback_failed_24h),
+            "callback_failure_rate_24h": callback_failure_rate,
+            "callback_failure_alert_threshold_24h": ALERT_PAYMENT_CALLBACK_FAILURES_24H,
         },
     }
 
@@ -6621,6 +7182,7 @@ async def startup_checks():
     await db.runtime_settings.create_index("id", unique=True)
     await db.documents.create_index("user_id")
     await db.documents.create_index([("user_id", 1), ("uploaded_at", -1)])
+    await db.documents.create_index([("user_id", 1), ("source_note_id", 1)], unique=True, sparse=True)
     await db.document_chunks.create_index("document_id")
     await db.document_chunks.create_index("user_id")
     await db.generations.create_index("user_id")
@@ -6644,6 +7206,20 @@ async def startup_checks():
     await db.class_payments.create_index([("class_id", 1), ("student_id", 1), ("created_at", -1)])
     await db.class_payments.create_index([("teacher_id", 1), ("created_at", -1)])
     await db.class_payments.create_index([("status", 1), ("created_at", -1)])
+    await db.class_payments.create_index(
+        [("class_id", 1), ("student_id", 1), ("status", 1)],
+        unique=True,
+        partialFilterExpression={"status": "pending"},
+        name="uniq_class_student_pending_payment",
+    )
+    await db.class_payments.create_index(
+        [("class_id", 1), ("student_id", 1), ("status", 1)],
+        unique=True,
+        partialFilterExpression={"status": "paid"},
+        name="uniq_class_student_paid_payment",
+    )
+    await db.class_join_payment_locks.create_index("lock_id", unique=True)
+    await db.class_join_payment_locks.create_index([("locked_until", 1)])
     await db.class_escrow.create_index("id", unique=True)
     await db.class_escrow.create_index("payment_id", unique=True)
     await db.class_escrow.create_index([("class_id", 1), ("status", 1)])
@@ -6669,6 +7245,10 @@ async def startup_checks():
     await db.notification_delivery_logs.create_index("id", unique=True)
     await db.notification_delivery_logs.create_index([("category", 1), ("status", 1), ("created_at", -1)])
     await db.notification_delivery_logs.create_index([("user_id", 1), ("created_at", -1)])
+    await db.mpesa_callback_logs.create_index("id", unique=True)
+    await db.mpesa_callback_logs.create_index("checkout_request_id")
+    await db.mpesa_callback_logs.create_index([("result_code", 1), ("created_at", -1)])
+    await db.mpesa_callback_logs.create_index([("payment_type", 1), ("created_at", -1)])
     await db.admin_alert_acknowledgements.create_index("alert_key", unique=True)
     await db.admin_alert_acknowledgements.create_index([("status", 1), ("updated_at", -1)])
     await db.class_reviews.create_index("id", unique=True)
@@ -6695,6 +7275,15 @@ async def startup_checks():
     await db.topic_vote_abuse_events.create_index("id", unique=True)
     await db.topic_vote_abuse_events.create_index([("suggestion_id", 1), ("created_at", -1)])
     await db.topic_vote_abuse_events.create_index([("event_type", 1), ("created_at", -1)])
+    await db.cbc_notes.create_index("id", unique=True)
+    await db.cbc_notes.create_index("cloudinary_public_id", unique=True)
+    await db.cbc_notes.create_index([("active", 1), ("grade", 1), ("subject", 1)])
+    await db.cbc_notes.create_index([("grade", 1), ("subject", 1), ("title", 1)])
+    await db.cbc_note_chunks.create_index("id", unique=True)
+    await db.cbc_note_chunks.create_index([("note_id", 1), ("chunk_index", 1)], unique=True)
+    await db.cbc_note_chunks.create_index("note_id")
+    await db.user_saved_notes.create_index([("user_id", 1), ("note_id", 1)], unique=True)
+    await db.user_saved_notes.create_index([("user_id", 1), ("updated_at", -1)])
     await db.subscriptions.create_index("user_id", unique=True)
     await db.subscription_payments.create_index("checkout_request_id", unique=True, sparse=True)
     await db.subscription_payments.create_index("user_id")

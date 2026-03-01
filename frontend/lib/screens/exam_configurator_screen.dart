@@ -17,12 +17,18 @@ class ExamConfiguratorScreen extends StatefulWidget {
     required this.session,
     required this.onSessionUpdated,
     required this.onSessionInvalid,
+    this.initialDocumentIds = const [],
+    this.initialCbcNoteIds = const [],
+    this.initialTopic,
   });
 
   final ApiClient apiClient;
   final Session session;
   final ValueChanged<Session> onSessionUpdated;
   final VoidCallback onSessionInvalid;
+  final List<String> initialDocumentIds;
+  final List<String> initialCbcNoteIds;
+  final String? initialTopic;
 
   @override
   State<ExamConfiguratorScreen> createState() => _ExamConfiguratorScreenState();
@@ -41,6 +47,7 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
   );
 
   final Set<String> _selectedDocumentIds = {};
+  final Set<String> _selectedCbcNoteIds = {};
   final List<DocumentMetadata> _documents = [];
   final List<String> _generationTypes = const [
     'exam',
@@ -134,10 +141,16 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
       recommendedFor: {'exam'},
     ),
   ];
+  bool _appliedInitialSelection = false;
 
   @override
   void initState() {
     super.initState();
+    final initialTopic = (widget.initialTopic ?? '').trim();
+    if (initialTopic.isNotEmpty) {
+      _topicController.text = initialTopic;
+    }
+    _selectedCbcNoteIds.addAll(widget.initialCbcNoteIds);
     _loadDocuments();
   }
 
@@ -174,6 +187,18 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
         _documents
           ..clear()
           ..addAll(docs);
+        if (!_appliedInitialSelection && widget.initialDocumentIds.isNotEmpty) {
+          final availableIds = _documents.map((d) => d.id).toSet();
+          final matched = widget.initialDocumentIds
+              .where((id) => availableIds.contains(id))
+              .toSet();
+          if (matched.isNotEmpty) {
+            _selectedDocumentIds
+              ..clear()
+              ..addAll(matched);
+          }
+          _appliedInitialSelection = true;
+        }
         if (_documents.isNotEmpty && _selectedDocumentIds.isEmpty) {
           _selectedDocumentIds.add(_documents.first.id);
         }
@@ -192,8 +217,8 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
   }
 
   Future<void> _generate() async {
-    if (_selectedDocumentIds.isEmpty) {
-      setState(() => _error = 'Select at least one document.');
+    if (_selectedDocumentIds.isEmpty && _selectedCbcNoteIds.isEmpty) {
+      setState(() => _error = 'Select at least one document or shared note.');
       return;
     }
 
@@ -205,6 +230,7 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
     try {
       final request = GenerationRequest(
         documentIds: _selectedDocumentIds.toList(),
+        cbcNoteIds: _selectedCbcNoteIds.toList(),
         generationType: _generationType,
         topic: _topicController.text.trim().isEmpty
             ? null
@@ -604,6 +630,18 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
                           const SizedBox(height: 18),
                           _SectionTitle('Select Documents'),
                           const SizedBox(height: 8),
+                          if (_selectedCbcNoteIds.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: Text(
+                                'Shared notes selected: ${_selectedCbcNoteIds.length}',
+                                style: const TextStyle(
+                                  color: AppColors.accent,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
                           if (_isLoadingDocuments)
                             const Padding(
                               padding: EdgeInsets.symmetric(vertical: 8),

@@ -245,6 +245,62 @@ class ApiClient {
         .toList();
   }
 
+  Future<CbcNoteCategories> listCbcNoteCategories({
+    required String accessToken,
+  }) async {
+    final response = await _sendRequest(
+      () => http
+          .get(
+            _uri('/v1/notes/categories'),
+            headers: _jsonHeaders(accessToken: accessToken),
+          )
+          .timeout(_requestTimeout),
+    );
+    final data = _parseJson(response);
+    return CbcNoteCategories.fromJson(data as Map<String, dynamic>);
+  }
+
+  Future<List<CbcNote>> listCbcNotes({
+    required String accessToken,
+    int? grade,
+    String? subject,
+    String? q,
+    int limit = 100,
+  }) async {
+    final params = <String, String>{
+      'limit': '$limit',
+      if (grade != null) 'grade': '$grade',
+      if ((subject ?? '').trim().isNotEmpty) 'subject': subject!.trim(),
+      if ((q ?? '').trim().isNotEmpty) 'q': q!.trim(),
+    };
+    final uri = _uri('/v1/notes').replace(queryParameters: params);
+    final response = await _sendRequest(
+      () => http
+          .get(uri, headers: _jsonHeaders(accessToken: accessToken))
+          .timeout(_requestTimeout),
+    );
+    final data = _parseJson(response) as List<dynamic>;
+    return data
+        .map((item) => CbcNote.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> importCbcNoteToLibrary({
+    required String accessToken,
+    required String noteId,
+  }) async {
+    final response = await _sendRequest(
+      () => http
+          .post(
+            _uri('/v1/notes/$noteId/import'),
+            headers: _jsonHeaders(accessToken: accessToken),
+          )
+          .timeout(const Duration(minutes: 3)),
+    );
+    final data = _parseJson(response);
+    return data is Map<String, dynamic> ? data : <String, dynamic>{};
+  }
+
   Future<List<GenerationResponse>> listGenerations(
     String accessToken, {
     int limit = 50,
@@ -473,6 +529,22 @@ class ApiClient {
     return data
         .map((item) => ClassSession.fromJson(item as Map<String, dynamic>))
         .toList();
+  }
+
+  Future<ClassSession> getClassSession({
+    required String accessToken,
+    required String classId,
+  }) async {
+    final response = await _sendRequest(
+      () => http
+          .get(
+            _uri('/v1/classes/$classId'),
+            headers: _jsonHeaders(accessToken: accessToken),
+          )
+          .timeout(_requestTimeout),
+    );
+    final data = _parseJson(response);
+    return ClassSession.fromJson(data as Map<String, dynamic>);
   }
 
   Future<ClassSession> completeClassSession({

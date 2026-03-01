@@ -168,7 +168,8 @@ class DocumentMetadata {
 
 class GenerationRequest {
   GenerationRequest({
-    required this.documentIds,
+    this.documentIds = const [],
+    this.cbcNoteIds = const [],
     required this.generationType,
     this.topic,
     this.difficulty = 'medium',
@@ -179,6 +180,7 @@ class GenerationRequest {
   });
 
   final List<String> documentIds;
+  final List<String> cbcNoteIds;
   final String generationType;
   final String? topic;
   final String difficulty;
@@ -190,6 +192,7 @@ class GenerationRequest {
   Map<String, dynamic> toJson() {
     return {
       'document_ids': documentIds,
+      'cbc_note_ids': cbcNoteIds,
       'generation_type': generationType,
       'topic': topic,
       'difficulty': difficulty,
@@ -655,6 +658,65 @@ class TopicFlaggedItem {
       fraudSpikeFlag: json['fraud_spike_flag'] as bool? ?? false,
       fraudSpikeFlaggedAt: DateTime.tryParse(
         json['fraud_spike_flagged_at'] as String? ?? '',
+      ),
+    );
+  }
+}
+
+class CbcNote {
+  CbcNote({
+    required this.id,
+    required this.title,
+    this.description,
+    required this.grade,
+    required this.subject,
+    required this.cloudinaryUrl,
+    required this.fileSize,
+    required this.updatedAt,
+  });
+
+  final String id;
+  final String title;
+  final String? description;
+  final int grade;
+  final String subject;
+  final String cloudinaryUrl;
+  final int fileSize;
+  final DateTime updatedAt;
+
+  factory CbcNote.fromJson(Map<String, dynamic> json) {
+    return CbcNote(
+      id: json['id'] as String? ?? '',
+      title: json['title'] as String? ?? 'CBC Note',
+      description: json['description'] as String?,
+      grade: (json['grade'] as num?)?.toInt() ?? 0,
+      subject: json['subject'] as String? ?? 'General',
+      cloudinaryUrl: json['cloudinary_url'] as String? ?? '',
+      fileSize: (json['file_size'] as num?)?.toInt() ?? 0,
+      updatedAt: DateTime.tryParse(json['updated_at'] as String? ?? '') ?? DateTime.now(),
+    );
+  }
+}
+
+class CbcNoteCategories {
+  CbcNoteCategories({
+    required this.grades,
+    required this.subjectsByGrade,
+  });
+
+  final List<int> grades;
+  final Map<String, List<String>> subjectsByGrade;
+
+  factory CbcNoteCategories.fromJson(Map<String, dynamic> json) {
+    final gradesRaw = (json['grades'] as List<dynamic>? ?? const []);
+    final mapRaw = (json['subjects_by_grade'] as Map<String, dynamic>? ?? const {});
+    return CbcNoteCategories(
+      grades: gradesRaw.map((e) => (e as num).toInt()).toList()..sort(),
+      subjectsByGrade: mapRaw.map(
+        (key, value) => MapEntry(
+          key,
+          (value as List<dynamic>? ?? const []).map((e) => e.toString()).toList(),
+        ),
       ),
     );
   }

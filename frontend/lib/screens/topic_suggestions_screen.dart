@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/models.dart';
 import '../services/api_client.dart';
@@ -42,6 +43,11 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
   TopicListResponse? _topicList;
   final Set<String> _upvotingIds = <String>{};
   final Set<String> _creatingClassIds = <String>{};
+  final Set<String> _joiningClassIds = <String>{};
+  final Set<String> _paidClassIds = <String>{};
+  final Set<String> _completedClassIds = <String>{};
+  final Map<String, ClassSession> _linkedClasses = <String, ClassSession>{};
+  final Map<String, DateTime> _linkedClassFetchedAt = <String, DateTime>{};
   int _classMinFeeKes = 50;
   int _classMaxFeeKes = 20000;
 
@@ -120,6 +126,7 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
       );
       if (!mounted) return;
       setState(() => _topicList = result);
+      _loadLinkedClassesForTopics(result.items);
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() => _error = e.message);
@@ -129,6 +136,99 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _loadLinkedClassesForTopics(List<TopicSuggestion> topics) async {
+    final classIds = topics
+        .map((t) => t.linkedClassId?.trim() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    if (classIds.isEmpty) {
+      if (mounted) {
+        setState(() => _linkedClasses.clear());
+      }
+      return;
+    }
+    final now = DateTime.now();
+    final staleBefore = now.subtract(const Duration(seconds: 45));
+    final fetchIds = classIds
+        .where(
+          (id) =>
+              !_linkedClasses.containsKey(id) ||
+              (_linkedClassFetchedAt[id]?.isBefore(staleBefore) ?? true),
+        )
+        .take(12)
+        .toList();
+    if (fetchIds.isEmpty) return;
+    final Map<String, ClassSession> next = <String, ClassSession>{};
+    await Future.wait(
+      fetchIds.map((classId) async {
+        try {
+          final session = await _runWithAuthRetry(
+            (token) => widget.apiClient.getClassSession(
+              accessToken: token,
+              classId: classId,
+            ),
+          );
+          next[classId] = session;
+        } catch (_) {}
+      }),
+    );
+    if (!mounted) return;
+    setState(() {
+      _linkedClasses.addAll(next);
+      for (final entry in next.entries) {
+        _linkedClassFetchedAt[entry.key] = now;
+        final paymentStatus = (entry.value.paymentStatus ?? '').toLowerCase();
+        if (paymentStatus == 'paid' || paymentStatus == 'free') {
+          _paidClassIds.add(entry.key);
+        }
+        if (entry.value.status.toLowerCase() == 'completed') {
+          _completedClassIds.add(entry.key);
+        }
+      }
+    });
+  }
+
+  String? _buildClassMetaLabel(String classId) {
+    final session = _linkedClasses[classId];
+    if (session == null) return null;
+    final now = DateTime.now();
+    final start = session.scheduledStartAt.toLocal();
+    final end = session.scheduledEndAt.toLocal();
+    final status = session.status.toLowerCase();
+    if (status == 'completed') return 'Completed';
+    if (status == 'cancelled') return 'Cancelled';
+    if (now.isAfter(start) && now.isBefore(end)) {
+      final minutes = end.difference(now).inMinutes;
+      if (minutes > 0) return 'Ongoing - ends in $minutes min';
+      return 'Ongoing';
+    }
+    if (now.isBefore(start)) {
+      final minutes = start.difference(now).inMinutes;
+      if (minutes < 60) return 'Starts in ${minutes.clamp(1, 59)} min';
+      final hours = start.difference(now).inHours;
+      if (hours < 24) return 'Starts in $hours hr';
+      return 'Starts ${start.year}-${start.month.toString().padLeft(2, '0')}-${start.day.toString().padLeft(2, '0')}';
+    }
+    return 'Ended';
+  }
+
+  String? _buildClassFeeLabel(String classId) {
+    final session = _linkedClasses[classId];
+    if (session == null) return null;
+    if (session.feeKes <= 0) return 'Free class';
+    return 'KES ${session.feeKes}';
+  }
+
+  _ChipTone _classMetaTone(String? classMetaLabel) {
+    final text = (classMetaLabel ?? '').toLowerCase();
+    if (text.startsWith('ongoing')) return _ChipTone.success;
+    if (text.startsWith('starts in')) return _ChipTone.warning;
+    if (text.contains('completed') || text.contains('cancelled') || text == 'ended') {
+      return _ChipTone.neutral;
+    }
+    return _ChipTone.neutral;
   }
 
   Future<void> _submitTopic() async {
@@ -293,6 +393,191 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
     }
   }
 
+  Future<String?> _promptPhoneForPayment() async {
+    final controller = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Pay Class Fee'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.phone,
+          decoration: const InputDecoration(
+            hintText: 'Enter M-Pesa number (e.g. 07XXXXXXXX)',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return null;
+    return controller.text.trim();
+  }
+
+  Future<bool> _pollPaymentUntilDone(String classId, String checkoutRequestId) async {
+    if (checkoutRequestId.isEmpty) return false;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('STK push sent. Complete payment on your phone.')),
+    );
+    for (var i = 0; i < 18; i++) {
+      await Future<void>.delayed(const Duration(seconds: 4));
+      try {
+        final status = await _runWithAuthRetry(
+          (token) => widget.apiClient.classPaymentStatus(
+            accessToken: token,
+            classId: classId,
+            checkoutRequestId: checkoutRequestId,
+          ),
+        );
+        final paymentStatus = (status['status']?.toString() ?? '').toLowerCase();
+        if (paymentStatus == 'paid') {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Payment confirmed. You can now join the class.')),
+            );
+          }
+          return true;
+        }
+        if (paymentStatus == 'failed') {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  status['result_desc']?.toString() ?? 'Payment failed or cancelled.',
+                ),
+              ),
+            );
+          }
+          return false;
+        }
+      } catch (_) {}
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Payment still pending. Retry join in a few seconds.')),
+      );
+    }
+    return false;
+  }
+
+  Future<void> _studentJoinClassFromTopic(TopicSuggestion item) async {
+    if (!_isStudent) return;
+    final classId = item.linkedClassId?.trim() ?? '';
+    if (classId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Class link is not available yet for this topic.')),
+      );
+      return;
+    }
+    if (_joiningClassIds.contains(classId)) return;
+    setState(() => _joiningClassIds.add(classId));
+    try {
+      final classSession = await _runWithAuthRetry(
+        (token) => widget.apiClient.getClassSession(
+          accessToken: token,
+          classId: classId,
+        ),
+      );
+      if (mounted) {
+        setState(() {
+          _linkedClasses[classId] = classSession;
+          _linkedClassFetchedAt[classId] = DateTime.now();
+        });
+      }
+      final classPaymentStatus = (classSession.paymentStatus ?? '').toLowerCase();
+      final hasPaidAlready = classPaymentStatus == 'paid' || classPaymentStatus == 'free';
+      if (hasPaidAlready && mounted) {
+        setState(() => _paidClassIds.add(classId));
+      }
+      if (classSession.status.toLowerCase() == 'completed') {
+        if (mounted) {
+          setState(() => _completedClassIds.add(classId));
+        }
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('This class is already completed.')),
+        );
+        return;
+      }
+
+      final needsPhoneForPaidFlow =
+          !classSession.joined &&
+          (classSession.paymentRequired || classSession.feeKes > 0) &&
+          !hasPaidAlready &&
+          !_paidClassIds.contains(classId);
+      String? phone;
+      if (needsPhoneForPaidFlow) {
+        phone = await _promptPhoneForPayment();
+        if (phone == null || phone.trim().isEmpty) return;
+      }
+
+      var result = await _runWithAuthRetry(
+        (token) => widget.apiClient.joinClassSession(
+          accessToken: token,
+          classId: classId,
+          phoneNumber: phone,
+        ),
+      );
+
+      if (result['requires_payment'] == true) {
+        final checkoutRequestId = result['checkout_request_id']?.toString() ?? '';
+        final paid = await _pollPaymentUntilDone(classId, checkoutRequestId);
+        if (!paid) return;
+        if (mounted) {
+          setState(() => _paidClassIds.add(classId));
+        }
+        result = await _runWithAuthRetry(
+          (token) => widget.apiClient.joinClassSession(
+            accessToken: token,
+            classId: classId,
+          ),
+        );
+      }
+
+      final paymentStatus = (result['payment_status']?.toString() ?? '').toLowerCase();
+      if (paymentStatus == 'paid' || paymentStatus == 'free') {
+        if (mounted) {
+          setState(() => _paidClassIds.add(classId));
+        }
+      }
+
+      final link = result['meeting_link']?.toString().trim().isNotEmpty == true
+          ? (result['meeting_link']?.toString() ?? classSession.meetingLink)
+          : classSession.meetingLink;
+      if (link.trim().isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Join link is not available right now.')),
+        );
+        return;
+      }
+      final uri = Uri.tryParse(link);
+      if (uri != null) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      }
+      await _loadTopics();
+    } on ApiException catch (e) {
+      final message = e.message.toLowerCase();
+      if (message.contains('already completed')) {
+        if (mounted) {
+          setState(() => _completedClassIds.add(classId));
+        }
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) setState(() => _joiningClassIds.remove(classId));
+    }
+  }
+
   Future<void> _openSubmitSheet() async {
     if (!_isStudent) return;
     await showModalBottomSheet<void>(
@@ -432,8 +717,21 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
                         canUpvote: _isStudent,
                         isUpvoting: _upvotingIds.contains(topic.id),
                         isCreatingClass: _creatingClassIds.contains(topic.id),
+                        isJoiningClass: _joiningClassIds.contains(topic.linkedClassId ?? ''),
+                        hasPaidClassAccess: _paidClassIds.contains(topic.linkedClassId ?? ''),
+                        isClassCompleted: _completedClassIds.contains(topic.linkedClassId ?? ''),
+                        classMetaLabel: topic.linkedClassId == null
+                            ? null
+                            : _buildClassMetaLabel(topic.linkedClassId!.trim()),
+                        classFeeLabel: topic.linkedClassId == null
+                            ? null
+                            : _buildClassFeeLabel(topic.linkedClassId!.trim()),
+                        classMetaTone: topic.linkedClassId == null
+                            ? _ChipTone.neutral
+                            : _classMetaTone(_buildClassMetaLabel(topic.linkedClassId!.trim())),
                         onUpvote: () => _upvoteTopic(topic),
                         onTeacherCreateClass: () => _teacherCreateClass(topic),
+                        onStudentJoinClass: () => _studentJoinClassFromTopic(topic),
                       ),
                     ),
                 ],
@@ -705,16 +1003,30 @@ class _TopicCard extends StatelessWidget {
     required this.canUpvote,
     required this.isUpvoting,
     required this.isCreatingClass,
+    required this.isJoiningClass,
+    required this.hasPaidClassAccess,
+    required this.isClassCompleted,
+    required this.classMetaLabel,
+    required this.classFeeLabel,
+    required this.classMetaTone,
     required this.onUpvote,
     required this.onTeacherCreateClass,
+    required this.onStudentJoinClass,
   });
 
   final TopicSuggestion item;
   final bool canUpvote;
   final bool isUpvoting;
   final bool isCreatingClass;
+  final bool isJoiningClass;
+  final bool hasPaidClassAccess;
+  final bool isClassCompleted;
+  final String? classMetaLabel;
+  final String? classFeeLabel;
+  final _ChipTone classMetaTone;
   final VoidCallback onUpvote;
   final VoidCallback onTeacherCreateClass;
+  final VoidCallback onStudentJoinClass;
 
   String _dateLabel(DateTime dt) {
     final local = dt.toLocal();
@@ -788,6 +1100,10 @@ class _TopicCard extends StatelessWidget {
                     runSpacing: 6,
                     children: [
                       _TinyChip(text: 'Status: ${item.status}'),
+                      if ((classMetaLabel ?? '').isNotEmpty)
+                        _TinyChip(text: classMetaLabel!, tone: classMetaTone),
+                      if ((classFeeLabel ?? '').isNotEmpty)
+                        _TinyChip(text: classFeeLabel!, tone: _ChipTone.info),
                       _TinyChip(text: _dateLabel(item.createdAt)),
                       if (alreadyVoted) const _TinyChip(text: 'Voted'),
                     ],
@@ -814,6 +1130,41 @@ class _TopicCard extends StatelessWidget {
                               : (isCreatingClass
                                     ? 'Creating Class...'
                                     : 'Create Class'),
+                        ),
+                      ),
+                    ),
+                  ],
+                  if (canUpvote &&
+                      item.status == 'class_created' &&
+                      (item.linkedClassId?.trim().isNotEmpty == true)) ...[
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        key: ValueKey('student-join-class-${item.id}'),
+                        onPressed: (isJoiningClass || isClassCompleted)
+                            ? null
+                            : onStudentJoinClass,
+                        icon: isJoiningClass
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : Icon(
+                                isClassCompleted
+                                    ? Icons.event_busy_rounded
+                                    : (hasPaidClassAccess
+                                          ? Icons.login_rounded
+                                          : Icons.lock_open_rounded),
+                                size: 18,
+                              ),
+                        label: Text(
+                          isClassCompleted
+                              ? 'Class Completed'
+                              : (isJoiningClass
+                                    ? 'Processing...'
+                                    : (hasPaidClassAccess ? 'Join' : 'Pay & Join')),
                         ),
                       ),
                     ),
@@ -1055,23 +1406,65 @@ class _CreateClassFromTopicDialogState extends State<_CreateClassFromTopicDialog
   }
 }
 
+enum _ChipTone { neutral, success, warning, info }
+
 class _TinyChip extends StatelessWidget {
-  const _TinyChip({required this.text});
+  const _TinyChip({required this.text, this.tone = _ChipTone.neutral});
 
   final String text;
+  final _ChipTone tone;
+
+  Color _bgColor() {
+    switch (tone) {
+      case _ChipTone.success:
+        return Colors.green.withValues(alpha: 0.16);
+      case _ChipTone.warning:
+        return Colors.orange.withValues(alpha: 0.16);
+      case _ChipTone.info:
+        return AppColors.primary.withValues(alpha: 0.16);
+      case _ChipTone.neutral:
+        return Colors.white.withValues(alpha: 0.06);
+    }
+  }
+
+  Color _borderColor() {
+    switch (tone) {
+      case _ChipTone.success:
+        return Colors.green.withValues(alpha: 0.4);
+      case _ChipTone.warning:
+        return Colors.orange.withValues(alpha: 0.4);
+      case _ChipTone.info:
+        return AppColors.primary.withValues(alpha: 0.5);
+      case _ChipTone.neutral:
+        return Colors.white12;
+    }
+  }
+
+  Color _textColor() {
+    switch (tone) {
+      case _ChipTone.success:
+        return Colors.greenAccent.shade100;
+      case _ChipTone.warning:
+        return Colors.orangeAccent.shade100;
+      case _ChipTone.info:
+        return AppColors.primary;
+      case _ChipTone.neutral:
+        return AppColors.textMuted;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.06),
+        color: _bgColor(),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white12),
+        border: Border.all(color: _borderColor()),
       ),
       child: Text(
         text,
-        style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+        style: TextStyle(fontSize: 11, color: _textColor()),
       ),
     );
   }
