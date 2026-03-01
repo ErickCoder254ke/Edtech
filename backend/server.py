@@ -1608,6 +1608,9 @@ async def mark_stale_generation_jobs(user_id: Optional[str] = None) -> int:
     query: Dict[str, Any] = {
         "status": "queued",
         "created_at": {"$lte": cutoff_iso},
+        # If a Celery task has already been published, avoid false-failing jobs
+        # that are simply waiting for worker pickup under load.
+        "worker_task_id": {"$in": [None, ""]},
     }
     if user_id:
         query["user_id"] = user_id
