@@ -304,9 +304,13 @@ class ClassSession {
     required this.status,
     required this.createdAt,
     required this.feeKes,
+    required this.platformFeePercent,
+    required this.teacherNetKes,
     required this.durationMinutes,
     required this.joinCount,
     required this.joined,
+    required this.paymentRequired,
+    this.paymentStatus,
     this.averageRating,
     required this.reviewCount,
     this.topicSuggestionId,
@@ -323,9 +327,13 @@ class ClassSession {
   final String status;
   final DateTime createdAt;
   final int feeKes;
+  final double platformFeePercent;
+  final int teacherNetKes;
   final int durationMinutes;
   final int joinCount;
   final bool joined;
+  final bool paymentRequired;
+  final String? paymentStatus;
   final double? averageRating;
   final int reviewCount;
   final String? topicSuggestionId;
@@ -349,9 +357,14 @@ class ClassSession {
           DateTime.tryParse(json['created_at'] as String? ?? '') ??
           DateTime.now(),
       feeKes: (json['fee_kes'] as num?)?.toInt() ?? 0,
+      platformFeePercent:
+          (json['platform_fee_percent'] as num?)?.toDouble() ?? 0,
+      teacherNetKes: (json['teacher_net_kes'] as num?)?.toInt() ?? 0,
       durationMinutes: (json['duration_minutes'] as num?)?.toInt() ?? 0,
       joinCount: (json['join_count'] as num?)?.toInt() ?? 0,
       joined: json['joined'] as bool? ?? false,
+      paymentRequired: json['payment_required'] as bool? ?? false,
+      paymentStatus: json['payment_status'] as String?,
       averageRating: (json['average_rating'] as num?)?.toDouble(),
       reviewCount: (json['review_count'] as num?)?.toInt() ?? 0,
       topicSuggestionId: json['topic_suggestion_id'] as String?,
@@ -841,6 +854,10 @@ class AdminDashboardSummary {
 
 class AdminRuntimeSettings {
   AdminRuntimeSettings({
+    required this.freePlanMaxGenerations,
+    required this.weeklyPlanMaxGenerations,
+    required this.monthlyPlanMaxGenerations,
+    required this.annualPlanMaxGenerations,
     required this.subscriptionWeeklyKes,
     required this.subscriptionMonthlyKes,
     required this.subscriptionAnnualKes,
@@ -853,6 +870,10 @@ class AdminRuntimeSettings {
     required this.accountReuseGraceDays,
   });
 
+  final int freePlanMaxGenerations;
+  final int weeklyPlanMaxGenerations;
+  final int monthlyPlanMaxGenerations;
+  final int annualPlanMaxGenerations;
   final int subscriptionWeeklyKes;
   final int subscriptionMonthlyKes;
   final int subscriptionAnnualKes;
@@ -866,6 +887,14 @@ class AdminRuntimeSettings {
 
   factory AdminRuntimeSettings.fromJson(Map<String, dynamic> json) {
     return AdminRuntimeSettings(
+      freePlanMaxGenerations:
+          (json['free_plan_max_generations'] as num?)?.toInt() ?? 2,
+      weeklyPlanMaxGenerations:
+          (json['weekly_plan_max_generations'] as num?)?.toInt() ?? 15,
+      monthlyPlanMaxGenerations:
+          (json['monthly_plan_max_generations'] as num?)?.toInt() ?? 80,
+      annualPlanMaxGenerations:
+          (json['annual_plan_max_generations'] as num?)?.toInt() ?? 1200,
       subscriptionWeeklyKes: (json['subscription_weekly_kes'] as num?)?.toInt() ?? 149,
       subscriptionMonthlyKes: (json['subscription_monthly_kes'] as num?)?.toInt() ?? 499,
       subscriptionAnnualKes: (json['subscription_annual_kes'] as num?)?.toInt() ?? 4499,

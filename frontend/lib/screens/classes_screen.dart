@@ -41,6 +41,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
   final Set<String> _busyClassIds = <String>{};
   int _classMinFeeKes = 50;
   int _classMaxFeeKes = 20000;
+  double _classPlatformFeePercent = 10;
 
   bool get _isTeacher => widget.session.user.role.toLowerCase() == 'teacher';
 
@@ -107,6 +108,9 @@ class _ClassesScreenState extends State<ClassesScreen> {
             (cfg['class_min_fee_kes'] as num?)?.toInt() ?? _classMinFeeKes;
         _classMaxFeeKes =
             (cfg['class_max_fee_kes'] as num?)?.toInt() ?? _classMaxFeeKes;
+        _classPlatformFeePercent =
+            (cfg['class_escrow_platform_fee_percent'] as num?)?.toDouble() ??
+                _classPlatformFeePercent;
       } catch (_) {}
       if (!mounted) return;
       int withdrawable = _withdrawableKes;
@@ -305,14 +309,14 @@ class _ClassesScreenState extends State<ClassesScreen> {
     setState(() => _busyClassIds.add(session.id));
     try {
       String? phone;
-      if (!session.joined && session.feeKes > 0) {
+      if (!session.joined && (session.paymentRequired || session.feeKes > 0)) {
         phone = await _promptPhoneForPayment();
         if (phone == null || phone.trim().isEmpty) {
           if (mounted) setState(() => _busyClassIds.remove(session.id));
           return;
         }
       }
-      final result = await _runWithAuthRetry(
+      var result = await _runWithAuthRetry(
         (token) => widget.apiClient.joinClassSession(
           accessToken: token,
           classId: session.id,
@@ -324,10 +328,26 @@ class _ClassesScreenState extends State<ClassesScreen> {
         final checkoutRequestId = result['checkout_request_id']?.toString() ?? '';
         final paid = await _pollPaymentUntilDone(session.id, checkoutRequestId);
         if (!paid) return;
+        result = await _runWithAuthRetry(
+          (token) => widget.apiClient.joinClassSession(
+            accessToken: token,
+            classId: session.id,
+          ),
+        );
       }
       final link = result['meeting_link']?.toString().trim().isNotEmpty == true
           ? (result['meeting_link']?.toString() ?? session.meetingLink)
           : session.meetingLink;
+      if (link.trim().isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Complete payment first to unlock class meeting link.'),
+            ),
+          );
+        }
+        return;
+      }
       final uri = Uri.tryParse(link);
       if (uri != null) {
         await launchUrl(uri, mode: LaunchMode.externalApplication);
@@ -770,6 +790,11 @@ class _ClassesScreenState extends State<ClassesScreen> {
               'Fee: KES ${session.feeKes}  Duration: ${session.durationMinutes} min',
               style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
             ),
+            if (session.feeKes > 0)
+              Text(
+                'Escrow: You pay KES ${session.feeKes}. Teacher receives KES ${session.teacherNetKes} after class completion. Platform fee ${(session.platformFeePercent > 0 ? session.platformFeePercent : _classPlatformFeePercent).toStringAsFixed(1)}%',
+                style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+              ),
             const SizedBox(height: 8),
             Row(
               children: [
@@ -780,6 +805,13 @@ class _ClassesScreenState extends State<ClassesScreen> {
                       ? 'No rating'
                       : 'Rating ${session.averageRating} (${session.reviewCount})',
                 ),
+                const SizedBox(width: 8),
+                if (!_isTeacher)
+                  _MiniMeta(
+                    text: session.paymentRequired
+                        ? 'Payment required'
+                        : (session.paymentStatus ?? (session.feeKes > 0 ? 'unpaid' : 'free')),
+                  ),
               ],
             ),
             const SizedBox(height: 10),
@@ -819,7 +851,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
                       label: Text(
                         session.joined
                             ? 'Join Again'
-                            : session.feeKes > 0
+                            : (session.paymentRequired || session.feeKes > 0)
                             ? 'Pay & Join'
                             : 'Join Class',
                       ),
@@ -828,7 +860,12 @@ class _ClassesScreenState extends State<ClassesScreen> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: busy ? null : () => _reviewClass(session),
+                      onPressed: busy ||
+                              !session.joined ||
+                              (session.status != 'completed' &&
+                                  session.scheduledEndAt.isAfter(DateTime.now()))
+                          ? null
+                          : () => _reviewClass(session),
                       icon: const Icon(Icons.rate_review_outlined),
                       label: const Text('Review'),
                     ),

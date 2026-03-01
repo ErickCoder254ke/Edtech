@@ -41,6 +41,14 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       TextEditingController();
   final TextEditingController _subscriptionAnnualKesController =
       TextEditingController();
+  final TextEditingController _freePlanMaxGenerationsController =
+      TextEditingController();
+  final TextEditingController _weeklyPlanMaxGenerationsController =
+      TextEditingController();
+  final TextEditingController _monthlyPlanMaxGenerationsController =
+      TextEditingController();
+  final TextEditingController _annualPlanMaxGenerationsController =
+      TextEditingController();
   final TextEditingController _weeklyPlanMaxExamsController =
       TextEditingController();
   final TextEditingController _monthlyPlanMaxExamsController =
@@ -283,6 +291,14 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 
   void _hydrateSettingsControllers(AdminRuntimeSettings settings) {
+    _freePlanMaxGenerationsController.text = settings.freePlanMaxGenerations
+        .toString();
+    _weeklyPlanMaxGenerationsController.text = settings.weeklyPlanMaxGenerations
+        .toString();
+    _monthlyPlanMaxGenerationsController.text = settings.monthlyPlanMaxGenerations
+        .toString();
+    _annualPlanMaxGenerationsController.text = settings.annualPlanMaxGenerations
+        .toString();
     _subscriptionWeeklyKesController.text = settings.subscriptionWeeklyKes
         .toString();
     _subscriptionMonthlyKesController.text = settings.subscriptionMonthlyKes
@@ -304,6 +320,18 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   Future<void> _saveRuntimeSettings() async {
     final payload = <String, dynamic>{
+      'free_plan_max_generations': int.tryParse(
+        _freePlanMaxGenerationsController.text.trim(),
+      ),
+      'weekly_plan_max_generations': int.tryParse(
+        _weeklyPlanMaxGenerationsController.text.trim(),
+      ),
+      'monthly_plan_max_generations': int.tryParse(
+        _monthlyPlanMaxGenerationsController.text.trim(),
+      ),
+      'annual_plan_max_generations': int.tryParse(
+        _annualPlanMaxGenerationsController.text.trim(),
+      ),
       'subscription_weekly_kes': int.tryParse(
         _subscriptionWeeklyKesController.text.trim(),
       ),
@@ -332,7 +360,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       ),
     }..removeWhere((_, value) => value == null);
 
-    if (payload.length != 10) {
+    if (payload.length != 14) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Please enter valid values for all settings.'),
@@ -507,6 +535,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   @override
   void dispose() {
+    _freePlanMaxGenerationsController.dispose();
+    _weeklyPlanMaxGenerationsController.dispose();
+    _monthlyPlanMaxGenerationsController.dispose();
+    _annualPlanMaxGenerationsController.dispose();
     _subscriptionWeeklyKesController.dispose();
     _subscriptionMonthlyKesController.dispose();
     _subscriptionAnnualKesController.dispose();
@@ -771,6 +803,22 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         ),
                       ),
                       const SizedBox(height: 14),
+                      _settingsField(
+                        'Free Plan Max Generations',
+                        _freePlanMaxGenerationsController,
+                      ),
+                      _settingsField(
+                        'Weekly Plan Max Generations',
+                        _weeklyPlanMaxGenerationsController,
+                      ),
+                      _settingsField(
+                        'Monthly Plan Max Generations',
+                        _monthlyPlanMaxGenerationsController,
+                      ),
+                      _settingsField(
+                        'Annual Plan Max Generations',
+                        _annualPlanMaxGenerationsController,
+                      ),
                       _settingsField(
                         'Subscription Weekly (KES)',
                         _subscriptionWeeklyKesController,

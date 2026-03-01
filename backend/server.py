@@ -248,6 +248,10 @@ RUNTIME_SETTINGS_DOC_ID = "runtime_settings"
 
 def _runtime_default_settings() -> Dict[str, Any]:
     return {
+        "free_plan_max_generations": FREE_PLAN_MAX_GENERATIONS,
+        "weekly_plan_max_generations": WEEKLY_PLAN_MAX_GENERATIONS,
+        "monthly_plan_max_generations": MONTHLY_PLAN_MAX_GENERATIONS,
+        "annual_plan_max_generations": ANNUAL_PLAN_MAX_GENERATIONS,
         "subscription_weekly_kes": SUBSCRIPTION_WEEKLY_KES,
         "subscription_monthly_kes": SUBSCRIPTION_MONTHLY_KES,
         "subscription_annual_kes": SUBSCRIPTION_ANNUAL_KES,
@@ -582,6 +586,10 @@ class AdminPlatformWithdrawalRequest(BaseModel):
 
 
 class AdminRuntimeSettingsUpdateRequest(BaseModel):
+    free_plan_max_generations: Optional[int] = Field(default=None, ge=1)
+    weekly_plan_max_generations: Optional[int] = Field(default=None, ge=1)
+    monthly_plan_max_generations: Optional[int] = Field(default=None, ge=1)
+    annual_plan_max_generations: Optional[int] = Field(default=None, ge=1)
     subscription_weekly_kes: Optional[int] = Field(default=None, ge=1)
     subscription_monthly_kes: Optional[int] = Field(default=None, ge=1)
     subscription_annual_kes: Optional[int] = Field(default=None, ge=1)
@@ -612,9 +620,13 @@ class ClassSessionResponse(BaseModel):
     status: str
     created_at: datetime
     fee_kes: int = 0
+    platform_fee_percent: float = 0
+    teacher_net_kes: int = 0
     duration_minutes: int = 0
     join_count: int = 0
     joined: bool = False
+    payment_required: bool = False
+    payment_status: Optional[str] = None
     average_rating: Optional[float] = None
     review_count: int = 0
     topic_suggestion_id: Optional[str] = None
@@ -1896,13 +1908,26 @@ async def build_class_response(
     current_user_role: str,
 ) -> ClassSessionResponse:
     norm = normalize_datetime_fields(dict(class_doc), ["scheduled_start_at", "scheduled_end_at", "created_at"])
+    fee_kes = int(norm.get("fee_kes", 0))
+    platform_fee_percent = current_class_escrow_platform_fee_percent()
+    teacher_net_kes, _ = compute_class_escrow_split(fee_kes)
     joined = False
+    payment_status: Optional[str] = None
+    payment_required = False
+    meeting_link = norm["meeting_link"]
     if current_user_role == "student":
         enrollment = await db.class_enrollments.find_one(
             {"class_id": norm["id"], "student_id": current_user_id},
-            {"_id": 0, "id": 1},
+            {"_id": 0, "id": 1, "payment_status": 1},
         )
-        joined = bool(enrollment)
+        payment_status = str((enrollment or {}).get("payment_status") or "not_joined").lower()
+        joined = payment_status in {"paid", "free"}
+        payment_required = fee_kes > 0 and not joined
+        # Students should only see the meeting link after successful payment/free enrollment.
+        if payment_required:
+            meeting_link = ""
+    elif fee_kes <= 0:
+        payment_status = "free"
     avg_rating, review_count = await compute_class_rating_snapshot(norm["id"])
     return ClassSessionResponse(
         id=norm["id"],
@@ -1910,15 +1935,19 @@ async def build_class_response(
         teacher_name=norm.get("teacher_name", "Teacher"),
         title=norm["title"],
         description=norm.get("description"),
-        meeting_link=norm["meeting_link"],
+        meeting_link=meeting_link,
         scheduled_start_at=norm["scheduled_start_at"],
         scheduled_end_at=norm["scheduled_end_at"],
         status=norm.get("status", "scheduled"),
         created_at=norm["created_at"],
-        fee_kes=int(norm.get("fee_kes", 0)),
+        fee_kes=fee_kes,
+        platform_fee_percent=platform_fee_percent,
+        teacher_net_kes=teacher_net_kes,
         duration_minutes=int(norm.get("duration_minutes", 0)),
         join_count=int(norm.get("join_count", 0)),
         joined=joined,
+        payment_required=payment_required,
+        payment_status=payment_status,
         average_rating=avg_rating,
         review_count=review_count,
         topic_suggestion_id=norm.get("topic_suggestion_id"),
@@ -2220,7 +2249,7 @@ def get_subscription_plans() -> List[SubscriptionPlan]:
             name="Weekly",
             cycle_days=7,
             amount_kes=_runtime_int("subscription_weekly_kes", SUBSCRIPTION_WEEKLY_KES),
-            generation_quota=WEEKLY_PLAN_MAX_GENERATIONS,
+            generation_quota=_runtime_int("weekly_plan_max_generations", WEEKLY_PLAN_MAX_GENERATIONS),
             exam_quota=_runtime_int("weekly_plan_max_exams", WEEKLY_PLAN_MAX_EXAMS),
             savings_label=SUBSCRIPTION_WEEKLY_LABEL or None,
         ),
@@ -2229,7 +2258,7 @@ def get_subscription_plans() -> List[SubscriptionPlan]:
             name="Monthly",
             cycle_days=30,
             amount_kes=_runtime_int("subscription_monthly_kes", SUBSCRIPTION_MONTHLY_KES),
-            generation_quota=MONTHLY_PLAN_MAX_GENERATIONS,
+            generation_quota=_runtime_int("monthly_plan_max_generations", MONTHLY_PLAN_MAX_GENERATIONS),
             exam_quota=_runtime_int("monthly_plan_max_exams", MONTHLY_PLAN_MAX_EXAMS),
             discount_pct=SUBSCRIPTION_MONTHLY_DISCOUNT_PCT,
             savings_label=SUBSCRIPTION_MONTHLY_LABEL or None,
@@ -2239,7 +2268,7 @@ def get_subscription_plans() -> List[SubscriptionPlan]:
             name="Annual",
             cycle_days=365,
             amount_kes=_runtime_int("subscription_annual_kes", SUBSCRIPTION_ANNUAL_KES),
-            generation_quota=ANNUAL_PLAN_MAX_GENERATIONS,
+            generation_quota=_runtime_int("annual_plan_max_generations", ANNUAL_PLAN_MAX_GENERATIONS),
             exam_quota=_runtime_int("annual_plan_max_exams", ANNUAL_PLAN_MAX_EXAMS),
             discount_pct=SUBSCRIPTION_ANNUAL_DISCOUNT_PCT,
             savings_label=SUBSCRIPTION_ANNUAL_LABEL or None,
@@ -2340,13 +2369,14 @@ async def get_generation_entitlement(user_id: str) -> Dict[str, Any]:
         counters["documents_uploaded_total"],
         current_documents + counters["documents_deleted_total"],
     )
+    free_plan_generation_limit = _runtime_int("free_plan_max_generations", FREE_PLAN_MAX_GENERATIONS)
     return {
         "plan_id": "free",
         "plan_name": "Free",
         "is_free": True,
-        "generation_limit": FREE_PLAN_MAX_GENERATIONS,
+        "generation_limit": free_plan_generation_limit,
         "generation_used": used,
-        "generation_remaining": max(0, FREE_PLAN_MAX_GENERATIONS - used),
+        "generation_remaining": max(0, free_plan_generation_limit - used),
         "generation_used_lifetime": used,
         "generation_current_items": current_generations,
         "window_end_at": None,
@@ -4855,6 +4885,25 @@ async def join_class_session(
             "payment_status": "free",
         }
 
+    existing_pending_payment = await db.class_payments.find_one(
+        {
+            "class_id": class_id,
+            "student_id": current_user["id"],
+            "status": "pending",
+        },
+        {"_id": 0, "checkout_request_id": 1, "amount_kes": 1, "created_at": 1},
+        sort=[("created_at", -1)],
+    )
+    if existing_pending_payment and existing_pending_payment.get("checkout_request_id"):
+        return {
+            "message": "Payment already initiated. Complete M-Pesa prompt on your phone.",
+            "class_id": class_id,
+            "requires_payment": True,
+            "payment_status": "pending",
+            "checkout_request_id": existing_pending_payment.get("checkout_request_id"),
+            "amount_kes": int(existing_pending_payment.get("amount_kes", fee_kes)),
+        }
+
     if not mpesa_service.enabled:
         raise HTTPException(status_code=500, detail="M-Pesa is not configured for class payments")
 
@@ -6424,10 +6473,13 @@ async def runtime_config():
         "subscriptions_enabled": SUBSCRIPTIONS_ENABLED,
         "mpesa_enabled": mpesa_service.enabled,
         "free_plan_max_documents": FREE_PLAN_MAX_DOCUMENTS,
-        "free_plan_max_generations": FREE_PLAN_MAX_GENERATIONS,
-        "weekly_plan_max_exams": WEEKLY_PLAN_MAX_EXAMS,
-        "monthly_plan_max_exams": MONTHLY_PLAN_MAX_EXAMS,
-        "annual_plan_max_exams": ANNUAL_PLAN_MAX_EXAMS,
+        "free_plan_max_generations": _runtime_int("free_plan_max_generations", FREE_PLAN_MAX_GENERATIONS),
+        "weekly_plan_max_generations": _runtime_int("weekly_plan_max_generations", WEEKLY_PLAN_MAX_GENERATIONS),
+        "monthly_plan_max_generations": _runtime_int("monthly_plan_max_generations", MONTHLY_PLAN_MAX_GENERATIONS),
+        "annual_plan_max_generations": _runtime_int("annual_plan_max_generations", ANNUAL_PLAN_MAX_GENERATIONS),
+        "weekly_plan_max_exams": _runtime_int("weekly_plan_max_exams", WEEKLY_PLAN_MAX_EXAMS),
+        "monthly_plan_max_exams": _runtime_int("monthly_plan_max_exams", MONTHLY_PLAN_MAX_EXAMS),
+        "annual_plan_max_exams": _runtime_int("annual_plan_max_exams", ANNUAL_PLAN_MAX_EXAMS),
         "free_plan_lifetime_usage_tracking": True,
         "subscription_account_reference_prefix": SUBSCRIPTION_ACCOUNT_REFERENCE_PREFIX,
         "subscription_transaction_desc_prefix": SUBSCRIPTION_TRANSACTION_DESC_PREFIX,
