@@ -4,7 +4,7 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "PYTHONPATH=. python -m celery -A task_queue.celery_app worker --loglevel=info --concurrency=2",
+    "startCommand": "python -m celery -A task_queue.celery_app worker --loglevel=info --concurrency=2",
     "healthcheckPath": "/api/health",
     "healthcheckTimeout": 120,
     "restartPolicyType": "ON_FAILURE",
