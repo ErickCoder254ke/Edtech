@@ -39,6 +39,8 @@ class _ClassesScreenState extends State<ClassesScreen> {
   List<ClassSession> _classes = [];
   int _withdrawableKes = 0;
   final Set<String> _busyClassIds = <String>{};
+  int _classMinFeeKes = 50;
+  int _classMaxFeeKes = 20000;
 
   bool get _isTeacher => widget.session.user.role.toLowerCase() == 'teacher';
 
@@ -99,6 +101,13 @@ class _ClassesScreenState extends State<ClassesScreen> {
           limit: 100,
         ),
       );
+      try {
+        final cfg = await widget.apiClient.getRuntimeConfig();
+        _classMinFeeKes =
+            (cfg['class_min_fee_kes'] as num?)?.toInt() ?? _classMinFeeKes;
+        _classMaxFeeKes =
+            (cfg['class_max_fee_kes'] as num?)?.toInt() ?? _classMaxFeeKes;
+      } catch (_) {}
       if (!mounted) return;
       int withdrawable = _withdrawableKes;
       if (_isTeacher) {
@@ -183,6 +192,22 @@ class _ClassesScreenState extends State<ClassesScreen> {
     if (feeKes < 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Enter a valid fee amount in KES.')),
+      );
+      return;
+    }
+    if (feeKes > 0 && feeKes < _classMinFeeKes) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Fee must be at least KES $_classMinFeeKes or 0 for free class.',
+          ),
+        ),
+      );
+      return;
+    }
+    if (feeKes > _classMaxFeeKes) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Fee must not exceed KES $_classMaxFeeKes.')),
       );
       return;
     }
@@ -638,6 +663,11 @@ class _ClassesScreenState extends State<ClassesScreen> {
             decoration: const InputDecoration(
               hintText: 'Class fee in KES (0 for free class)',
             ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Allowed fee range (admin synced): KES $_classMinFeeKes - $_classMaxFeeKes, or 0 for free class.',
+            style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
           ),
           const SizedBox(height: 8),
           Row(

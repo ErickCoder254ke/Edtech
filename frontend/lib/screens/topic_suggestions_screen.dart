@@ -42,6 +42,8 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
   TopicListResponse? _topicList;
   final Set<String> _upvotingIds = <String>{};
   final Set<String> _creatingClassIds = <String>{};
+  int _classMinFeeKes = 50;
+  int _classMaxFeeKes = 20000;
 
   bool get _isStudent => widget.session.user.role.toLowerCase() == 'student';
   bool get _categoryAtCapacity => (_topicList?.totalSuggestions ?? 0) >= 30;
@@ -49,6 +51,7 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
   @override
   void initState() {
     super.initState();
+    _loadRuntimeConfig();
     _loadTopics();
   }
 
@@ -56,8 +59,22 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
   void didUpdateWidget(covariant TopicSuggestionsScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.session.accessToken != widget.session.accessToken) {
+      _loadRuntimeConfig();
       _loadTopics();
     }
+  }
+
+  Future<void> _loadRuntimeConfig() async {
+    try {
+      final cfg = await widget.apiClient.getRuntimeConfig();
+      if (!mounted) return;
+      setState(() {
+        _classMinFeeKes =
+            (cfg['class_min_fee_kes'] as num?)?.toInt() ?? _classMinFeeKes;
+        _classMaxFeeKes =
+            (cfg['class_max_fee_kes'] as num?)?.toInt() ?? _classMaxFeeKes;
+      });
+    } catch (_) {}
   }
 
   @override
@@ -236,7 +253,11 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
   Future<void> _teacherCreateClass(TopicSuggestion item) async {
     final draft = await showDialog<_TopicClassDraft>(
       context: context,
-      builder: (_) => _CreateClassFromTopicDialog(topic: item),
+      builder: (_) => _CreateClassFromTopicDialog(
+        topic: item,
+        classMinFeeKes: _classMinFeeKes,
+        classMaxFeeKes: _classMaxFeeKes,
+      ),
     );
     if (draft == null) return;
     setState(() => _creatingClassIds.add(item.id));
@@ -826,9 +847,15 @@ class _TopicClassDraft {
 }
 
 class _CreateClassFromTopicDialog extends StatefulWidget {
-  const _CreateClassFromTopicDialog({required this.topic});
+  const _CreateClassFromTopicDialog({
+    required this.topic,
+    required this.classMinFeeKes,
+    required this.classMaxFeeKes,
+  });
 
   final TopicSuggestion topic;
+  final int classMinFeeKes;
+  final int classMaxFeeKes;
 
   @override
   State<_CreateClassFromTopicDialog> createState() =>
@@ -924,6 +951,24 @@ class _CreateClassFromTopicDialogState extends State<_CreateClassFromTopicDialog
       ).showSnackBar(const SnackBar(content: Text('Fee must be 0 or more.')));
       return;
     }
+    if (feeKes > 0 && feeKes < widget.classMinFeeKes) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Fee must be at least KES ${widget.classMinFeeKes} or 0 for free class.',
+          ),
+        ),
+      );
+      return;
+    }
+    if (feeKes > widget.classMaxFeeKes) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Fee must not exceed KES ${widget.classMaxFeeKes}.'),
+        ),
+      );
+      return;
+    }
     Navigator.of(context).pop(
       _TopicClassDraft(
         title: title,
@@ -980,6 +1025,11 @@ class _CreateClassFromTopicDialogState extends State<_CreateClassFromTopicDialog
                 decoration: const InputDecoration(
                   labelText: 'Fee (KES)',
                 ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Allowed (admin synced): KES ${widget.classMinFeeKes}-${widget.classMaxFeeKes}, or 0 for free class.',
+                style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
               ),
               const SizedBox(height: 10),
               OutlinedButton.icon(

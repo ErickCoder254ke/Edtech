@@ -311,6 +311,16 @@ class ApiClient {
     };
   }
 
+  Future<Map<String, dynamic>> getRuntimeConfig() async {
+    final response = await _sendRequest(
+      () => http
+          .get(_uri('/config'), headers: _jsonHeaders())
+          .timeout(_requestTimeout),
+    );
+    final data = _parseJson(response);
+    return data is Map<String, dynamic> ? data : <String, dynamic>{};
+  }
+
   Future<DocumentMetadata> uploadDocument({
     required String accessToken,
     required PlatformFile file,

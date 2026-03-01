@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "383915725228",
+    "project_id": "servicehub-notifications",
+    "storage_bucket": "servicehub-notifications.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:383915725228:android:ded6e5804884031a4f6a09",
+        "android_client_info": {
+          "package_name": "com.example.frontend"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDUZgyOg6lxq0aB0rqdmPFZG-kYjbeWIQ4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:383915725228:android:8788a24b761e5f1a4f6a09",
+        "android_client_info": {
+          "package_name": "com.yourcompany.servicehub"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDUZgyOg6lxq0aB0rqdmPFZG-kYjbeWIQ4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

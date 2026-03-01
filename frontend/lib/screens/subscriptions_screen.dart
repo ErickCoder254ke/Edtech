@@ -33,6 +33,7 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
   Map<String, dynamic>? _currentSubscription;
   String? _checkoutRequestId;
   String? _message;
+  DateTime? _lastSyncedAt;
 
   @override
   void initState() {
@@ -71,6 +72,7 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
       setState(() {
         _plans = plans;
         _currentSubscription = sub;
+        _lastSyncedAt = DateTime.now();
         if (_plans.isNotEmpty && !_plans.any((p) => p.planId == _selectedPlanId)) {
           _selectedPlanId = _plans.first.planId;
         }
@@ -140,7 +142,16 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
   Widget build(BuildContext context) {
     final active = _currentSubscription?['active'] == true;
     return Scaffold(
-      appBar: AppBar(title: const Text('Subscriptions')),
+      appBar: AppBar(
+        title: const Text('Subscriptions'),
+        actions: [
+          IconButton(
+            onPressed: _load,
+            icon: const Icon(Icons.refresh_rounded),
+            tooltip: 'Sync latest rates',
+          ),
+        ],
+      ),
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -151,7 +162,9 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
         ),
         child: _loading
             ? const Center(child: CircularProgressIndicator())
-            : ListView(
+            : RefreshIndicator(
+                onRefresh: _load,
+                child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
                 children: [
                   GlassContainer(
@@ -181,6 +194,17 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
+                  if (_lastSyncedAt != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        'Rates synced: ${_lastSyncedAt!.toLocal()}',
+                        style: const TextStyle(
+                          color: AppColors.textMuted,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
                   ..._plans.map((plan) {
                     final selected = plan.planId == _selectedPlanId;
                     return Padding(
@@ -249,6 +273,7 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
                     Text(_message!, style: const TextStyle(color: AppColors.textMuted)),
                   ],
                 ],
+              ),
               ),
       ),
     );

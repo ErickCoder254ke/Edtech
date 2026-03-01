@@ -125,13 +125,26 @@ class MPesaService:
                     json=payload,
                     headers={"Authorization": f"Bearer {token}"},
                 )
-                data = response.json()
+                try:
+                    data = response.json()
+                except Exception:
+                    data = {"raw_text": response.text}
         except Exception as exc:
-            logger.error("STK push request failed: %s", exc)
-            return {"success": False, "error": str(exc)}
+            logger.error(
+                "STK push request failed type=%s repr=%r",
+                type(exc).__name__,
+                exc,
+            )
+            error_text = str(exc) or type(exc).__name__
+            return {"success": False, "error": error_text}
 
         ok = response.status_code == 200 and data.get("ResponseCode") == "0"
         if not ok:
+            logger.warning(
+                "STK push rejected status=%s response=%s",
+                response.status_code,
+                data,
+            )
             return {
                 "success": False,
                 "error": data.get("errorMessage", "STK push failed"),
@@ -169,10 +182,18 @@ class MPesaService:
                     json=payload,
                     headers={"Authorization": f"Bearer {token}"},
                 )
-                data = response.json()
+                try:
+                    data = response.json()
+                except Exception:
+                    data = {"raw_text": response.text}
         except Exception as exc:
-            logger.error("STK query request failed: %s", exc)
-            return {"success": False, "error": str(exc)}
+            logger.error(
+                "STK query request failed type=%s repr=%r",
+                type(exc).__name__,
+                exc,
+            )
+            error_text = str(exc) or type(exc).__name__
+            return {"success": False, "error": error_text}
 
         return {
             "success": response.status_code == 200,
