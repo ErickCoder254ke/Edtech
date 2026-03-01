@@ -1513,13 +1513,37 @@ async def ensure_cbc_note_chunks(note_doc: Dict[str, Any]) -> None:
 
     note_url = str(note_doc.get("cloudinary_url") or "").strip()
     if not note_url:
-        raise HTTPException(status_code=502, detail="Selected shared note has no file URL")
+        raise HTTPException(status_code=424, detail="Selected shared note has no file URL")
 
     try:
         async with httpx.AsyncClient(timeout=90) as client_http:
             response = await client_http.get(note_url)
             response.raise_for_status()
             file_content = response.content
+    except httpx.HTTPStatusError as exc:
+        status_code = exc.response.status_code
+        logger.error(
+            "cbc_note_chunk_prep_download_failed note_id=%s status=%s error=%s",
+            note_id,
+            status_code,
+            exc,
+        )
+        if status_code in {401, 403, 404}:
+            await db.cbc_notes.update_one(
+                {"id": note_id},
+                {
+                    "$set": {
+                        "last_delivery_error_status": status_code,
+                        "last_delivery_error_at": datetime.now(timezone.utc).isoformat(),
+                        "last_delivery_error": f"download_failed_{status_code}",
+                    }
+                },
+            )
+            raise HTTPException(
+                status_code=424,
+                detail="Selected shared note is currently inaccessible. Please choose another shared note.",
+            )
+        raise HTTPException(status_code=502, detail="Unable to prepare shared note for generation")
     except Exception as exc:
         logger.error("cbc_note_chunk_prep_download_failed note_id=%s error=%s", note_id, exc)
         raise HTTPException(status_code=502, detail="Unable to prepare shared note for generation")
@@ -4083,7 +4107,6 @@ async def mpesa_callback(payload: Dict[str, Any], background_tasks: BackgroundTa
                     "class_id": class_payment["class_id"],
                     "student_id": class_payment["student_id"],
                     "joined_at": now_iso,
-                    "payment_status": "paid",
                     "payment_id": class_payment["id"],
                 }
                 join_result = await db.class_enrollments.update_one(
@@ -4091,7 +4114,10 @@ async def mpesa_callback(payload: Dict[str, Any], background_tasks: BackgroundTa
                         "class_id": class_payment["class_id"],
                         "student_id": class_payment["student_id"],
                     },
-                    {"$setOnInsert": enrollment_doc, "$set": {"payment_status": "paid"}},
+                    {
+                        "$setOnInsert": enrollment_doc,
+                        "$set": {"payment_status": "paid", "payment_id": class_payment["id"]},
+                    },
                     upsert=True,
                 )
                 if join_result.upserted_id is not None:
@@ -4327,7 +4353,7 @@ async def ingest_cbc_note_as_document(
 
     note_url = str(note_doc.get("cloudinary_url") or "").strip()
     if not note_url:
-        raise HTTPException(status_code=502, detail="Selected note is missing file URL")
+        raise HTTPException(status_code=424, detail="Selected note is missing file URL")
 
     try:
         async with httpx.AsyncClient(timeout=90) as client_http:
@@ -4335,6 +4361,31 @@ async def ingest_cbc_note_as_document(
             response.raise_for_status()
             file_content = response.content
             content_type = response.headers.get("content-type", "")
+    except httpx.HTTPStatusError as exc:
+        status_code = exc.response.status_code
+        logger.error(
+            "cbc_note_download_failed user_id=%s note_id=%s status=%s error=%s",
+            current_user["id"],
+            note_doc.get("id"),
+            status_code,
+            exc,
+        )
+        if status_code in {401, 403, 404}:
+            await db.cbc_notes.update_one(
+                {"id": str(note_doc.get("id") or "")},
+                {
+                    "$set": {
+                        "last_delivery_error_status": status_code,
+                        "last_delivery_error_at": datetime.now(timezone.utc).isoformat(),
+                        "last_delivery_error": f"download_failed_{status_code}",
+                    }
+                },
+            )
+            raise HTTPException(
+                status_code=424,
+                detail="Selected note is currently inaccessible. Please choose another note.",
+            )
+        raise HTTPException(status_code=502, detail="Failed to download selected note")
     except Exception as exc:
         logger.error(
             "cbc_note_download_failed user_id=%s note_id=%s error=%s",
@@ -4846,8 +4897,27 @@ async def run_generation_pipeline(
         ).to_list(max(100, len(selected_note_ids)))
         if len(note_docs) != len(selected_note_ids):
             raise HTTPException(status_code=404, detail="Some shared notes were not found")
+        usable_note_ids: List[str] = []
         for note in note_docs:
-            await ensure_cbc_note_chunks(note)
+            try:
+                await ensure_cbc_note_chunks(note)
+                usable_note_ids.append(str(note.get("id") or ""))
+            except HTTPException as exc:
+                if exc.status_code == 424:
+                    logger.warning(
+                        "cbc_note_skipped_inaccessible user_id=%s note_id=%s detail=%s",
+                        user_id,
+                        note.get("id"),
+                        exc.detail,
+                    )
+                    continue
+                raise
+        selected_note_ids = [nid for nid in usable_note_ids if nid]
+        if not selected_doc_ids and not selected_note_ids:
+            raise HTTPException(
+                status_code=424,
+                detail="All selected shared notes are inaccessible. Please select another note.",
+            )
 
     retrieval_query = f"{request.generation_type} {request.topic or ''}".strip()
     relevant_chunks: List[Dict[str, Any]] = []
@@ -5322,12 +5392,14 @@ async def join_class_session(
             "class_id": class_id,
             "student_id": current_user["id"],
             "joined_at": now_iso,
-            "payment_status": "paid",
             "payment_id": paid_payment.get("id"),
         }
         join_result = await db.class_enrollments.update_one(
             {"class_id": class_id, "student_id": current_user["id"]},
-            {"$setOnInsert": enrollment, "$set": {"payment_status": "paid"}},
+            {
+                "$setOnInsert": enrollment,
+                "$set": {"payment_status": "paid", "payment_id": paid_payment.get("id")},
+            },
             upsert=True,
         )
         if join_result.upserted_id is not None:
