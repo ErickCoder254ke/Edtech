@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 RETENTION_TARGET_LOCK_MINUTES = 20
 RETENTION_REQUEUE_SECONDS = 30
 ENGAGEMENT_UPGRADE_SUBJECT = "You are already using your free Exam OS credits"
+ENGAGEMENT_QUOTA_EXHAUSTED_SUBJECT = "Action needed: your Exam OS quota is exhausted"
 
 
 def _utc_now() -> datetime:
@@ -287,6 +288,172 @@ async def _send_first_exam_upgrade_nudge_impl(user_id: str) -> None:
             upsert=True,
         )
         logger.error("engagement_email_failed user_id=%s error=%s", user_id, exc)
+        raise
+
+
+@celery_app.task(
+    bind=True,
+    name="tasks.notifications.send_quota_exhausted_nudge",
+    max_retries=0,
+)
+def send_quota_exhausted_nudge(self, user_id: str, quota_type: str = "generation") -> None:
+    try:
+        run_async(_send_quota_exhausted_nudge_impl(user_id=user_id, quota_type=quota_type))
+    except Exception as exc:
+        logger.error(
+            "engagement_quota_exhausted_email_failed user_id=%s quota_type=%s error=%s",
+            user_id,
+            quota_type,
+            exc,
+        )
+        raise
+
+
+async def _send_quota_exhausted_nudge_impl(user_id: str, quota_type: str) -> None:
+    if not ENGAGEMENT_EMAILS_ENABLED:
+        return
+
+    normalized_type = "exam" if str(quota_type).strip().lower() == "exam" else "generation"
+    api_key = (BREVO_API_KEY2 or BREVO_API_KEY).strip()
+    if not api_key or not BREVO_SENDER_EMAIL:
+        logger.info(
+            "engagement_quota_exhausted_email_skip_missing_config user_id=%s quota_type=%s",
+            user_id,
+            normalized_type,
+        )
+        return
+
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "email": 1, "full_name": 1})
+    if not user or not str(user.get("email") or "").strip():
+        logger.info(
+            "engagement_quota_exhausted_email_skip_missing_user user_id=%s quota_type=%s",
+            user_id,
+            normalized_type,
+        )
+        return
+
+    now = _utc_now()
+    now_iso = now.isoformat()
+    day_key = _daily_usage_key(now)
+    lock_field = f"{normalized_type}_quota_exhausted_email_lock_until"
+    day_field = f"{normalized_type}_quota_exhausted_email_day_key"
+    sent_field = f"{normalized_type}_quota_exhausted_email_sent_at"
+
+    claim = await db.user_usage_counters.find_one_and_update(
+        {
+            "user_id": user_id,
+            day_field: {"$ne": day_key},
+            "$or": [
+                {lock_field: {"$exists": False}},
+                {lock_field: {"$lte": now_iso}},
+            ],
+        },
+        {
+            "$set": {
+                lock_field: (_utc_now() + timedelta(minutes=10)).isoformat(),
+                "updated_at": now_iso,
+            }
+        },
+        upsert=True,
+        projection={"_id": 0, "user_id": 1},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not claim:
+        return
+
+    slot_reserved, reserved_day_key = await _reserve_daily_slot(now)
+    if not slot_reserved:
+        await db.user_usage_counters.update_one(
+            {"user_id": user_id},
+            {"$unset": {lock_field: ""}, "$set": {"updated_at": now_iso}},
+            upsert=True,
+        )
+        logger.info(
+            "engagement_quota_exhausted_email_skip_daily_limit user_id=%s quota_type=%s limit=%s",
+            user_id,
+            normalized_type,
+            RETENTION_EMAIL_DAILY_LIMIT,
+        )
+        return
+
+    try:
+        entitlement = await get_generation_entitlement(user_id)
+        runtime = current_runtime_settings()
+        monthly_price = int(runtime.get("subscription_monthly_kes", 499))
+        full_name = str(user.get("full_name") or "").strip()
+        first_name = (full_name.split(" ")[0] if full_name else "there").strip() or "there"
+        plan_name = str(entitlement.get("plan_name") or "Free")
+
+        generation_used = int(entitlement.get("generation_used", 0))
+        generation_limit = int(entitlement.get("generation_limit", 0))
+        generation_remaining = int(entitlement.get("generation_remaining", 0))
+        exam_limit = entitlement.get("exam_limit")
+        exam_used = int(entitlement.get("exam_used") or 0) if exam_limit is not None else None
+        exam_remaining = int(entitlement.get("exam_remaining") or 0) if exam_limit is not None else None
+
+        if normalized_type == "exam":
+            headline = "You have exhausted your exam generation quota"
+            quota_line = (
+                f"Exam quota: <strong>{exam_used or 0}/{int(exam_limit or 0)}</strong> used "
+                f"(remaining: <strong>{exam_remaining or 0}</strong>)."
+            )
+            action_line = (
+                f"Upgrade or renew your plan to continue generating exams without interruption "
+                f"(Monthly starts at KES {monthly_price})."
+            )
+        else:
+            headline = "You have exhausted your generation quota"
+            quota_line = (
+                f"Generation quota: <strong>{generation_used}/{generation_limit}</strong> used "
+                f"(remaining: <strong>{generation_remaining}</strong>)."
+            )
+            action_line = (
+                f"Upgrade to continue creating new outputs right away "
+                f"(Monthly starts at KES {monthly_price})."
+            )
+
+        html = (
+            f"<p>Hi {first_name},</p>"
+            f"<p>{headline}.</p>"
+            f"<p>Current plan: <strong>{plan_name}</strong>.</p>"
+            f"<p>{quota_line}</p>"
+            f"<p>{action_line}</p>"
+            "<p>Need help choosing a plan? Reply to this email and our team will guide you.</p>"
+            "<p>— Exam OS Team</p>"
+        )
+        payload = {
+            "sender": {"email": BREVO_SENDER_EMAIL, "name": BREVO_SENDER_NAME},
+            "to": [{"email": str(user["email"]), "name": full_name or str(user["email"])}],
+            "subject": ENGAGEMENT_QUOTA_EXHAUSTED_SUBJECT,
+            "htmlContent": html,
+        }
+        await send_brevo_transactional_email(api_key=api_key, payload=payload)
+        await db.user_usage_counters.update_one(
+            {"user_id": user_id},
+            {
+                "$set": {
+                    sent_field: now_iso,
+                    day_field: day_key,
+                    "updated_at": now_iso,
+                },
+                "$unset": {lock_field: ""},
+            },
+            upsert=True,
+        )
+        logger.info(
+            "engagement_email_sent type=%s_quota_exhausted user_id=%s remaining_generation=%s remaining_exam=%s",
+            normalized_type,
+            user_id,
+            generation_remaining,
+            exam_remaining,
+        )
+    except Exception:
+        await _release_daily_slot(reserved_day_key)
+        await db.user_usage_counters.update_one(
+            {"user_id": user_id},
+            {"$unset": {lock_field: ""}, "$set": {"updated_at": _utc_now_iso()}},
+            upsert=True,
+        )
         raise
 
 

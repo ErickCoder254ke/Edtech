@@ -3064,9 +3064,24 @@ async def get_window_exam_usage(user_id: str, start_at_iso: str, end_at_iso: str
     )
 
 
+def enqueue_quota_exhausted_nudge(user_id: str, quota_type: str) -> None:
+    try:
+        from tasks.notifications import send_quota_exhausted_nudge
+
+        send_quota_exhausted_nudge.delay(user_id=user_id, quota_type=quota_type)
+    except Exception as exc:
+        logger.warning(
+            "engagement_quota_exhausted_enqueue_failed user_id=%s quota_type=%s error=%s",
+            user_id,
+            quota_type,
+            exc,
+        )
+
+
 async def consume_generation_quota(user_id: str, generation_type: str) -> None:
     entitlement = await get_generation_entitlement(user_id)
     if entitlement["generation_remaining"] <= 0:
+        enqueue_quota_exhausted_nudge(user_id=user_id, quota_type="generation")
         if entitlement["is_free"]:
             raise HTTPException(
                 status_code=402,
@@ -3089,6 +3104,7 @@ async def consume_generation_quota(user_id: str, generation_type: str) -> None:
         and entitlement.get("exam_limit") is not None
         and int(entitlement.get("exam_remaining", 0)) <= 0
     ):
+        enqueue_quota_exhausted_nudge(user_id=user_id, quota_type="exam")
         raise HTTPException(
             status_code=402,
             detail=(
