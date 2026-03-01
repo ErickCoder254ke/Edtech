@@ -33,12 +33,19 @@ def _resolve_credentials() -> Optional[credentials.Base]:
         try:
             if service_account_json.startswith('"') and service_account_json.endswith('"'):
                 service_account_json = service_account_json[1:-1]
-            service_account_json = service_account_json.replace("\\n", "\n")
+            # Parse JSON as-is first. JSON escaped newlines (\\n) are valid and should
+            # be decoded by json.loads, not pre-replaced into raw control characters.
             parsed = json.loads(service_account_json)
             return credentials.Certificate(parsed)
         except Exception as exc:
-            logger.error("firebase_credentials_json_invalid error=%s", exc)
-            return None
+            # Backward-compatible fallback for legacy env values that double-escape
+            # line breaks in the private key.
+            try:
+                parsed = json.loads(service_account_json.replace("\\\\n", "\\n"))
+                return credentials.Certificate(parsed)
+            except Exception:
+                logger.error("firebase_credentials_json_invalid error=%s", exc)
+                return None
 
     service_account_path = os.environ.get("FIREBASE_SERVICE_ACCOUNT_PATH", "").strip()
     if service_account_path and os.path.exists(service_account_path):
