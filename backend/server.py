@@ -4217,7 +4217,7 @@ async def queue_generation_content(
     try:
         from tasks.exam_generation import process_generation_job
 
-        async_result = process_generation_job.delay(job_id)
+        async_result = process_generation_job.apply_async(args=[job_id], queue="celery")
         await db.generation_jobs.update_one(
             {"job_id": job_id},
             {"$set": {"worker_task_id": async_result.id}},
@@ -4237,7 +4237,7 @@ async def queue_generation_content(
         )
         await maybe_wake_redis_on_activity(force=True)
         try:
-            async_result = process_generation_job.delay(job_id)
+            async_result = process_generation_job.apply_async(args=[job_id], queue="celery")
             await db.generation_jobs.update_one(
                 {"job_id": job_id},
                 {"$set": {"worker_task_id": async_result.id}},
