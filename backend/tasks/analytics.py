@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Dict, Any
 
 from task_queue import celery_app
+from tasks._async_runner import run_async
 from server import db
 
 logger = logging.getLogger(__name__)
@@ -11,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 @celery_app.task(bind=True, name="tasks.analytics.run_heavy_analytics")
 def run_heavy_analytics(self, user_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    return asyncio.run(_run_heavy_analytics_impl(user_id, payload))
+    return run_async(_run_heavy_analytics_impl(user_id, payload))
 
 
 async def _run_heavy_analytics_impl(user_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:

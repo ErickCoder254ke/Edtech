@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
@@ -6,6 +5,7 @@ from typing import Any, Dict, Optional, Tuple
 from pymongo import ReturnDocument
 
 from task_queue import celery_app
+from tasks._async_runner import run_async
 from notification_service import send_push_to_user
 from server import (
     BREVO_API_KEY2,
@@ -60,7 +60,7 @@ def send_generation_status_notification(
     message: str,
     result_reference: Optional[str] = None,
 ) -> None:
-    asyncio.run(
+    run_async(
         _persist_notification(
             user_id=user_id,
             job_id=job_id,
@@ -120,7 +120,7 @@ def send_class_scheduled_push(
     meeting_link: str,
     scheduled_start_at: str,
 ) -> None:
-    asyncio.run(
+    run_async(
         _send_class_scheduled_push(
             user_ids=user_ids,
             class_id=class_id,
@@ -158,7 +158,7 @@ async def _send_class_scheduled_push(
 
 @celery_app.task(bind=True, name="tasks.notifications.process_retention_insight_campaign")
 def process_retention_insight_campaign(self, campaign_id: str) -> Dict[str, Any]:
-    return asyncio.run(_process_retention_campaign_impl(self.request.id or "", campaign_id))
+    return run_async(_process_retention_campaign_impl(self.request.id or "", campaign_id))
 
 
 async def _process_retention_campaign_impl(worker_task_id: str, campaign_id: str) -> Dict[str, Any]:

@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import os
 import random
@@ -8,6 +7,7 @@ from fastapi import HTTPException
 from pymongo import ReturnDocument
 
 from task_queue import celery_app
+from tasks._async_runner import run_async
 from server import (
     GenerationRequest,
     db,
@@ -30,7 +30,7 @@ GENERATION_JOB_BACKOFF_MAX_SECONDS = int(os.environ.get("GENERATION_JOB_BACKOFF_
     max_retries=GENERATION_JOB_MAX_RETRIES,
 )
 def process_generation_job(self, job_id: str) -> dict:
-    return asyncio.run(_process_generation_job_impl(self, job_id))
+    return run_async(_process_generation_job_impl(self, job_id))
 
 
 async def _process_generation_job_impl(self, job_id: str) -> dict:
