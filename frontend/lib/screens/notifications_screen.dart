@@ -26,6 +26,7 @@ class NotificationsScreen extends StatefulWidget {
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
   bool _loading = true;
+  bool _testingPush = false;
   bool _unreadOnly = false;
   String? _error;
   List<NotificationItem> _items = [];
@@ -141,6 +142,41 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
+  Future<void> _testPush() async {
+    if (_testingPush) return;
+    setState(() => _testingPush = true);
+    try {
+      final health = await _runWithAuthRetry(
+        (token) => widget.apiClient.getPushHealth(accessToken: token),
+      );
+      if ((health['has_registered_token'] != true) ||
+          (health['firebase_enabled'] != true) ||
+          (health['firebase_ready'] != true)) {
+        if (!mounted) return;
+        final detail =
+            'firebase_enabled=${health['firebase_enabled']} '
+            'firebase_ready=${health['firebase_ready']} '
+            'has_registered_token=${health['has_registered_token']}';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Push not ready: $detail')),
+        );
+        return;
+      }
+      await _runWithAuthRetry(
+        (token) => widget.apiClient.sendTestPush(accessToken: token),
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Test push sent. Check your device notification tray.')),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) setState(() => _testingPush = false);
+    }
+  }
+
   String _fmt(DateTime dt) {
     final l = dt.toLocal();
     final y = l.year.toString().padLeft(4, '0');
@@ -157,6 +193,17 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       appBar: AppBar(
         title: const Text('Notifications'),
         actions: [
+          IconButton(
+            tooltip: 'Test Push',
+            onPressed: _testingPush ? null : _testPush,
+            icon: _testingPush
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.notifications_active_rounded),
+          ),
           IconButton(
             onPressed: _loadNotifications,
             icon: const Icon(Icons.refresh_rounded),

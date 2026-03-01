@@ -26,16 +26,26 @@ class PushNotificationService {
     if (!isSupportedMobile) return;
 
     final ready = await _ensureInitialized();
-    if (!ready) return;
+    if (!ready) {
+      debugPrint('push_init_failed firebase_not_initialized');
+      return;
+    }
     _activeAccessToken = accessToken;
 
     final messaging = FirebaseMessaging.instance;
-    await messaging.requestPermission(alert: true, badge: true, sound: true);
+    final permission = await messaging.requestPermission(alert: true, badge: true, sound: true);
+    if (permission.authorizationStatus == AuthorizationStatus.denied) {
+      debugPrint('push_permission_denied');
+      return;
+    }
 
     final token = await messaging.getToken();
     if (token != null && token.isNotEmpty && token != _registeredToken) {
       await _apiClient.registerPushToken(accessToken: accessToken, fcmToken: token);
       _registeredToken = token;
+      debugPrint('push_token_registered ${token.substring(0, token.length > 12 ? 12 : token.length)}...');
+    } else if (token == null || token.isEmpty) {
+      debugPrint('push_token_missing');
     }
 
     if (!_listenersAttached) {
@@ -47,7 +57,10 @@ class PushNotificationService {
         try {
           await _apiClient.registerPushToken(accessToken: tokenForAuth, fcmToken: newToken);
           _registeredToken = newToken;
-        } catch (_) {}
+          debugPrint('push_token_refreshed');
+        } catch (e) {
+          debugPrint('push_token_refresh_register_failed $e');
+        }
       });
 
       FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
@@ -76,7 +89,9 @@ class PushNotificationService {
   Future<bool> _ensureInitialized() async {
     if (_initialized) return true;
     try {
-      await Firebase.initializeApp();
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp();
+      }
       const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
       const iosSettings = DarwinInitializationSettings();
       await _localNotifications.initialize(
@@ -92,9 +107,18 @@ class PushNotificationService {
       await _localNotifications
           .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
           ?.createNotificationChannel(channel);
+      await _localNotifications
+          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+          ?.requestNotificationsPermission();
+      await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
       _initialized = true;
       return true;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('push_ensure_init_error $e');
       return false;
     }
   }

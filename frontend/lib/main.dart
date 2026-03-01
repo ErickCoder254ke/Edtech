@@ -147,7 +147,9 @@ class _ExamOsAppState extends State<ExamOsApp> {
       await _pushNotificationService.initializeForSession(
         accessToken: session.accessToken,
       );
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('push_register_failed $e');
+    }
   }
 
   Future<void> _setupDeepLinks() async {

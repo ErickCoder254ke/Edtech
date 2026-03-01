@@ -4,6 +4,8 @@ import '../models/models.dart';
 import '../services/api_client.dart';
 import '../theme/app_colors.dart';
 import '../widgets/glass_container.dart';
+import 'admin_integrations_status_screen.dart';
+import 'admin_teacher_verification_screen.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({
@@ -30,6 +32,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   String? _error;
   AdminDashboardSummary? _summary;
   AdminRuntimeSettings? _runtimeSettings;
+  Map<String, dynamic> _integrationStatus = const {};
+  Map<String, Map<String, dynamic>> _acknowledgedAlerts = const <String, Map<String, dynamic>>{};
 
   final TextEditingController _subscriptionWeeklyKesController =
       TextEditingController();
@@ -94,13 +98,25 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           (token) =>
               widget.apiClient.getAdminRuntimeSettings(accessToken: token),
         ),
+        _runWithAuthRetry(
+          (token) =>
+              widget.apiClient.getAdminIntegrationStatus(accessToken: token),
+        ),
+        _runWithAuthRetry(
+          (token) =>
+              widget.apiClient.getAdminAlertAcknowledgements(accessToken: token),
+        ),
       ]);
       final summary = results[0] as AdminDashboardSummary;
       final runtimeSettings = results[1] as AdminRuntimeSettings;
+      final integrationStatus = results[2] as Map<String, dynamic>;
+      final acknowledged = results[3] as Map<String, Map<String, dynamic>>;
       if (!mounted) return;
       setState(() {
         _summary = summary;
         _runtimeSettings = runtimeSettings;
+        _integrationStatus = integrationStatus;
+        _acknowledgedAlerts = acknowledged;
       });
       _hydrateSettingsControllers(runtimeSettings);
     } on ApiException catch (e) {
@@ -111,6 +127,158 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       setState(() => _error = 'Unable to load admin dashboard.');
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _openAdminIntegrationsPage() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AdminIntegrationsStatusScreen(
+          apiClient: widget.apiClient,
+          session: widget.session,
+          onSessionUpdated: widget.onSessionUpdated,
+          onSessionInvalid: widget.onSessionInvalid,
+        ),
+      ),
+    );
+  }
+
+  void _openAdminTeacherVerificationsPage() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AdminTeacherVerificationScreen(
+          apiClient: widget.apiClient,
+          session: widget.session,
+          onSessionUpdated: widget.onSessionUpdated,
+          onSessionInvalid: widget.onSessionInvalid,
+        ),
+      ),
+    );
+  }
+
+  List<_SystemAlert> _buildSystemAlerts() {
+    final localpro = (_integrationStatus['localpro'] as Map<String, dynamic>?) ?? const {};
+    final firebase = (_integrationStatus['firebase'] as Map<String, dynamic>?) ?? const {};
+    final brevo = (_integrationStatus['brevo'] as Map<String, dynamic>?) ?? const {};
+    final queue = (_integrationStatus['queue'] as Map<String, dynamic>?) ?? const {};
+
+    final alerts = <_SystemAlert>[];
+
+    final localproConfigured = localpro['configured'] == true;
+    final localproError = (localpro['last_fetch_error'] ?? '').toString().trim();
+    if (!localproConfigured) {
+      alerts.add(
+        const _SystemAlert(
+          key: 'localpro_not_configured',
+          level: _AlertLevel.warning,
+          title: 'LocalPro not configured',
+          detail: 'Set LOCALPRO_BASE_URL and API key to enable private tutor listing.',
+        ),
+      );
+    } else if (localproError.isNotEmpty) {
+      alerts.add(
+        _SystemAlert(
+          key: 'localpro_fetch_failed',
+          level: _AlertLevel.critical,
+          title: 'LocalPro fetch failing',
+          detail: localproError,
+        ),
+      );
+    }
+
+    if (queue['redis_ping_ok'] != true) {
+      alerts.add(
+        _SystemAlert(
+          key: 'redis_ping_failed',
+          level: _AlertLevel.critical,
+          title: 'Queue Redis ping failed',
+          detail: (queue['redis_error'] ?? 'Unknown Redis error').toString(),
+        ),
+      );
+    }
+
+    if (firebase['enabled'] == true && firebase['ready'] != true) {
+      alerts.add(
+        const _SystemAlert(
+          key: 'firebase_not_ready',
+          level: _AlertLevel.warning,
+          title: 'Firebase not ready',
+          detail: 'Push notifications may not be delivered.',
+        ),
+      );
+    }
+
+    final emailsFailed = (brevo['emails_failed_24h'] as num?)?.toInt() ?? 0;
+    if (emailsFailed > 20) {
+      alerts.add(
+        _SystemAlert(
+          key: 'brevo_high_failures',
+          level: _AlertLevel.warning,
+          title: 'High email failures',
+          detail: '$emailsFailed Brevo email sends failed in the last 24h.',
+        ),
+      );
+    }
+
+    final failedGen = (queue['generation_failed_24h'] as num?)?.toInt() ?? 0;
+    final completedGen = (queue['generation_completed_24h'] as num?)?.toInt() ?? 0;
+    final ratio = failedGen / (completedGen == 0 ? 1 : completedGen);
+    if (failedGen >= 10 && ratio > 0.2) {
+      alerts.add(
+        _SystemAlert(
+          key: 'generation_failure_spike',
+          level: _AlertLevel.warning,
+          title: 'Generation failures elevated',
+          detail:
+              'Failed: $failedGen, Completed: $completedGen in 24h. Investigate AI providers/queue.',
+        ),
+      );
+    }
+
+    if (alerts.isEmpty) {
+      alerts.add(
+        const _SystemAlert(
+          key: 'system_ok',
+          level: _AlertLevel.ok,
+          title: 'All core integrations healthy',
+          detail: 'No critical warnings detected in the latest snapshot.',
+        ),
+      );
+    }
+    return alerts
+        .map(
+          (a) => a.copyWith(
+            acknowledged: _acknowledgedAlerts.containsKey(a.key),
+            acknowledgedBy: _acknowledgedAlerts[a.key]?['acknowledged_by']?.toString(),
+            acknowledgedAt: _acknowledgedAlerts[a.key]?['acknowledged_at']?.toString(),
+          ),
+        )
+        .toList();
+  }
+
+  Future<void> _toggleAlertAcknowledgement(_SystemAlert alert) async {
+    try {
+      if (alert.acknowledged) {
+        await _runWithAuthRetry(
+          (token) => widget.apiClient.unacknowledgeAdminAlert(
+            accessToken: token,
+            alertKey: alert.key,
+          ),
+        );
+      } else {
+        await _runWithAuthRetry(
+          (token) => widget.apiClient.acknowledgeAdminAlert(
+            accessToken: token,
+            alertKey: alert.key,
+          ),
+        );
+      }
+      await _load();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
     }
   }
 
@@ -356,6 +524,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   Widget build(BuildContext context) {
     final summary = _summary;
     final runtimeSettings = _runtimeSettings;
+    final alerts = _buildSystemAlerts();
     return Scaffold(
       appBar: AppBar(
         title: const Text('Admin Dashboard'),
@@ -453,6 +622,119 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   ],
                 ),
                 const SizedBox(height: 16),
+                GlassContainer(
+                  borderRadius: 16,
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'System Alerts',
+                        style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                      ),
+                      const SizedBox(height: 8),
+                      ...alerts.map(
+                        (alert) => Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: alert.level == _AlertLevel.critical
+                                ? Colors.red.withValues(alpha: 0.14)
+                                : alert.level == _AlertLevel.warning
+                                    ? Colors.orange.withValues(alpha: 0.14)
+                                    : Colors.green.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: alert.level == _AlertLevel.critical
+                                  ? Colors.redAccent.withValues(alpha: 0.35)
+                                  : alert.level == _AlertLevel.warning
+                                      ? Colors.orangeAccent.withValues(alpha: 0.35)
+                                      : Colors.greenAccent.withValues(alpha: 0.35),
+                            ),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(
+                                alert.level == _AlertLevel.critical
+                                    ? Icons.error_rounded
+                                    : alert.level == _AlertLevel.warning
+                                        ? Icons.warning_rounded
+                                        : Icons.check_circle_rounded,
+                                color: alert.level == _AlertLevel.ok
+                                    ? Colors.greenAccent
+                                    : Colors.orangeAccent,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      alert.title,
+                                      style: const TextStyle(fontWeight: FontWeight.w700),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      alert.detail,
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        color: AppColors.textMuted,
+                                      ),
+                                    ),
+                                    if (alert.acknowledged &&
+                                        (alert.acknowledgedBy != null ||
+                                            alert.acknowledgedAt != null)) ...[
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'Reviewed by ${alert.acknowledgedBy ?? "-"}'
+                                        '${alert.acknowledgedAt != null ? " at ${alert.acknowledgedAt}" : ""}',
+                                        style: const TextStyle(
+                                          fontSize: 11,
+                                          color: AppColors.textMuted,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                              if (alert.level != _AlertLevel.ok)
+                                TextButton(
+                                  onPressed: () => _toggleAlertAcknowledgement(alert),
+                                  child: Text(
+                                    alert.acknowledged ? 'Reviewed' : 'Mark Reviewed',
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: _openAdminIntegrationsPage,
+                            icon: const Icon(Icons.hub_rounded, size: 16),
+                            label: const Text('Open Integrations'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: _openAdminTeacherVerificationsPage,
+                            icon: const Icon(Icons.fact_check_rounded, size: 16),
+                            label: const Text('Open Teacher Verifications'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: _load,
+                            icon: const Icon(Icons.refresh_rounded, size: 16),
+                            label: const Text('Retry Health Check'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
                 FilledButton.icon(
                   onPressed: _submittingWithdrawal
                       ? null
@@ -558,6 +840,48 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             ),
         ],
       ),
+    );
+  }
+}
+
+enum _AlertLevel { ok, warning, critical }
+
+class _SystemAlert {
+  const _SystemAlert({
+    required this.key,
+    required this.level,
+    required this.title,
+    required this.detail,
+    this.acknowledged = false,
+    this.acknowledgedBy,
+    this.acknowledgedAt,
+  });
+
+  final String key;
+  final _AlertLevel level;
+  final String title;
+  final String detail;
+  final bool acknowledged;
+  final String? acknowledgedBy;
+  final String? acknowledgedAt;
+
+  _SystemAlert copyWith({
+    String? key,
+    _AlertLevel? level,
+    String? title,
+    String? detail,
+    bool? acknowledged,
+    String? acknowledgedBy,
+    String? acknowledgedAt,
+  }) {
+    return _SystemAlert(
+      key: key ?? this.key,
+      level: level ?? this.level,
+      title: title ?? this.title,
+      detail: detail ?? this.detail,
+      acknowledged: acknowledged ?? this.acknowledged,
+      acknowledgedBy: acknowledgedBy ?? this.acknowledgedBy,
+      acknowledgedAt: acknowledgedAt ?? this.acknowledgedAt,
     );
   }
 }

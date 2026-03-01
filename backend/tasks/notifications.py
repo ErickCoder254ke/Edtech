@@ -1,4 +1,5 @@
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
 
@@ -9,8 +10,10 @@ from tasks._async_runner import run_async
 from notification_service import send_push_to_user
 from server import (
     BREVO_API_KEY2,
+    BREVO_API_KEY,
     BREVO_SENDER_EMAIL,
     BREVO_SENDER_NAME,
+    ENGAGEMENT_EMAILS_ENABLED,
     RETENTION_EMAIL_BATCH_SIZE,
     RETENTION_EMAIL_DAILY_LIMIT,
     RETENTION_EMAIL_MIN_DAYS_BETWEEN_SENDS,
@@ -24,6 +27,7 @@ from server import (
 logger = logging.getLogger(__name__)
 RETENTION_TARGET_LOCK_MINUTES = 20
 RETENTION_REQUEUE_SECONDS = 30
+ENGAGEMENT_UPGRADE_SUBJECT = "You are already using your free Exam OS credits"
 
 
 def _utc_now() -> datetime:
@@ -90,7 +94,7 @@ async def _persist_notification(
         "created_at": now.isoformat(),
     }
     await db.notifications.insert_one(doc)
-    await send_push_to_user(
+    sent = await send_push_to_user(
         db=db,
         user_id=user_id,
         title="Generation Update",
@@ -102,12 +106,25 @@ async def _persist_notification(
             "result_reference": result_reference or "",
         },
     )
+    await db.notification_delivery_logs.insert_one(
+        {
+            "id": str(uuid.uuid4()),
+            "channel": "push",
+            "category": "generation_status",
+            "user_id": user_id,
+            "notification_id": doc["id"],
+            "job_id": job_id,
+            "status": "sent" if sent else "failed",
+            "created_at": now.isoformat(),
+        }
+    )
     logger.info(
-        "notification_saved user_id=%s job_id=%s status=%s result_reference=%s",
+        "notification_saved user_id=%s job_id=%s status=%s result_reference=%s push_sent=%s",
         user_id,
         job_id,
         status,
         result_reference,
+        sent,
     )
 
 
@@ -154,6 +171,123 @@ async def _send_class_scheduled_push(
                 "status": "class_scheduled",
             },
         )
+
+
+@celery_app.task(
+    bind=True,
+    name="tasks.notifications.send_first_exam_upgrade_nudge",
+    max_retries=3,
+)
+def send_first_exam_upgrade_nudge(self, user_id: str) -> None:
+    try:
+        run_async(_send_first_exam_upgrade_nudge_impl(user_id=user_id))
+    except Exception as exc:
+        delay = min(300, 30 * (2 ** self.request.retries))
+        raise self.retry(exc=exc, countdown=delay)
+
+
+async def _send_first_exam_upgrade_nudge_impl(user_id: str) -> None:
+    if not ENGAGEMENT_EMAILS_ENABLED:
+        return
+    api_key = (BREVO_API_KEY2 or BREVO_API_KEY).strip()
+    if not api_key or not BREVO_SENDER_EMAIL:
+        logger.info("engagement_email_skip_missing_config user_id=%s", user_id)
+        return
+
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "email": 1, "full_name": 1})
+    if not user or not str(user.get("email") or "").strip():
+        logger.info("engagement_email_skip_missing_user user_id=%s", user_id)
+        return
+
+    now_iso = _utc_now_iso()
+    claim = await db.user_usage_counters.find_one_and_update(
+        {
+            "user_id": user_id,
+            "first_exam_upgrade_email_sent_at": {"$exists": False},
+            "$or": [
+                {"first_exam_upgrade_email_lock_until": {"$exists": False}},
+                {"first_exam_upgrade_email_lock_until": {"$lte": now_iso}},
+            ],
+        },
+        {
+            "$set": {
+                "first_exam_upgrade_email_lock_until": (
+                    _utc_now() + timedelta(minutes=10)
+                ).isoformat(),
+                "updated_at": now_iso,
+            }
+        },
+        upsert=True,
+        projection={"_id": 0, "user_id": 1},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not claim:
+        return
+
+    try:
+        entitlement = await get_generation_entitlement(user_id)
+        if not bool(entitlement.get("is_free", True)):
+            await db.user_usage_counters.update_one(
+                {"user_id": user_id},
+                {"$unset": {"first_exam_upgrade_email_lock_until": ""}},
+            )
+            return
+
+        generation_used = int(entitlement.get("generation_used", 0))
+        generation_limit = int(entitlement.get("generation_limit", 0))
+        generation_remaining = int(entitlement.get("generation_remaining", 0))
+
+        # Trigger the nudge right after the first exam generation.
+        if generation_used < 1:
+            await db.user_usage_counters.update_one(
+                {"user_id": user_id},
+                {"$unset": {"first_exam_upgrade_email_lock_until": ""}},
+            )
+            return
+
+        full_name = str(user.get("full_name") or "").strip()
+        first_name = (full_name.split(" ")[0] if full_name else "there").strip() or "there"
+        monthly_price = int(current_runtime_settings().get("subscription_monthly_kes", 499))
+        html = (
+            f"<p>Hi {first_name},</p>"
+            "<p>Great start. You have made your first exam generation on Exam OS.</p>"
+            f"<p>Your current free credits: <strong>{generation_used}/{generation_limit}</strong> used "
+            f"(remaining: <strong>{generation_remaining}</strong>).</p>"
+            f"<p>To avoid interruption as your usage grows, consider upgrading to Monthly "
+            f"(KES {monthly_price}) for higher generation and exam limits.</p>"
+            "<p>Keep building great assessments.<br/>Exam OS Team</p>"
+        )
+        payload = {
+            "sender": {"email": BREVO_SENDER_EMAIL, "name": BREVO_SENDER_NAME},
+            "to": [{"email": str(user["email"]), "name": full_name or str(user["email"])}],
+            "subject": ENGAGEMENT_UPGRADE_SUBJECT,
+            "htmlContent": html,
+        }
+        await send_brevo_transactional_email(api_key=api_key, payload=payload)
+        await db.user_usage_counters.update_one(
+            {"user_id": user_id},
+            {
+                "$set": {
+                    "first_exam_upgrade_email_sent_at": now_iso,
+                    "updated_at": now_iso,
+                },
+                "$unset": {"first_exam_upgrade_email_lock_until": ""},
+            },
+            upsert=True,
+        )
+        logger.info(
+            "engagement_email_sent type=first_exam_upgrade user_id=%s remaining=%s",
+            user_id,
+            generation_remaining,
+        )
+    except Exception as exc:
+        await db.user_usage_counters.update_one(
+            {"user_id": user_id},
+            {"$unset": {"first_exam_upgrade_email_lock_until": ""}},
+            upsert=True,
+        )
+        logger.error("engagement_email_failed user_id=%s error=%s", user_id, exc)
+        raise
 
 
 @celery_app.task(bind=True, name="tasks.notifications.process_retention_insight_campaign")

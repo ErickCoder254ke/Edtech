@@ -8,6 +8,8 @@ import '../theme/app_colors.dart';
 import 'dashboard_screen.dart';
 import 'classes_screen.dart';
 import 'admin_dashboard_screen.dart';
+import 'admin_integrations_status_screen.dart';
+import 'admin_teacher_verification_screen.dart';
 import 'exam_configurator_screen.dart';
 import 'jobs_screen.dart';
 import 'library_screen.dart';
@@ -16,6 +18,7 @@ import 'profile_screen.dart';
 import 'private_tutors_screen.dart';
 import 'subscriptions_screen.dart';
 import 'support_center_screen.dart';
+import 'teacher_verification_screen.dart';
 import 'terms_conditions_screen.dart';
 import 'topic_suggestions_screen.dart';
 import 'topic_moderation_screen.dart';
@@ -47,6 +50,7 @@ class _HomeShellState extends State<HomeShell> {
   String? _uploadCompleteNote;
   Timer? _uploadCompleteTimer;
   int _flaggedTopicCount = 0;
+  String _teacherVerificationStatus = 'not_submitted';
 
   String _titleForIndex(int index) {
     switch (index) {
@@ -170,11 +174,51 @@ class _HomeShellState extends State<HomeShell> {
     );
   }
 
+  void _openTeacherVerificationPage() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => TeacherVerificationScreen(
+          apiClient: widget.apiClient,
+          session: widget.session,
+          onSessionUpdated: widget.onSessionUpdated,
+          onSessionInvalid: widget.onLogout,
+        ),
+      ),
+    );
+  }
+
+  void _openAdminTeacherVerificationPage() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AdminTeacherVerificationScreen(
+          apiClient: widget.apiClient,
+          session: widget.session,
+          onSessionUpdated: widget.onSessionUpdated,
+          onSessionInvalid: widget.onLogout,
+        ),
+      ),
+    );
+  }
+
+  void _openAdminIntegrationsPage() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AdminIntegrationsStatusScreen(
+          apiClient: widget.apiClient,
+          session: widget.session,
+          onSessionUpdated: widget.onSessionUpdated,
+          onSessionInvalid: widget.onLogout,
+        ),
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
     _loadCoachState();
     _loadTopicModerationBadge();
+    _loadTeacherVerificationStatus();
   }
 
   @override
@@ -183,6 +227,7 @@ class _HomeShellState extends State<HomeShell> {
     if (oldWidget.session.accessToken != widget.session.accessToken) {
       _loadCoachState();
       _loadTopicModerationBadge();
+      _loadTeacherVerificationStatus();
     }
   }
 
@@ -232,6 +277,23 @@ class _HomeShellState extends State<HomeShell> {
     } catch (_) {
       if (!mounted) return;
       setState(() => _flaggedTopicCount = 0);
+    }
+  }
+
+  Future<void> _loadTeacherVerificationStatus() async {
+    if (widget.session.user.role.toLowerCase() != 'teacher') {
+      if (mounted) setState(() => _teacherVerificationStatus = 'not_applicable');
+      return;
+    }
+    try {
+      final data = await _runWithAuthRetry(
+        (token) => widget.apiClient.getMyTeacherVerification(accessToken: token),
+      );
+      if (!mounted) return;
+      setState(() => _teacherVerificationStatus = data.status);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _teacherVerificationStatus = 'not_submitted');
     }
   }
 
@@ -318,18 +380,26 @@ class _HomeShellState extends State<HomeShell> {
         Scaffold(
           key: _scaffoldKey,
           drawer: Drawer(
+            width: 338,
             backgroundColor: AppColors.surfaceDark,
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.horizontal(right: Radius.circular(28)),
+            ),
             child: SafeArea(
               child: ListView(
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
+                padding: const EdgeInsets.fromLTRB(14, 16, 14, 22),
                 children: [
-                  _MenuProfileCard(user: widget.session.user),
-                  const SizedBox(height: 14),
+                  _MenuProfileCard(
+                    user: widget.session.user,
+                    teacherVerificationStatus: _teacherVerificationStatus,
+                  ),
+                  const SizedBox(height: 16),
                   const _MenuSectionTitle('Shortcuts'),
                   _MenuNavTile(
                     icon: Icons.grid_view_rounded,
                     title: 'Dashboard',
                     subtitle: 'Home insights and stats',
+                    active: _index == 0,
                     onTap: () {
                       Navigator.of(context).pop();
                       setState(() => _index = 0);
@@ -339,6 +409,7 @@ class _HomeShellState extends State<HomeShell> {
                     icon: Icons.menu_book_rounded,
                     title: 'Library',
                     subtitle: 'Documents and generations',
+                    active: _index == 1,
                     onTap: () {
                       Navigator.of(context).pop();
                       setState(() => _index = 1);
@@ -348,6 +419,7 @@ class _HomeShellState extends State<HomeShell> {
                     icon: Icons.upload_file_rounded,
                     title: 'Upload',
                     subtitle: 'Ingest and tag content',
+                    active: _index == 2,
                     onTap: () {
                       Navigator.of(context).pop();
                       setState(() => _index = 2);
@@ -357,6 +429,7 @@ class _HomeShellState extends State<HomeShell> {
                     icon: Icons.auto_awesome_rounded,
                     title: 'Generation Lab',
                     subtitle: 'Create quizzes and exams',
+                    active: _index == 3,
                     onTap: () {
                       Navigator.of(context).pop();
                       setState(() => _index = 3);
@@ -402,6 +475,7 @@ class _HomeShellState extends State<HomeShell> {
                     icon: Icons.forum_rounded,
                     title: 'Topic Board',
                     subtitle: 'Suggest and upvote class topics',
+                    active: _index == 4,
                     onTap: () {
                       Navigator.of(context).pop();
                       setState(() => _index = 4);
@@ -420,6 +494,16 @@ class _HomeShellState extends State<HomeShell> {
                         _openTopicModerationPage();
                       },
                     ),
+                  if (widget.session.user.role.toLowerCase() == 'teacher')
+                    _MenuNavTile(
+                      icon: Icons.verified_user_rounded,
+                      title: 'Teacher Verification',
+                      subtitle: 'Submit TSC and ID for approval',
+                      onTap: () {
+                        Navigator.of(context).pop();
+                        _openTeacherVerificationPage();
+                      },
+                    ),
                   if (widget.session.user.role.toLowerCase() == 'admin')
                     _MenuNavTile(
                       icon: Icons.admin_panel_settings_rounded,
@@ -428,6 +512,26 @@ class _HomeShellState extends State<HomeShell> {
                       onTap: () {
                         Navigator.of(context).pop();
                         _openAdminDashboardPage();
+                      },
+                    ),
+                  if (widget.session.user.role.toLowerCase() == 'admin')
+                    _MenuNavTile(
+                      icon: Icons.fact_check_rounded,
+                      title: 'Teacher Verifications',
+                      subtitle: 'Approve or reject teacher documents',
+                      onTap: () {
+                        Navigator.of(context).pop();
+                        _openAdminTeacherVerificationPage();
+                      },
+                    ),
+                  if (widget.session.user.role.toLowerCase() == 'admin')
+                    _MenuNavTile(
+                      icon: Icons.hub_rounded,
+                      title: 'Integrations',
+                      subtitle: 'LocalPro, Firebase, Brevo and queue health',
+                      onTap: () {
+                        Navigator.of(context).pop();
+                        _openAdminIntegrationsPage();
                       },
                     ),
                   const SizedBox(height: 10),
@@ -500,23 +604,27 @@ class _HomeShellState extends State<HomeShell> {
                     },
                   ),
                   const SizedBox(height: 14),
-                  ListTile(
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
+                  FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 52),
+                      backgroundColor: Colors.redAccent.withValues(alpha: 0.15),
+                      foregroundColor: Colors.redAccent,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        side: BorderSide(
+                          color: Colors.redAccent.withValues(alpha: 0.45),
+                        ),
+                      ),
                     ),
-                    leading: const Icon(
-                      Icons.logout_rounded,
-                      color: Colors.redAccent,
-                    ),
-                    title: const Text(
-                      'Logout',
-                      style: TextStyle(color: Colors.redAccent),
-                    ),
-                    subtitle: const Text('Sign out from this device'),
-                    onTap: () {
+                    onPressed: () {
                       Navigator.of(context).pop();
                       widget.onLogout();
                     },
+                    icon: const Icon(Icons.logout_rounded),
+                    label: const Text(
+                      'Logout',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
                   ),
                 ],
               ),
@@ -942,9 +1050,13 @@ class _NavItem extends StatelessWidget {
 }
 
 class _MenuProfileCard extends StatelessWidget {
-  const _MenuProfileCard({required this.user});
+  const _MenuProfileCard({
+    required this.user,
+    required this.teacherVerificationStatus,
+  });
 
   final User user;
+  final String teacherVerificationStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -968,6 +1080,53 @@ class _MenuProfileCard extends StatelessWidget {
       ),
       child: Row(
         children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  user.role.toUpperCase(),
+                  style: const TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+              ),
+              const Spacer(),
+              if (user.role.toLowerCase() == 'teacher')
+                Container(
+                  margin: const EdgeInsets.only(right: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: teacherVerificationStatus == 'approved'
+                        ? Colors.green.withValues(alpha: 0.22)
+                        : teacherVerificationStatus == 'pending'
+                            ? Colors.orange.withValues(alpha: 0.22)
+                            : Colors.red.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    teacherVerificationStatus.toUpperCase(),
+                    style: const TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.6,
+                    ),
+                  ),
+                ),
+              const Icon(
+                Icons.shield_outlined,
+                size: 16,
+                color: AppColors.textMuted,
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
           CircleAvatar(
             radius: 24,
             backgroundColor: AppColors.surfaceDark,
@@ -1034,6 +1193,7 @@ class _MenuNavTile extends StatelessWidget {
     required this.subtitle,
     required this.onTap,
     this.badge,
+    this.active = false,
   });
 
   final IconData icon;
@@ -1041,16 +1201,42 @@ class _MenuNavTile extends StatelessWidget {
   final String subtitle;
   final VoidCallback onTap;
   final String? badge;
+  final bool active;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.only(bottom: 8),
       child: ListTile(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        tileColor: Colors.white.withValues(alpha: 0.02),
-        leading: Icon(icon, color: AppColors.primary),
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        minLeadingWidth: 0,
+        dense: true,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        tileColor: active
+            ? AppColors.primary.withValues(alpha: 0.14)
+            : Colors.white.withValues(alpha: 0.025),
+        leading: Container(
+          height: 34,
+          width: 34,
+          decoration: BoxDecoration(
+            color: active
+                ? AppColors.primary.withValues(alpha: 0.22)
+                : Colors.white.withValues(alpha: 0.06),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(
+            icon,
+            size: 19,
+            color: active ? AppColors.primary : Colors.white70,
+          ),
+        ),
+        title: Text(
+          title,
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            color: active ? Colors.white : null,
+          ),
+        ),
         subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,

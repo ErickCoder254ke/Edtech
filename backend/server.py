@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Request, BackgroundTasks
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Form, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
@@ -182,6 +182,7 @@ SUPPORT_CONTACT_EMAIL = os.environ.get("SUPPORT_CONTACT_EMAIL", "support@examos.
 SUPPORT_CONTACT_PHONE = os.environ.get("SUPPORT_CONTACT_PHONE", "0114090740")
 LOCALPRO_BASE_URL = os.environ.get("LOCALPRO_BASE_URL", "").strip().rstrip("/")
 LOCALPRO_API_KEY = os.environ.get("LOCALPRO_API_KEY", "").strip()
+LOCALPRO_API_KEY_HEADER = os.environ.get("LOCALPRO_API_KEY_HEADER", "X-API-Key").strip() or "X-API-Key"
 LOCALPRO_TUTORS_PATH = os.environ.get("LOCALPRO_TUTORS_PATH", "/api/services").strip() or "/api/services"
 LOCALPRO_TUTOR_CATEGORY = os.environ.get("LOCALPRO_TUTOR_CATEGORY", "tutoring").strip().lower()
 LOCALPRO_TIMEOUT_SECONDS = float(os.environ.get("LOCALPRO_TIMEOUT_SECONDS", "12"))
@@ -191,6 +192,14 @@ LOCALPRO_PLAYSTORE_URL = os.environ.get(
     "LOCALPRO_PLAYSTORE_URL",
     "https://play.google.com/store/apps/details?id=com.ericko2525.petsoko",
 ).strip()
+TEACHER_VERIFICATION_ENABLED = os.environ.get("TEACHER_VERIFICATION_ENABLED", "true").lower() == "true"
+CLOUDINARY_CLOUD_NAME = os.environ.get("CLOUDINARY_CLOUD_NAME", "").strip()
+CLOUDINARY_API_KEY = os.environ.get("CLOUDINARY_API_KEY", "").strip()
+CLOUDINARY_API_SECRET = os.environ.get("CLOUDINARY_API_SECRET", "").strip()
+CLOUDINARY_VERIFICATION_FOLDER = (
+    os.environ.get("CLOUDINARY_VERIFICATION_FOLDER", "exam_os/teacher_verifications").strip()
+    or "exam_os/teacher_verifications"
+)
 PASSWORD_RESET_TTL_MINUTES = int(os.environ.get("PASSWORD_RESET_TTL_MINUTES", "30"))
 PASSWORD_RESET_TOKEN_BYTES = int(os.environ.get("PASSWORD_RESET_TOKEN_BYTES", "32"))
 PASSWORD_RESET_REQUEST_PER_HOUR_LIMIT = int(os.environ.get("PASSWORD_RESET_REQUEST_PER_HOUR_LIMIT", "6"))
@@ -213,6 +222,7 @@ RETENTION_EMAIL_BATCH_SIZE = int(os.environ.get("RETENTION_EMAIL_BATCH_SIZE", "3
 RETENTION_EMAIL_MIN_DAYS_BETWEEN_SENDS = int(
     os.environ.get("RETENTION_EMAIL_MIN_DAYS_BETWEEN_SENDS", "5")
 )
+ENGAGEMENT_EMAILS_ENABLED = os.environ.get("ENGAGEMENT_EMAILS_ENABLED", "true").lower() == "true"
 REDIS_WAKE_ON_ACTIVITY = os.environ.get("REDIS_WAKE_ON_ACTIVITY", "true").lower() == "true"
 REDIS_WAKE_INTERVAL_SECONDS = float(os.environ.get("REDIS_WAKE_INTERVAL_SECONDS", "30"))
 REDIS_WAKE_TIMEOUT_SECONDS = float(os.environ.get("REDIS_WAKE_TIMEOUT_SECONDS", "2"))
@@ -272,6 +282,7 @@ TOPIC_CATEGORY_ALIASES: Dict[str, str] = {
     "senior_secondary": "senior_secondary",
     "senior secondary": "senior_secondary",
 }
+TEACHER_VERIFICATION_STATUSES = {"not_submitted", "pending", "approved", "rejected"}
 TOPIC_SORT_OPTIONS = {"top", "new"}
 USER_ROLE_OPTIONS = {"student", "teacher"}
 TOPIC_TEXT_STOPWORDS = {
@@ -332,6 +343,8 @@ _NVIDIA_MODEL_ROUTER_LOCK = asyncio.Lock()
 _NVIDIA_MODEL_ROUTER_NEXT_INDEX = 0
 _REDIS_WAKE_LOCK = asyncio.Lock()
 _REDIS_WAKE_LAST_ATTEMPT_TS = 0.0
+_LOCALPRO_LAST_FETCH_AT: Optional[str] = None
+_LOCALPRO_LAST_FETCH_ERROR: Optional[str] = None
 
 security = HTTPBearer()
 embedding_client = build_embedding_client(
@@ -538,6 +551,15 @@ class ClassCreateRequest(BaseModel):
     fee_kes: int = Field(ge=0)
 
 
+class TopicClassCreateRequest(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    meeting_link: str
+    scheduled_start_at: datetime
+    scheduled_end_at: datetime
+    fee_kes: int = Field(ge=0)
+
+
 class ClassReviewCreateRequest(BaseModel):
     rating: int = Field(ge=1, le=5)
     comment: Optional[str] = None
@@ -595,6 +617,7 @@ class ClassSessionResponse(BaseModel):
     joined: bool = False
     average_rating: Optional[float] = None
     review_count: int = 0
+    topic_suggestion_id: Optional[str] = None
 
 
 class ClassReviewResponse(BaseModel):
@@ -622,6 +645,37 @@ class NotificationResponse(BaseModel):
 
 class PushTokenUpdateRequest(BaseModel):
     fcm_token: str
+
+
+class TeacherVerificationResponse(BaseModel):
+    teacher_id: str
+    status: str
+    tsc_number: Optional[str] = None
+    id_document_url: Optional[str] = None
+    tsc_certificate_url: Optional[str] = None
+    submitted_at: Optional[datetime] = None
+    reviewed_at: Optional[datetime] = None
+    reviewed_by: Optional[str] = None
+    review_comment: Optional[str] = None
+    rejection_reason: Optional[str] = None
+
+
+class TeacherVerificationReviewRequest(BaseModel):
+    action: str
+    comment: Optional[str] = None
+
+
+class TeacherVerificationAuditEntryResponse(BaseModel):
+    actor_id: str
+    actor_role: str
+    action: str
+    comment: Optional[str] = None
+    at: datetime
+
+
+class AdminAlertAcknowledgeRequest(BaseModel):
+    alert_key: str
+    note: Optional[str] = None
 
 
 class TopicCreateRequest(BaseModel):
@@ -670,6 +724,7 @@ class TopicSuggestionResponse(BaseModel):
     upvote_count: int
     status: str
     user_has_upvoted: bool = False
+    linked_class_id: Optional[str] = None
 
 
 class TopicListResponse(BaseModel):
@@ -870,15 +925,51 @@ async def send_brevo_transactional_email(
         "api-key": api_key,
         "content-type": "application/json",
     }
-    async with httpx.AsyncClient(timeout=BREVO_TIMEOUT_SECONDS) as client:
-        response = await client.post("https://api.brevo.com/v3/smtp/email", headers=headers, json=payload)
-        response.raise_for_status()
-        if not response.text:
-            return {}
-        try:
-            return response.json()
-        except ValueError:
-            return {}
+    recipient = ""
+    try:
+        to_list = payload.get("to")
+        if isinstance(to_list, list) and to_list and isinstance(to_list[0], dict):
+            recipient = str(to_list[0].get("email") or "").strip().lower()
+    except Exception:
+        recipient = ""
+    subject = str(payload.get("subject") or "")
+    template_id = payload.get("templateId")
+    log_base = {
+        "id": str(uuid.uuid4()),
+        "provider": "brevo",
+        "recipient": recipient,
+        "subject": subject[:160] if subject else None,
+        "template_id": int(template_id) if isinstance(template_id, (int, float)) else template_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=BREVO_TIMEOUT_SECONDS) as client:
+            response = await client.post("https://api.brevo.com/v3/smtp/email", headers=headers, json=payload)
+            response.raise_for_status()
+            body: Dict[str, Any] = {}
+            if response.text:
+                try:
+                    body = response.json()
+                except ValueError:
+                    body = {}
+            await db.email_delivery_logs.insert_one(
+                {
+                    **log_base,
+                    "status": "sent",
+                    "message_id": str(body.get("messageId") or ""),
+                    "http_status": response.status_code,
+                }
+            )
+            return body
+    except Exception as exc:
+        await db.email_delivery_logs.insert_one(
+            {
+                **log_base,
+                "status": "failed",
+                "error": str(exc),
+            }
+        )
+        raise
 
 
 async def send_password_reset_email(email: str, full_name: str, deep_link: str) -> None:
@@ -1524,6 +1615,7 @@ def build_topic_response(
         upvote_count=int(norm.get("upvote_count", 0)),
         status=norm.get("status", "open"),
         user_has_upvoted=has_upvoted,
+        linked_class_id=norm.get("linked_class_id"),
     )
 
 
@@ -1647,6 +1739,136 @@ def normalize_meeting_link(raw_link: str) -> str:
     return link
 
 
+def _cloudinary_configured() -> bool:
+    return bool(CLOUDINARY_CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET)
+
+
+async def upload_teacher_verification_file(
+    *,
+    teacher_id: str,
+    document_type: str,
+    file: UploadFile,
+) -> Dict[str, Any]:
+    if not _cloudinary_configured():
+        raise HTTPException(status_code=500, detail="Cloudinary is not configured")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail=f"{document_type} file is empty")
+    if len(raw) > 12 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail=f"{document_type} file exceeds 12MB limit")
+
+    timestamp = int(time.time())
+    folder = f"{CLOUDINARY_VERIFICATION_FOLDER}/{teacher_id}"
+    public_id = f"{document_type}_{uuid.uuid4().hex[:12]}"
+    signature_payload = f"folder={folder}&public_id={public_id}&timestamp={timestamp}{CLOUDINARY_API_SECRET}"
+    signature = hashlib.sha1(signature_payload.encode("utf-8")).hexdigest()
+    url = f"https://api.cloudinary.com/v1_1/{CLOUDINARY_CLOUD_NAME}/auto/upload"
+    data = {
+        "api_key": CLOUDINARY_API_KEY,
+        "timestamp": str(timestamp),
+        "folder": folder,
+        "public_id": public_id,
+        "signature": signature,
+    }
+    files = {
+        "file": (
+            file.filename or f"{document_type}.bin",
+            raw,
+            file.content_type or "application/octet-stream",
+        )
+    }
+    try:
+        async with httpx.AsyncClient(timeout=45) as client_http:
+            response = await client_http.post(url, data=data, files=files)
+            response.raise_for_status()
+            payload = response.json()
+    except Exception as exc:
+        logger.error("teacher_verification_cloudinary_upload_failed teacher_id=%s doc=%s error=%s", teacher_id, document_type, exc)
+        raise HTTPException(status_code=502, detail="Verification upload failed")
+    secure_url = str(payload.get("secure_url") or "").strip()
+    if not secure_url:
+        raise HTTPException(status_code=502, detail="Verification upload did not return file URL")
+    return {
+        "url": secure_url,
+        "public_id": payload.get("public_id"),
+        "bytes": int(payload.get("bytes") or len(raw)),
+        "format": payload.get("format"),
+        "original_name": file.filename,
+    }
+
+
+def build_teacher_verification_response(doc: Optional[Dict[str, Any]], teacher_id: str) -> TeacherVerificationResponse:
+    if not doc:
+        return TeacherVerificationResponse(teacher_id=teacher_id, status="not_submitted")
+    norm = normalize_datetime_fields(dict(doc), ["submitted_at", "reviewed_at"])
+    return TeacherVerificationResponse(
+        teacher_id=teacher_id,
+        status=str(norm.get("status") or "not_submitted"),
+        tsc_number=norm.get("tsc_number"),
+        id_document_url=((norm.get("documents") or {}).get("id_document") or {}).get("url"),
+        tsc_certificate_url=((norm.get("documents") or {}).get("tsc_certificate") or {}).get("url"),
+        submitted_at=norm.get("submitted_at"),
+        reviewed_at=norm.get("reviewed_at"),
+        reviewed_by=norm.get("reviewed_by"),
+        review_comment=norm.get("review_comment"),
+        rejection_reason=norm.get("rejection_reason"),
+    )
+
+
+def build_teacher_verification_audit_entries(
+    doc: Optional[Dict[str, Any]],
+) -> List[TeacherVerificationAuditEntryResponse]:
+    if not doc:
+        return []
+    events = doc.get("audit_events")
+    if not isinstance(events, list):
+        return []
+    output: List[TeacherVerificationAuditEntryResponse] = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        at_raw = event.get("at")
+        try:
+            at = datetime.fromisoformat(str(at_raw))
+        except Exception:
+            continue
+        output.append(
+            TeacherVerificationAuditEntryResponse(
+                actor_id=str(event.get("actor_id") or ""),
+                actor_role=str(event.get("actor_role") or "system"),
+                action=str(event.get("action") or ""),
+                comment=(str(event.get("comment")) if event.get("comment") is not None else None),
+                at=at,
+            )
+        )
+    output.sort(key=lambda item: item.at, reverse=True)
+    return output
+
+
+async def ensure_teacher_verified(user_id: str) -> None:
+    if not TEACHER_VERIFICATION_ENABLED:
+        return
+    verification = await db.teacher_verifications.find_one(
+        {"teacher_id": user_id},
+        {"_id": 0, "status": 1, "review_comment": 1},
+    )
+    status = str((verification or {}).get("status") or "not_submitted")
+    if status == "approved":
+        return
+    if status == "rejected":
+        comment = str((verification or {}).get("review_comment") or "").strip()
+        detail = "Teacher verification rejected. Review feedback and resubmit documents."
+        if comment:
+            detail = f"{detail} Feedback: {comment}"
+        raise HTTPException(status_code=403, detail=detail)
+    if status == "pending":
+        raise HTTPException(status_code=403, detail="Teacher verification is pending admin review")
+    raise HTTPException(
+        status_code=403,
+        detail="Teacher verification required before creating classes",
+    )
+
+
 async def compute_class_rating_snapshot(class_id: str) -> Tuple[Optional[float], int]:
     agg = await db.class_reviews.aggregate(
         [
@@ -1699,7 +1921,118 @@ async def build_class_response(
         joined=joined,
         average_rating=avg_rating,
         review_count=review_count,
+        topic_suggestion_id=norm.get("topic_suggestion_id"),
     )
+
+
+async def create_class_session_record(
+    *,
+    teacher: Dict[str, Any],
+    title: str,
+    description: Optional[str],
+    meeting_link: str,
+    scheduled_start_at: datetime,
+    scheduled_end_at: datetime,
+    fee_kes: int,
+    topic_suggestion_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    normalized_title = (title or "").strip()
+    if not normalized_title:
+        raise HTTPException(status_code=400, detail="Class title is required")
+    if len(normalized_title) > 180:
+        raise HTTPException(status_code=400, detail="Class title must be 180 characters or fewer")
+
+    normalized_description = (description or "").strip()
+    if len(normalized_description) > 2400:
+        raise HTTPException(status_code=400, detail="Description must be 2400 characters or fewer")
+
+    normalized_meeting_link = normalize_meeting_link(meeting_link)
+    start_at = scheduled_start_at
+    end_at = scheduled_end_at
+    now = datetime.now(timezone.utc)
+    if start_at.tzinfo is None:
+        start_at = start_at.replace(tzinfo=timezone.utc)
+    if end_at.tzinfo is None:
+        end_at = end_at.replace(tzinfo=timezone.utc)
+    if start_at <= now:
+        raise HTTPException(status_code=400, detail="Class start time must be in the future")
+    if end_at <= start_at:
+        raise HTTPException(status_code=400, detail="Class end time must be after start time")
+
+    normalized_fee_kes = int(fee_kes)
+    class_min_fee_kes, class_max_fee_kes = current_class_fee_bounds()
+    if normalized_fee_kes > 0 and normalized_fee_kes < class_min_fee_kes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Class fee must be at least KES {class_min_fee_kes} when charging students",
+        )
+    if normalized_fee_kes > class_max_fee_kes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Class fee must not exceed KES {class_max_fee_kes}",
+        )
+
+    duration_minutes = max(int((end_at - start_at).total_seconds() // 60), 1)
+    now_iso = now.isoformat()
+    class_doc = {
+        "id": str(uuid.uuid4()),
+        "teacher_id": teacher["id"],
+        "teacher_name": teacher.get("full_name", "Teacher"),
+        "title": normalized_title,
+        "description": normalized_description or None,
+        "meeting_link": normalized_meeting_link,
+        "scheduled_start_at": start_at.isoformat(),
+        "scheduled_end_at": end_at.isoformat(),
+        "duration_minutes": duration_minutes,
+        "fee_kes": normalized_fee_kes,
+        "currency": "KES",
+        "status": "scheduled",
+        "created_at": now_iso,
+        "updated_at": now_iso,
+        "join_count": 0,
+        "topic_suggestion_id": topic_suggestion_id,
+    }
+    await db.class_sessions.insert_one(class_doc)
+
+    student_cursor = db.users.find({"role": "student"}, {"_id": 0, "id": 1})
+    students = await student_cursor.to_list(5000)
+    if students:
+        notification_docs = [
+            {
+                "id": str(uuid.uuid4()),
+                "user_id": student["id"],
+                "status": "class_scheduled",
+                "message": (
+                    f"New class: {normalized_title} by {class_doc['teacher_name']} "
+                    f"at {start_at.strftime('%Y-%m-%d %H:%M UTC')}"
+                ),
+                "class_id": class_doc["id"],
+                "meeting_link": normalized_meeting_link,
+                "read": False,
+                "created_at": now_iso,
+            }
+            for student in students
+        ]
+        await db.notifications.insert_many(notification_docs)
+        try:
+            from tasks.notifications import send_class_scheduled_push
+
+            send_class_scheduled_push.delay(
+                user_ids=[student["id"] for student in students if student.get("id")],
+                class_id=class_doc["id"],
+                title=normalized_title,
+                teacher_name=class_doc["teacher_name"],
+                meeting_link=normalized_meeting_link,
+                scheduled_start_at=class_doc["scheduled_start_at"],
+            )
+        except Exception as exc:
+            logger.warning("class_push_enqueue_failed class_id=%s error=%s", class_doc["id"], exc)
+        await db.class_sessions.update_one(
+            {"id": class_doc["id"]},
+            {"$set": {"alert_sent_at": now_iso}},
+        )
+
+    return class_doc
 
 
 def build_notification_response(notification_doc: Dict[str, Any]) -> NotificationResponse:
@@ -1725,6 +2058,8 @@ def _localpro_enabled() -> bool:
 def _localpro_headers() -> Dict[str, str]:
     headers = {"Accept": "application/json"}
     if LOCALPRO_API_KEY:
+        headers[LOCALPRO_API_KEY_HEADER] = LOCALPRO_API_KEY
+        headers["Authorization"] = f"Bearer {LOCALPRO_API_KEY}"
         headers["X-API-Key"] = LOCALPRO_API_KEY
     return headers
 
@@ -1770,7 +2105,10 @@ def _normalize_localpro_tutor(raw: Dict[str, Any]) -> PrivateTutorProfileRespons
 
 
 async def fetch_localpro_tutors(limit: int = 20, city: Optional[str] = None) -> List[PrivateTutorProfileResponse]:
+    global _LOCALPRO_LAST_FETCH_AT, _LOCALPRO_LAST_FETCH_ERROR
     if not _localpro_enabled():
+        _LOCALPRO_LAST_FETCH_AT = datetime.now(timezone.utc).isoformat()
+        _LOCALPRO_LAST_FETCH_ERROR = "LOCALPRO_BASE_URL not configured"
         return []
 
     params: Dict[str, Any] = {
@@ -1790,13 +2128,29 @@ async def fetch_localpro_tutors(limit: int = 20, city: Optional[str] = None) -> 
             payload = response.json()
     except Exception as exc:
         logger.warning("localpro_fetch_failed url=%s error=%s", url, exc)
+        _LOCALPRO_LAST_FETCH_AT = datetime.now(timezone.utc).isoformat()
+        _LOCALPRO_LAST_FETCH_ERROR = str(exc)
         return []
+    _LOCALPRO_LAST_FETCH_AT = datetime.now(timezone.utc).isoformat()
+    _LOCALPRO_LAST_FETCH_ERROR = None
 
-    if not isinstance(payload, list):
-        return []
+    rows: List[Any]
+    if isinstance(payload, list):
+        rows = payload
+    elif isinstance(payload, dict):
+        raw_items = (
+            payload.get("data")
+            or payload.get("items")
+            or payload.get("results")
+            or payload.get("services")
+            or []
+        )
+        rows = raw_items if isinstance(raw_items, list) else []
+    else:
+        rows = []
 
     tutors: List[PrivateTutorProfileResponse] = []
-    for item in payload:
+    for item in rows:
         if not isinstance(item, dict):
             continue
         try:
@@ -4369,98 +4723,17 @@ async def create_class_session(
         raise HTTPException(status_code=403, detail="Only teachers can create classes")
     await ensure_rate_limit(current_user["id"], "class_create_user", CLASS_CREATE_PER_MIN_LIMIT)
     await ensure_topic_access(current_user["id"])
+    await ensure_teacher_verified(current_user["id"])
 
-    title = (payload.title or "").strip()
-    if not title:
-        raise HTTPException(status_code=400, detail="Class title is required")
-    if len(title) > 180:
-        raise HTTPException(status_code=400, detail="Class title must be 180 characters or fewer")
-    description = (payload.description or "").strip()
-    if len(description) > 2400:
-        raise HTTPException(status_code=400, detail="Description must be 2400 characters or fewer")
-    meeting_link = normalize_meeting_link(payload.meeting_link)
-    start_at = payload.scheduled_start_at
-    end_at = payload.scheduled_end_at
-    now = datetime.now(timezone.utc)
-    if start_at.tzinfo is None:
-        start_at = start_at.replace(tzinfo=timezone.utc)
-    if end_at.tzinfo is None:
-        end_at = end_at.replace(tzinfo=timezone.utc)
-    if start_at <= now:
-        raise HTTPException(status_code=400, detail="Class start time must be in the future")
-    if end_at <= start_at:
-        raise HTTPException(status_code=400, detail="Class end time must be after start time")
-    fee_kes = int(payload.fee_kes)
-    class_min_fee_kes, class_max_fee_kes = current_class_fee_bounds()
-    if fee_kes > 0 and fee_kes < class_min_fee_kes:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Class fee must be at least KES {class_min_fee_kes} when charging students",
-        )
-    if fee_kes > class_max_fee_kes:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Class fee must not exceed KES {class_max_fee_kes}",
-        )
-    duration_minutes = max(int((end_at - start_at).total_seconds() // 60), 1)
-
-    class_doc = {
-        "id": str(uuid.uuid4()),
-        "teacher_id": current_user["id"],
-        "teacher_name": current_user.get("full_name", "Teacher"),
-        "title": title,
-        "description": description or None,
-        "meeting_link": meeting_link,
-        "scheduled_start_at": start_at.isoformat(),
-        "scheduled_end_at": end_at.isoformat(),
-        "duration_minutes": duration_minutes,
-        "fee_kes": fee_kes,
-        "currency": "KES",
-        "status": "scheduled",
-        "created_at": now.isoformat(),
-        "updated_at": now.isoformat(),
-        "join_count": 0,
-    }
-    await db.class_sessions.insert_one(class_doc)
-
-    # Alert all students immediately for scheduled class visibility.
-    student_cursor = db.users.find({"role": "student"}, {"_id": 0, "id": 1})
-    students = await student_cursor.to_list(5000)
-    if students:
-        notification_docs = [
-            {
-                "id": str(uuid.uuid4()),
-                "user_id": student["id"],
-                "status": "class_scheduled",
-                "message": (
-                    f"New class: {title} by {class_doc['teacher_name']} "
-                    f"at {start_at.strftime('%Y-%m-%d %H:%M UTC')}"
-                ),
-                "class_id": class_doc["id"],
-                "meeting_link": meeting_link,
-                "read": False,
-                "created_at": now.isoformat(),
-            }
-            for student in students
-        ]
-        await db.notifications.insert_many(notification_docs)
-        try:
-            from tasks.notifications import send_class_scheduled_push
-
-            send_class_scheduled_push.delay(
-                user_ids=[student["id"] for student in students if student.get("id")],
-                class_id=class_doc["id"],
-                title=title,
-                teacher_name=class_doc["teacher_name"],
-                meeting_link=meeting_link,
-                scheduled_start_at=class_doc["scheduled_start_at"],
-            )
-        except Exception as exc:
-            logger.warning("class_push_enqueue_failed class_id=%s error=%s", class_doc["id"], exc)
-        await db.class_sessions.update_one(
-            {"id": class_doc["id"]},
-            {"$set": {"alert_sent_at": now.isoformat()}},
-        )
+    class_doc = await create_class_session_record(
+        teacher=current_user,
+        title=payload.title,
+        description=payload.description,
+        meeting_link=payload.meeting_link,
+        scheduled_start_at=payload.scheduled_start_at,
+        scheduled_end_at=payload.scheduled_end_at,
+        fee_kes=payload.fee_kes,
+    )
 
     return await build_class_response(class_doc, current_user["id"], "teacher")
 
@@ -4756,12 +5029,23 @@ async def list_private_tutors(
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     await ensure_rate_limit(current_user["id"], "class_read_user", JOB_STATUS_PER_MIN_LIMIT)
+    if not _localpro_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="Private tutor directory is not configured. Set LOCALPRO_BASE_URL.",
+        )
     safe_limit = max(1, min(limit, 60))
     tutors = await fetch_localpro_tutors(limit=safe_limit, city=city)
     if not tutors:
+        if _LOCALPRO_LAST_FETCH_ERROR:
+            logger.warning("private_tutor_directory_unavailable error=%s", _LOCALPRO_LAST_FETCH_ERROR)
+            raise HTTPException(
+                status_code=503,
+                detail="Private tutor directory is unavailable right now. Try again shortly.",
+            )
         raise HTTPException(
             status_code=503,
-            detail="Private tutor directory is unavailable right now. Try again shortly.",
+            detail="No private tutors available for the selected filters.",
         )
     return tutors
 
@@ -4796,6 +5080,25 @@ async def private_tutor_booking_intent(
         package_name=LOCALPRO_APP_PACKAGE,
         web_url=web_url,
     )
+
+
+@api_router.get("/v1/private-tutors/health")
+async def private_tutors_health(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    await ensure_rate_limit(current_user["id"], "class_read_user", JOB_STATUS_PER_MIN_LIMIT)
+    return {
+        "configured": _localpro_enabled(),
+        "base_url": LOCALPRO_BASE_URL,
+        "tutors_path": LOCALPRO_TUTORS_PATH,
+        "has_api_key": bool(LOCALPRO_API_KEY),
+        "api_key_header": LOCALPRO_API_KEY_HEADER,
+        "last_fetch_at": _LOCALPRO_LAST_FETCH_AT,
+        "last_fetch_error": _LOCALPRO_LAST_FETCH_ERROR,
+        "app_scheme": LOCALPRO_APP_SCHEME,
+        "app_package": LOCALPRO_APP_PACKAGE,
+        "playstore_url": LOCALPRO_PLAYSTORE_URL,
+    }
 
 
 @api_router.post("/v1/classes/withdrawals")
@@ -4879,6 +5182,145 @@ async def admin_dashboard_summary(
         admins_count=int(counts.get("admin", 0)),
         users_total=int(total_users),
     )
+
+
+@api_router.get("/v1/admin/integrations/status")
+async def admin_integrations_status(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    ensure_admin_user(current_user)
+    await ensure_rate_limit(current_user["id"], "admin_read_user", ADMIN_READ_PER_MIN_LIMIT)
+    from notification_service import initialize_firebase
+
+    redis_ok = False
+    redis_error: Optional[str] = None
+    try:
+        redis_client = redis_client_lib.from_url(
+            REDIS_WAKE_URL,
+            socket_connect_timeout=max(0.2, REDIS_WAKE_TIMEOUT_SECONDS),
+            socket_timeout=max(0.2, REDIS_WAKE_TIMEOUT_SECONDS),
+        )
+        redis_ok = bool(redis_client.ping())
+    except Exception as exc:
+        redis_error = str(exc)
+
+    now = datetime.now(timezone.utc)
+    since_24h = (now - timedelta(hours=24)).isoformat()
+    generation_failed_24h = await db.generation_jobs.count_documents(
+        {"status": "failed", "created_at": {"$gte": since_24h}}
+    )
+    generation_completed_24h = await db.generation_jobs.count_documents(
+        {"status": "completed", "created_at": {"$gte": since_24h}}
+    )
+    email_failed_24h = await db.email_delivery_logs.count_documents(
+        {"status": "failed", "created_at": {"$gte": since_24h}}
+    )
+    email_sent_24h = await db.email_delivery_logs.count_documents(
+        {"status": "sent", "created_at": {"$gte": since_24h}}
+    )
+    push_generation_sent_24h = await db.notification_delivery_logs.count_documents(
+        {"category": "generation_status", "status": "sent", "created_at": {"$gte": since_24h}}
+    )
+    push_generation_failed_24h = await db.notification_delivery_logs.count_documents(
+        {"category": "generation_status", "status": "failed", "created_at": {"$gte": since_24h}}
+    )
+
+    return {
+        "localpro": {
+            "configured": _localpro_enabled(),
+            "base_url": LOCALPRO_BASE_URL,
+            "tutors_path": LOCALPRO_TUTORS_PATH,
+            "has_api_key": bool(LOCALPRO_API_KEY),
+            "api_key_header": LOCALPRO_API_KEY_HEADER,
+            "last_fetch_at": _LOCALPRO_LAST_FETCH_AT,
+            "last_fetch_error": _LOCALPRO_LAST_FETCH_ERROR,
+        },
+        "firebase": {
+            "enabled": os.getenv("FIREBASE_ENABLED", "false").strip().lower() == "true",
+            "ready": initialize_firebase(),
+        },
+        "brevo": {
+            "has_brevo_api_key": bool(BREVO_API_KEY),
+            "has_brevo_api_key2": bool(BREVO_API_KEY2),
+            "sender_email": BREVO_SENDER_EMAIL,
+            "emails_sent_24h": int(email_sent_24h),
+            "emails_failed_24h": int(email_failed_24h),
+        },
+        "queue": {
+            "redis_url": REDIS_WAKE_URL.split("@")[-1],
+            "redis_ping_ok": redis_ok,
+            "redis_error": redis_error,
+            "generation_completed_24h": int(generation_completed_24h),
+            "generation_failed_24h": int(generation_failed_24h),
+            "push_generation_sent_24h": int(push_generation_sent_24h),
+            "push_generation_failed_24h": int(push_generation_failed_24h),
+        },
+    }
+
+
+@api_router.get("/v1/admin/alerts/acknowledgements")
+async def admin_alert_acknowledgements(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    ensure_admin_user(current_user)
+    await ensure_rate_limit(current_user["id"], "admin_read_user", ADMIN_READ_PER_MIN_LIMIT)
+    docs = await db.admin_alert_acknowledgements.find(
+        {"status": "acknowledged"},
+        {"_id": 0, "alert_key": 1, "acknowledged_at": 1, "acknowledged_by": 1, "note": 1},
+    ).to_list(500)
+    return docs
+
+
+@api_router.post("/v1/admin/alerts/acknowledgements")
+async def admin_acknowledge_alert(
+    payload: AdminAlertAcknowledgeRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    ensure_admin_user(current_user)
+    await ensure_rate_limit(current_user["id"], "admin_withdraw_user", ADMIN_WITHDRAW_PER_MIN_LIMIT)
+    alert_key = (payload.alert_key or "").strip().lower()
+    if len(alert_key) < 3:
+        raise HTTPException(status_code=400, detail="alert_key is required")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.admin_alert_acknowledgements.update_one(
+        {"alert_key": alert_key},
+        {
+            "$set": {
+                "alert_key": alert_key,
+                "status": "acknowledged",
+                "acknowledged_at": now_iso,
+                "acknowledged_by": current_user["id"],
+                "note": (payload.note or "").strip() or None,
+                "updated_at": now_iso,
+            },
+            "$setOnInsert": {"created_at": now_iso},
+        },
+        upsert=True,
+    )
+    return {"success": True, "alert_key": alert_key}
+
+
+@api_router.delete("/v1/admin/alerts/acknowledgements/{alert_key}")
+async def admin_unacknowledge_alert(
+    alert_key: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    ensure_admin_user(current_user)
+    await ensure_rate_limit(current_user["id"], "admin_withdraw_user", ADMIN_WITHDRAW_PER_MIN_LIMIT)
+    normalized = (alert_key or "").strip().lower()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="alert_key is required")
+    await db.admin_alert_acknowledgements.update_one(
+        {"alert_key": normalized},
+        {
+            "$set": {
+                "status": "active",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        },
+        upsert=True,
+    )
+    return {"success": True, "alert_key": normalized}
 
 
 @api_router.get("/v1/admin/runtime-settings")
@@ -5221,6 +5663,30 @@ async def register_push_token(
     return {"success": True, "message": "FCM token registered"}
 
 
+@api_router.get("/v1/notifications/push-health")
+async def get_push_health(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    await ensure_rate_limit(current_user["id"], "notifications_read_user", JOB_STATUS_PER_MIN_LIMIT)
+    from notification_service import initialize_firebase
+
+    user_doc = await db.users.find_one(
+        {"id": current_user["id"]},
+        {"_id": 0, "fcm_token": 1, "fcm_token_updated_at": 1, "fcm_token_invalidated_at": 1},
+    )
+    token = str((user_doc or {}).get("fcm_token") or "").strip()
+    firebase_enabled = str(os.getenv("FIREBASE_ENABLED", "false")).strip().lower() == "true"
+    firebase_ready = initialize_firebase()
+    return {
+        "firebase_enabled": firebase_enabled,
+        "firebase_ready": firebase_ready,
+        "has_registered_token": bool(token),
+        "token_prefix": (token[:14] + "...") if token else "",
+        "token_updated_at": (user_doc or {}).get("fcm_token_updated_at"),
+        "token_invalidated_at": (user_doc or {}).get("fcm_token_invalidated_at"),
+    }
+
+
 @api_router.post("/v1/notifications/{notification_id}/read")
 async def mark_notification_read(
     notification_id: str,
@@ -5236,6 +5702,238 @@ async def mark_notification_read(
     if not updated:
         raise HTTPException(status_code=404, detail="Notification not found")
     return {"id": updated["id"], "read": bool(updated.get("read", True))}
+
+
+@api_router.post("/v1/notifications/test-push")
+async def send_test_push_notification(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    await ensure_rate_limit(current_user["id"], "notifications_write_user", JOB_STATUS_PER_MIN_LIMIT)
+    from notification_service import send_push_to_user
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    title = "Exam OS Push Test"
+    body = "Push notifications are configured and working."
+    sent = await send_push_to_user(
+        db=db,
+        user_id=current_user["id"],
+        title=title,
+        body=body,
+        data={"status": "push_test", "sent_at": now_iso},
+    )
+    if not sent:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Push test failed. Ensure device token is registered and Firebase "
+                "credentials are valid on the backend."
+            ),
+        )
+    return {"success": True, "message": "Test push sent"}
+
+
+@api_router.post("/v1/teacher-verification/submit", response_model=TeacherVerificationResponse)
+async def submit_teacher_verification(
+    tsc_number: str = Form(...),
+    id_document: Optional[UploadFile] = File(None),
+    tsc_certificate: Optional[UploadFile] = File(None),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    if current_user.get("role", "").lower() != "teacher":
+        raise HTTPException(status_code=403, detail="Only teachers can submit verification")
+    await ensure_rate_limit(current_user["id"], "teacher_verification_write_user", JOB_STATUS_PER_MIN_LIMIT)
+    normalized_tsc = (tsc_number or "").strip()
+    if len(normalized_tsc) < 4:
+        raise HTTPException(status_code=400, detail="TSC registration number is required")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    existing = await db.teacher_verifications.find_one(
+        {"teacher_id": current_user["id"]},
+        {"_id": 0},
+    )
+    existing_status = str((existing or {}).get("status") or "")
+    if existing_status == "pending":
+        raise HTTPException(status_code=409, detail="Verification is already under review")
+    existing_docs = (existing or {}).get("documents") if isinstance((existing or {}).get("documents"), dict) else {}
+    id_doc_meta = existing_docs.get("id_document") if isinstance(existing_docs, dict) else None
+    tsc_meta = existing_docs.get("tsc_certificate") if isinstance(existing_docs, dict) else None
+
+    if id_document is not None:
+        id_doc_meta = await upload_teacher_verification_file(
+            teacher_id=current_user["id"],
+            document_type="id_document",
+            file=id_document,
+        )
+    if tsc_certificate is not None:
+        tsc_meta = await upload_teacher_verification_file(
+            teacher_id=current_user["id"],
+            document_type="tsc_certificate",
+            file=tsc_certificate,
+        )
+    if not id_doc_meta or not tsc_meta:
+        raise HTTPException(
+            status_code=400,
+            detail="ID document and TSC certificate are required for first submission",
+        )
+    audit_event = {
+        "actor_id": current_user["id"],
+        "actor_role": "teacher",
+        "action": "submitted",
+        "comment": "Teacher submitted verification documents",
+        "at": now_iso,
+    }
+    update_doc = {
+        "teacher_id": current_user["id"],
+        "teacher_name": current_user.get("full_name", "Teacher"),
+        "teacher_email": current_user.get("email", ""),
+        "tsc_number": normalized_tsc,
+        "documents": {
+            "id_document": id_doc_meta,
+            "tsc_certificate": tsc_meta,
+        },
+        "status": "pending",
+        "submitted_at": now_iso,
+        "updated_at": now_iso,
+        "reviewed_at": None,
+        "reviewed_by": None,
+        "review_comment": None,
+        "rejection_reason": None,
+    }
+    await db.teacher_verifications.update_one(
+        {"teacher_id": current_user["id"]},
+        {
+            "$set": update_doc,
+            "$setOnInsert": {"created_at": now_iso},
+            "$push": {"audit_events": audit_event},
+        },
+        upsert=True,
+    )
+    saved = await db.teacher_verifications.find_one({"teacher_id": current_user["id"]}, {"_id": 0})
+    return build_teacher_verification_response(saved, current_user["id"])
+
+
+@api_router.get("/v1/teacher-verification/me", response_model=TeacherVerificationResponse)
+async def get_my_teacher_verification(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    if current_user.get("role", "").lower() != "teacher":
+        raise HTTPException(status_code=403, detail="Only teachers can view verification")
+    await ensure_rate_limit(current_user["id"], "teacher_verification_read_user", JOB_STATUS_PER_MIN_LIMIT)
+    doc = await db.teacher_verifications.find_one({"teacher_id": current_user["id"]}, {"_id": 0})
+    return build_teacher_verification_response(doc, current_user["id"])
+
+
+@api_router.get(
+    "/v1/teacher-verification/history",
+    response_model=List[TeacherVerificationAuditEntryResponse],
+)
+async def get_my_teacher_verification_history(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    if current_user.get("role", "").lower() != "teacher":
+        raise HTTPException(status_code=403, detail="Only teachers can view verification history")
+    await ensure_rate_limit(current_user["id"], "teacher_verification_read_user", JOB_STATUS_PER_MIN_LIMIT)
+    doc = await db.teacher_verifications.find_one(
+        {"teacher_id": current_user["id"]},
+        {"_id": 0, "audit_events": 1},
+    )
+    if not doc:
+        return []
+    return build_teacher_verification_audit_entries(doc)
+
+
+@api_router.get("/v1/admin/teacher-verifications", response_model=List[TeacherVerificationResponse])
+async def list_teacher_verifications_for_admin(
+    status: str = "pending",
+    limit: int = 80,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    if current_user.get("role", "").lower() != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    await ensure_rate_limit(current_user["id"], "teacher_verification_admin_read", JOB_STATUS_PER_MIN_LIMIT)
+    safe_limit = max(1, min(limit, 200))
+    normalized_status = (status or "").strip().lower()
+    query: Dict[str, Any] = {}
+    if normalized_status and normalized_status != "all":
+        if normalized_status not in {"pending", "approved", "rejected"}:
+            raise HTTPException(status_code=400, detail="Invalid verification status filter")
+        query["status"] = normalized_status
+    docs = await db.teacher_verifications.find(query, {"_id": 0}).sort("submitted_at", -1).to_list(safe_limit)
+    return [build_teacher_verification_response(doc, str(doc.get("teacher_id") or "")) for doc in docs]
+
+
+@api_router.get(
+    "/v1/admin/teacher-verifications/{teacher_id}/history",
+    response_model=List[TeacherVerificationAuditEntryResponse],
+)
+async def get_teacher_verification_history(
+    teacher_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    if current_user.get("role", "").lower() != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    await ensure_rate_limit(current_user["id"], "teacher_verification_admin_read", JOB_STATUS_PER_MIN_LIMIT)
+    doc = await db.teacher_verifications.find_one({"teacher_id": teacher_id}, {"_id": 0, "audit_events": 1})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Teacher verification not found")
+    return build_teacher_verification_audit_entries(doc)
+
+
+@api_router.post("/v1/admin/teacher-verifications/{teacher_id}/review", response_model=TeacherVerificationResponse)
+async def review_teacher_verification(
+    teacher_id: str,
+    payload: TeacherVerificationReviewRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    if current_user.get("role", "").lower() != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    await ensure_rate_limit(current_user["id"], "teacher_verification_admin_write", JOB_STATUS_PER_MIN_LIMIT)
+    action = (payload.action or "").strip().lower()
+    if action not in {"approve", "reject"}:
+        raise HTTPException(status_code=400, detail="Action must be approve or reject")
+    review_comment = (payload.comment or "").strip()
+    if action == "reject" and not review_comment:
+        raise HTTPException(status_code=400, detail="Rejection comment is required")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    status = "approved" if action == "approve" else "rejected"
+    audit_event = {
+        "actor_id": current_user["id"],
+        "actor_role": "admin",
+        "action": status,
+        "comment": review_comment or None,
+        "at": now_iso,
+    }
+    update_doc = {
+        "status": status,
+        "reviewed_at": now_iso,
+        "reviewed_by": current_user["id"],
+        "review_comment": review_comment or None,
+        "rejection_reason": review_comment if status == "rejected" else None,
+        "updated_at": now_iso,
+    }
+    updated = await db.teacher_verifications.find_one_and_update(
+        {"teacher_id": teacher_id},
+        {"$set": update_doc, "$push": {"audit_events": audit_event}},
+        projection={"_id": 0},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Teacher verification not found")
+
+    await db.notifications.insert_one(
+        {
+            "id": str(uuid.uuid4()),
+            "user_id": teacher_id,
+            "status": "teacher_verification_reviewed",
+            "message": (
+                "Teacher verification approved."
+                if status == "approved"
+                else f"Teacher verification rejected. {review_comment or 'Please review requirements and resubmit.'}"
+            ),
+            "read": False,
+            "created_at": now_iso,
+        }
+    )
+    return build_teacher_verification_response(updated, teacher_id)
 
 
 @api_router.post("/v1/topics", response_model=TopicSuggestionResponse)
@@ -5359,6 +6057,58 @@ async def list_topic_suggestions_trailing_slash(
         sort=sort,
         current_user=current_user,
     )
+
+
+@api_router.post("/v1/topics/{topic_id}/create-class", response_model=ClassSessionResponse)
+async def create_class_from_topic_suggestion(
+    topic_id: str,
+    payload: TopicClassCreateRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    if current_user.get("role", "").lower() != "teacher":
+        raise HTTPException(status_code=403, detail="Only teachers can create classes from topics")
+    await ensure_rate_limit(current_user["id"], "class_create_user", CLASS_CREATE_PER_MIN_LIMIT)
+    await ensure_topic_access(current_user["id"])
+    await ensure_teacher_verified(current_user["id"])
+
+    suggestion = await db.topic_suggestions.find_one({"id": topic_id}, {"_id": 0})
+    if not suggestion:
+        raise HTTPException(status_code=404, detail="Topic suggestion not found")
+    if suggestion.get("status") == "archived":
+        raise HTTPException(status_code=409, detail="Archived topics cannot be used to create classes")
+
+    linked_class_id = str(suggestion.get("linked_class_id") or "").strip()
+    if linked_class_id:
+        existing_class = await db.class_sessions.find_one({"id": linked_class_id}, {"_id": 0})
+        if existing_class:
+            return await build_class_response(existing_class, current_user["id"], "teacher")
+
+    class_doc = await create_class_session_record(
+        teacher=current_user,
+        title=(payload.title or suggestion.get("title") or ""),
+        description=payload.description
+        if payload.description is not None
+        else suggestion.get("description"),
+        meeting_link=payload.meeting_link,
+        scheduled_start_at=payload.scheduled_start_at,
+        scheduled_end_at=payload.scheduled_end_at,
+        fee_kes=payload.fee_kes,
+        topic_suggestion_id=topic_id,
+    )
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.topic_suggestions.update_one(
+        {"id": topic_id},
+        {
+            "$set": {
+                "status": "class_created",
+                "linked_class_id": class_doc["id"],
+                "class_created_at": now_iso,
+                "class_created_by": current_user["id"],
+                "updated_at": now_iso,
+            }
+        },
+    )
+    return await build_class_response(class_doc, current_user["id"], "teacher")
 
 
 @api_router.post("/v1/topics/{topic_id}/upvote")
@@ -5813,6 +6563,7 @@ async def startup_checks():
     await db.class_sessions.create_index("id", unique=True)
     await db.class_sessions.create_index([("teacher_id", 1), ("scheduled_start_at", -1)])
     await db.class_sessions.create_index([("status", 1), ("scheduled_start_at", 1)])
+    await db.class_sessions.create_index("topic_suggestion_id", unique=True, sparse=True)
     await db.class_enrollments.create_index("id", unique=True)
     await db.class_enrollments.create_index([("class_id", 1), ("student_id", 1)], unique=True)
     await db.class_enrollments.create_index([("student_id", 1), ("joined_at", -1)])
@@ -5840,9 +6591,20 @@ async def startup_checks():
     await db.retention_email_targets.create_index([("campaign_id", 1), ("user_id", 1)], unique=True)
     await db.retention_email_recipients.create_index("user_id", unique=True)
     await db.retention_email_daily_usage.create_index("day_key", unique=True)
+    await db.email_delivery_logs.create_index("id", unique=True)
+    await db.email_delivery_logs.create_index([("status", 1), ("created_at", -1)])
+    await db.email_delivery_logs.create_index([("recipient", 1), ("created_at", -1)])
+    await db.notification_delivery_logs.create_index("id", unique=True)
+    await db.notification_delivery_logs.create_index([("category", 1), ("status", 1), ("created_at", -1)])
+    await db.notification_delivery_logs.create_index([("user_id", 1), ("created_at", -1)])
+    await db.admin_alert_acknowledgements.create_index("alert_key", unique=True)
+    await db.admin_alert_acknowledgements.create_index([("status", 1), ("updated_at", -1)])
     await db.class_reviews.create_index("id", unique=True)
     await db.class_reviews.create_index([("class_id", 1), ("student_id", 1)], unique=True)
     await db.class_reviews.create_index([("teacher_id", 1), ("created_at", -1)])
+    await db.teacher_verifications.create_index("teacher_id", unique=True)
+    await db.teacher_verifications.create_index([("status", 1), ("submitted_at", -1)])
+    await db.teacher_verifications.create_index([("reviewed_by", 1), ("reviewed_at", -1)])
     await db.topic_suggestions.create_index("id", unique=True)
     await db.topic_suggestions.create_index("category")
     await db.topic_suggestions.create_index([("category", 1), ("title_token_signature", 1)])
@@ -5850,6 +6612,7 @@ async def startup_checks():
     await db.topic_suggestions.create_index([("category", 1), ("created_at", -1)])
     await db.topic_suggestions.create_index("created_at")
     await db.topic_suggestions.create_index("status")
+    await db.topic_suggestions.create_index("linked_class_id", sparse=True)
     await db.topic_suggestions.create_index([("fraud_spike_flag", 1), ("fraud_spike_flagged_at", -1)])
     await db.suggestion_votes.create_index("id", unique=True)
     await db.suggestion_votes.create_index([("user_id", 1), ("suggestion_id", 1)], unique=True)

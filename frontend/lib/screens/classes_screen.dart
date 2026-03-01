@@ -5,6 +5,7 @@ import '../models/models.dart';
 import '../services/api_client.dart';
 import '../theme/app_colors.dart';
 import '../widgets/glass_container.dart';
+import 'teacher_verification_screen.dart';
 
 class ClassesScreen extends StatefulWidget {
   const ClassesScreen({
@@ -213,6 +214,39 @@ class _ClassesScreenState extends State<ClassesScreen> {
       await _loadClasses();
     } on ApiException catch (e) {
       if (!mounted) return;
+      final msg = e.message.toLowerCase();
+      if (msg.contains('teacher verification')) {
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Verification Required'),
+            content: Text(e.message),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Close'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  Navigator.of(ctx).pop();
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => TeacherVerificationScreen(
+                        apiClient: widget.apiClient,
+                        session: widget.session,
+                        onSessionUpdated: widget.onSessionUpdated,
+                        onSessionInvalid: widget.onSessionInvalid,
+                      ),
+                    ),
+                  );
+                },
+                child: const Text('Verify Now'),
+              ),
+            ],
+          ),
+        );
+        return;
+      }
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(e.message)));

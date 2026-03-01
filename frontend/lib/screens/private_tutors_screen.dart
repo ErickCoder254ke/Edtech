@@ -31,6 +31,7 @@ class _PrivateTutorsScreenState extends State<PrivateTutorsScreen> {
   final _cityController = TextEditingController();
   List<PrivateTutorProfile> _items = [];
   final Set<String> _booking = <String>{};
+  bool _checkingHealth = false;
 
   @override
   void initState() {
@@ -103,6 +104,11 @@ class _PrivateTutorsScreenState extends State<PrivateTutorsScreen> {
       if (deepUri != null && await canLaunchUrl(deepUri)) {
         await launchUrl(deepUri, mode: LaunchMode.externalApplication);
       } else {
+        final webUri = Uri.tryParse(intent.webUrl ?? '');
+        if (webUri != null && await canLaunchUrl(webUri)) {
+          await launchUrl(webUri, mode: LaunchMode.externalApplication);
+          return;
+        }
         if (!mounted) return;
         await _showInstallPrompt(intent.playstoreUrl);
       }
@@ -111,6 +117,42 @@ class _PrivateTutorsScreenState extends State<PrivateTutorsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
     } finally {
       if (mounted) setState(() => _booking.remove(tutor.id));
+    }
+  }
+
+  Future<void> _showDirectoryHealth() async {
+    if (_checkingHealth) return;
+    setState(() => _checkingHealth = true);
+    try {
+      final health = await _runWithAuthRetry(
+        (token) => widget.apiClient.privateTutorsHealth(accessToken: token),
+      );
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('LocalPro Integration Health'),
+          content: Text(
+            'configured: ${health['configured']}\n'
+            'has_api_key: ${health['has_api_key']}\n'
+            'api_key_header: ${health['api_key_header']}\n'
+            'base_url: ${health['base_url']}\n'
+            'path: ${health['tutors_path']}\n'
+            'last_fetch_error: ${health['last_fetch_error'] ?? '-'}',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) setState(() => _checkingHealth = false);
     }
   }
 
@@ -148,6 +190,17 @@ class _PrivateTutorsScreenState extends State<PrivateTutorsScreen> {
       appBar: AppBar(
         title: const Text('Private Tutors'),
         actions: [
+          IconButton(
+            onPressed: _checkingHealth ? null : _showDirectoryHealth,
+            icon: _checkingHealth
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.health_and_safety_rounded),
+            tooltip: 'Integration Health',
+          ),
           IconButton(onPressed: _load, icon: const Icon(Icons.refresh_rounded)),
         ],
       ),
@@ -188,9 +241,16 @@ class _PrivateTutorsScreenState extends State<PrivateTutorsScreen> {
                   if (_loading)
                     const _LoadingTile()
                   else if (_error != null)
-                    _ErrorTile(message: _error!)
+                    _ErrorTile(
+                      message: _error!,
+                      onRetry: _load,
+                      onCheckHealth: _showDirectoryHealth,
+                    )
                   else if (_items.isEmpty)
-                    const _EmptyTile()
+                    _EmptyTile(
+                      onRefresh: _load,
+                      onCheckHealth: _showDirectoryHealth,
+                    )
                   else
                     ..._items.map((tutor) => Padding(
                           padding: const EdgeInsets.only(bottom: 10),
@@ -375,19 +435,47 @@ class _LoadingTile extends StatelessWidget {
 }
 
 class _ErrorTile extends StatelessWidget {
-  const _ErrorTile({required this.message});
+  const _ErrorTile({
+    required this.message,
+    required this.onRetry,
+    required this.onCheckHealth,
+  });
   final String message;
+  final VoidCallback onRetry;
+  final VoidCallback onCheckHealth;
 
   @override
   Widget build(BuildContext context) {
     return GlassContainer(
       borderRadius: 16,
       padding: const EdgeInsets.all(14),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.error_outline, color: Colors.redAccent),
-          const SizedBox(width: 10),
-          Expanded(child: Text(message, style: const TextStyle(color: Colors.redAccent))),
+          Row(
+            children: [
+              const Icon(Icons.error_outline, color: Colors.redAccent),
+              const SizedBox(width: 10),
+              Expanded(child: Text(message, style: const TextStyle(color: Colors.redAccent))),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh_rounded, size: 16),
+                label: const Text('Retry'),
+              ),
+              OutlinedButton.icon(
+                onPressed: onCheckHealth,
+                icon: const Icon(Icons.health_and_safety_rounded, size: 16),
+                label: const Text('Check Integration'),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -395,21 +483,40 @@ class _ErrorTile extends StatelessWidget {
 }
 
 class _EmptyTile extends StatelessWidget {
-  const _EmptyTile();
+  const _EmptyTile({required this.onRefresh, required this.onCheckHealth});
+
+  final VoidCallback onRefresh;
+  final VoidCallback onCheckHealth;
 
   @override
   Widget build(BuildContext context) {
-    return const GlassContainer(
+    return GlassContainer(
       borderRadius: 16,
-      padding: EdgeInsets.all(14),
+      padding: const EdgeInsets.all(14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('No tutors found', style: TextStyle(fontWeight: FontWeight.w700)),
-          SizedBox(height: 4),
-          Text(
+          const Text('No tutors found', style: TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          const Text(
             'Try a different town filter or refresh shortly.',
             style: TextStyle(color: AppColors.textMuted),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: onRefresh,
+                icon: const Icon(Icons.refresh_rounded, size: 16),
+                label: const Text('Refresh'),
+              ),
+              OutlinedButton.icon(
+                onPressed: onCheckHealth,
+                icon: const Icon(Icons.health_and_safety_rounded, size: 16),
+                label: const Text('Integration'),
+              ),
+            ],
           ),
         ],
       ),

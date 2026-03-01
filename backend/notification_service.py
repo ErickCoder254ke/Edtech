@@ -1,7 +1,9 @@
 import json
 import logging
 import os
-from typing import Any, Dict, Optional
+from base64 import b64decode
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional, Tuple
 
 import firebase_admin
 from firebase_admin import credentials, messaging
@@ -16,9 +18,22 @@ def _is_firebase_enabled() -> bool:
 
 
 def _resolve_credentials() -> Optional[credentials.Base]:
+    service_account_json_b64 = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON_BASE64", "").strip()
+    if service_account_json_b64:
+        try:
+            decoded = b64decode(service_account_json_b64).decode("utf-8")
+            parsed = json.loads(decoded)
+            return credentials.Certificate(parsed)
+        except Exception as exc:
+            logger.error("firebase_credentials_base64_invalid error=%s", exc)
+            return None
+
     service_account_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
     if service_account_json:
         try:
+            if service_account_json.startswith('"') and service_account_json.endswith('"'):
+                service_account_json = service_account_json[1:-1]
+            service_account_json = service_account_json.replace("\\n", "\n")
             parsed = json.loads(service_account_json)
             return credentials.Certificate(parsed)
         except Exception as exc:
@@ -38,6 +53,9 @@ def _resolve_credentials() -> Optional[credentials.Base]:
 def initialize_firebase() -> bool:
     global _firebase_initialized
     if _firebase_initialized:
+        return True
+    if firebase_admin._apps:
+        _firebase_initialized = True
         return True
     if not _is_firebase_enabled():
         logger.info("firebase_disabled")
@@ -62,11 +80,11 @@ def send_push_notification(
     title: str,
     body: str,
     data: Optional[Dict[str, Any]] = None,
-) -> bool:
+) -> Tuple[bool, str]:
     if not fcm_token:
-        return False
+        return False, "missing_token"
     if not initialize_firebase():
-        return False
+        return False, "firebase_not_ready"
 
     payload = {str(k): str(v) for k, v in (data or {}).items()}
     try:
@@ -88,13 +106,13 @@ def send_push_notification(
             ),
         )
         messaging.send(message)
-        return True
+        return True, "sent"
     except messaging.UnregisteredError:
         logger.warning("push_send_unregistered_token")
-        return False
+        return False, "unregistered"
     except Exception as exc:
         logger.error("push_send_failed error=%s", exc)
-        return False
+        return False, "error"
 
 
 async def send_push_to_user(
@@ -109,9 +127,18 @@ async def send_push_to_user(
         return False
     token = (user.get("fcm_token") or "").strip()
     if not token:
+        logger.info("push_skip_no_token user_id=%s", user_id)
         return False
 
-    sent = send_push_notification(token, title=title, body=body, data=data)
+    sent, reason = send_push_notification(token, title=title, body=body, data=data)
+    if not sent and reason == "unregistered":
+        await db.users.update_one(
+            {"id": user_id},
+            {
+                "$unset": {"fcm_token": ""},
+                "$set": {"fcm_token_invalidated_at": datetime.now(timezone.utc).isoformat()},
+            },
+        )
     if not sent:
-        logger.info("push_not_sent user_id=%s", user_id)
+        logger.info("push_not_sent user_id=%s reason=%s", user_id, reason)
     return sent

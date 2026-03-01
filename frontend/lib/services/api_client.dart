@@ -625,6 +625,274 @@ class ApiClient {
     );
   }
 
+  Future<Map<String, dynamic>> getPushHealth({
+    required String accessToken,
+  }) async {
+    final response = await _sendRequest(
+      () => http
+          .get(
+            _uri('/v1/notifications/push-health'),
+            headers: _jsonHeaders(accessToken: accessToken),
+          )
+          .timeout(_requestTimeout),
+    );
+    final data = _parseJson(response);
+    return data is Map<String, dynamic> ? data : <String, dynamic>{};
+  }
+
+  Future<void> sendTestPush({
+    required String accessToken,
+  }) async {
+    await _sendRequest(
+      () => http
+          .post(
+            _uri('/v1/notifications/test-push'),
+            headers: _jsonHeaders(accessToken: accessToken),
+          )
+          .timeout(_requestTimeout),
+    );
+  }
+
+  Future<TeacherVerification> getMyTeacherVerification({
+    required String accessToken,
+  }) async {
+    final response = await _sendRequest(
+      () => http
+          .get(
+            _uri('/v1/teacher-verification/me'),
+            headers: _jsonHeaders(accessToken: accessToken),
+          )
+          .timeout(_requestTimeout),
+    );
+    final data = _parseJson(response);
+    return TeacherVerification.fromJson(data as Map<String, dynamic>);
+  }
+
+  Future<List<TeacherVerificationAuditEntry>> getMyTeacherVerificationHistory({
+    required String accessToken,
+  }) async {
+    final response = await _sendRequest(
+      () => http
+          .get(
+            _uri('/v1/teacher-verification/history'),
+            headers: _jsonHeaders(accessToken: accessToken),
+          )
+          .timeout(_requestTimeout),
+    );
+    final data = _parseJson(response) as List<dynamic>;
+    return data
+        .map(
+          (item) => TeacherVerificationAuditEntry.fromJson(
+            item as Map<String, dynamic>,
+          ),
+        )
+        .toList();
+  }
+
+  Future<TeacherVerification> submitTeacherVerification({
+    required String accessToken,
+    required String tscNumber,
+    required PlatformFile idDocument,
+    required PlatformFile tscCertificate,
+  }) async {
+    return submitTeacherVerificationFlexible(
+      accessToken: accessToken,
+      tscNumber: tscNumber,
+      idDocument: idDocument,
+      tscCertificate: tscCertificate,
+    );
+  }
+
+  Future<TeacherVerification> submitTeacherVerificationFlexible({
+    required String accessToken,
+    required String tscNumber,
+    PlatformFile? idDocument,
+    PlatformFile? tscCertificate,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      _uri('/v1/teacher-verification/submit'),
+    )..headers.addAll(_authHeaders(accessToken));
+    request.fields['tsc_number'] = tscNumber.trim();
+
+    if (idDocument != null) {
+      if (idDocument.bytes != null) {
+        request.files.add(
+          http.MultipartFile.fromBytes(
+            'id_document',
+            idDocument.bytes!,
+            filename: idDocument.name,
+          ),
+        );
+      } else if (!kIsWeb && idDocument.path != null) {
+        request.files.add(
+          await http.MultipartFile.fromPath('id_document', idDocument.path!),
+        );
+      } else {
+        throw ApiException('Unable to read ID document file.');
+      }
+    }
+
+    if (tscCertificate != null) {
+      if (tscCertificate.bytes != null) {
+        request.files.add(
+          http.MultipartFile.fromBytes(
+            'tsc_certificate',
+            tscCertificate.bytes!,
+            filename: tscCertificate.name,
+          ),
+        );
+      } else if (!kIsWeb && tscCertificate.path != null) {
+        request.files.add(
+          await http.MultipartFile.fromPath(
+            'tsc_certificate',
+            tscCertificate.path!,
+          ),
+        );
+      } else {
+        throw ApiException('Unable to read TSC certificate file.');
+      }
+    }
+
+    final streamed = await _sendStreamedRequest(
+      () => request.send().timeout(_uploadTimeout),
+    );
+    final response = await _sendRequest(
+      () => http.Response.fromStream(streamed).timeout(_uploadTimeout),
+    );
+    final data = _parseJson(response);
+    return TeacherVerification.fromJson(data as Map<String, dynamic>);
+  }
+
+  Future<List<TeacherVerification>> listTeacherVerifications({
+    required String accessToken,
+    String status = 'pending',
+    int limit = 80,
+  }) async {
+    final response = await _sendRequest(
+      () => http
+          .get(
+            _uri(
+              '/v1/admin/teacher-verifications?status=${Uri.encodeQueryComponent(status)}&limit=$limit',
+            ),
+            headers: _jsonHeaders(accessToken: accessToken),
+          )
+          .timeout(_requestTimeout),
+    );
+    final data = _parseJson(response) as List<dynamic>;
+    return data
+        .map((item) => TeacherVerification.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<TeacherVerification> reviewTeacherVerification({
+    required String accessToken,
+    required String teacherId,
+    required String action,
+    String? comment,
+  }) async {
+    final response = await _sendRequest(
+      () => http
+          .post(
+            _uri('/v1/admin/teacher-verifications/$teacherId/review'),
+            headers: _jsonHeaders(accessToken: accessToken),
+            body: jsonEncode({'action': action, 'comment': comment}),
+          )
+          .timeout(_requestTimeout),
+    );
+    final data = _parseJson(response);
+    return TeacherVerification.fromJson(data as Map<String, dynamic>);
+  }
+
+  Future<List<TeacherVerificationAuditEntry>> getTeacherVerificationHistory({
+    required String accessToken,
+    required String teacherId,
+  }) async {
+    final response = await _sendRequest(
+      () => http
+          .get(
+            _uri('/v1/admin/teacher-verifications/$teacherId/history'),
+            headers: _jsonHeaders(accessToken: accessToken),
+          )
+          .timeout(_requestTimeout),
+    );
+    final data = _parseJson(response) as List<dynamic>;
+    return data
+        .map(
+          (item) => TeacherVerificationAuditEntry.fromJson(
+            item as Map<String, dynamic>,
+          ),
+        )
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> getAdminIntegrationStatus({
+    required String accessToken,
+  }) async {
+    final response = await _sendRequest(
+      () => http
+          .get(
+            _uri('/v1/admin/integrations/status'),
+            headers: _jsonHeaders(accessToken: accessToken),
+          )
+          .timeout(_requestTimeout),
+    );
+    final data = _parseJson(response);
+    return data is Map<String, dynamic> ? data : <String, dynamic>{};
+  }
+
+  Future<Map<String, Map<String, dynamic>>> getAdminAlertAcknowledgements({
+    required String accessToken,
+  }) async {
+    final response = await _sendRequest(
+      () => http
+          .get(
+            _uri('/v1/admin/alerts/acknowledgements'),
+            headers: _jsonHeaders(accessToken: accessToken),
+          )
+          .timeout(_requestTimeout),
+    );
+    final data = _parseJson(response) as List<dynamic>;
+    final out = <String, Map<String, dynamic>>{};
+    for (final row in data) {
+      if (row is! Map<String, dynamic>) continue;
+      final key = row['alert_key']?.toString().trim().toLowerCase() ?? '';
+      if (key.isEmpty) continue;
+      out[key] = row;
+    }
+    return out;
+  }
+
+  Future<void> acknowledgeAdminAlert({
+    required String accessToken,
+    required String alertKey,
+    String? note,
+  }) async {
+    await _sendRequest(
+      () => http
+          .post(
+            _uri('/v1/admin/alerts/acknowledgements'),
+            headers: _jsonHeaders(accessToken: accessToken),
+            body: jsonEncode({'alert_key': alertKey, 'note': note}),
+          )
+          .timeout(_requestTimeout),
+    );
+  }
+
+  Future<void> unacknowledgeAdminAlert({
+    required String accessToken,
+    required String alertKey,
+  }) async {
+    await _sendRequest(
+      () => http
+          .delete(
+            _uri('/v1/admin/alerts/acknowledgements/$alertKey'),
+            headers: _jsonHeaders(accessToken: accessToken),
+          )
+          .timeout(_requestTimeout),
+    );
+  }
+
   Future<void> markNotificationRead({
     required String accessToken,
     required String notificationId,
@@ -817,6 +1085,36 @@ class ApiClient {
     return (data['upvote_count'] as num?)?.toInt() ?? 0;
   }
 
+  Future<ClassSession> createClassFromTopic({
+    required String accessToken,
+    required String topicId,
+    String? title,
+    String? description,
+    required String meetingLink,
+    required DateTime scheduledStartAt,
+    required DateTime scheduledEndAt,
+    required int feeKes,
+  }) async {
+    final response = await _sendRequest(
+      () => http
+          .post(
+            _uri('/v1/topics/$topicId/create-class'),
+            headers: _jsonHeaders(accessToken: accessToken),
+            body: jsonEncode({
+              'title': title,
+              'description': description,
+              'meeting_link': meetingLink,
+              'scheduled_start_at': scheduledStartAt.toUtc().toIso8601String(),
+              'scheduled_end_at': scheduledEndAt.toUtc().toIso8601String(),
+              'fee_kes': feeKes,
+            }),
+          )
+          .timeout(_requestTimeout),
+    );
+    final data = _parseJson(response);
+    return ClassSession.fromJson(data as Map<String, dynamic>);
+  }
+
   Future<List<PrivateTutorProfile>> listPrivateTutors({
     required String accessToken,
     int limit = 20,
@@ -853,6 +1151,21 @@ class ApiClient {
     );
     final data = _parseJson(response);
     return PrivateTutorBookingIntent.fromJson(data as Map<String, dynamic>);
+  }
+
+  Future<Map<String, dynamic>> privateTutorsHealth({
+    required String accessToken,
+  }) async {
+    final response = await _sendRequest(
+      () => http
+          .get(
+            _uri('/v1/private-tutors/health'),
+            headers: _jsonHeaders(accessToken: accessToken),
+          )
+          .timeout(_requestTimeout),
+    );
+    final data = _parseJson(response);
+    return data is Map<String, dynamic> ? data : <String, dynamic>{};
   }
 
   Future<List<TopicAbuseEvent>> listTopicAbuseEvents({

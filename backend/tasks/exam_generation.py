@@ -15,7 +15,10 @@ from server import (
     record_metric,
     run_generation_pipeline,
 )
-from tasks.notifications import send_generation_status_notification
+from tasks.notifications import (
+    send_first_exam_upgrade_nudge,
+    send_generation_status_notification,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +84,14 @@ async def _process_generation_job_impl(self, job_id: str) -> dict:
         )
 
         await increment_usage_counter(user_id, "generations_total", 1)
+        if generation_type == "exam":
+            await increment_usage_counter(user_id, "exam_generations_total", 1)
+            counters = await db.user_usage_counters.find_one(
+                {"user_id": user_id},
+                {"_id": 0, "exam_generations_total": 1},
+            )
+            if int((counters or {}).get("exam_generations_total", 0)) == 1:
+                send_first_exam_upgrade_nudge.delay(user_id=user_id)
         record_metric("generation_success", tags={"type": generation_type, "user_id": user_id})
         await db.generation_jobs.update_one(
             {"job_id": job_id},

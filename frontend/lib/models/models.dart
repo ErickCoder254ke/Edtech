@@ -309,6 +309,7 @@ class ClassSession {
     required this.joined,
     this.averageRating,
     required this.reviewCount,
+    this.topicSuggestionId,
   });
 
   final String id;
@@ -327,6 +328,7 @@ class ClassSession {
   final bool joined;
   final double? averageRating;
   final int reviewCount;
+  final String? topicSuggestionId;
 
   factory ClassSession.fromJson(Map<String, dynamic> json) {
     return ClassSession(
@@ -352,6 +354,7 @@ class ClassSession {
       joined: json['joined'] as bool? ?? false,
       averageRating: (json['average_rating'] as num?)?.toDouble(),
       reviewCount: (json['review_count'] as num?)?.toInt() ?? 0,
+      topicSuggestionId: json['topic_suggestion_id'] as String?,
     );
   }
 }
@@ -480,6 +483,7 @@ class TopicSuggestion {
     required this.upvoteCount,
     required this.status,
     required this.userHasUpvoted,
+    this.linkedClassId,
   });
 
   final String id;
@@ -492,6 +496,7 @@ class TopicSuggestion {
   final int upvoteCount;
   final String status;
   final bool userHasUpvoted;
+  final String? linkedClassId;
 
   TopicSuggestion copyWith({
     String? id,
@@ -504,6 +509,7 @@ class TopicSuggestion {
     int? upvoteCount,
     String? status,
     bool? userHasUpvoted,
+    String? linkedClassId,
   }) {
     return TopicSuggestion(
       id: id ?? this.id,
@@ -516,6 +522,7 @@ class TopicSuggestion {
       upvoteCount: upvoteCount ?? this.upvoteCount,
       status: status ?? this.status,
       userHasUpvoted: userHasUpvoted ?? this.userHasUpvoted,
+      linkedClassId: linkedClassId ?? this.linkedClassId,
     );
   }
 
@@ -533,6 +540,7 @@ class TopicSuggestion {
       upvoteCount: (json['upvote_count'] as num?)?.toInt() ?? 0,
       status: json['status'] as String? ?? 'open',
       userHasUpvoted: json['user_has_upvoted'] as bool? ?? false,
+      linkedClassId: json['linked_class_id'] as String?,
     );
   }
 }
@@ -635,6 +643,73 @@ class TopicFlaggedItem {
       fraudSpikeFlaggedAt: DateTime.tryParse(
         json['fraud_spike_flagged_at'] as String? ?? '',
       ),
+    );
+  }
+}
+
+class TeacherVerification {
+  TeacherVerification({
+    required this.teacherId,
+    required this.status,
+    this.tscNumber,
+    this.idDocumentUrl,
+    this.tscCertificateUrl,
+    this.submittedAt,
+    this.reviewedAt,
+    this.reviewedBy,
+    this.reviewComment,
+    this.rejectionReason,
+  });
+
+  final String teacherId;
+  final String status;
+  final String? tscNumber;
+  final String? idDocumentUrl;
+  final String? tscCertificateUrl;
+  final DateTime? submittedAt;
+  final DateTime? reviewedAt;
+  final String? reviewedBy;
+  final String? reviewComment;
+  final String? rejectionReason;
+
+  factory TeacherVerification.fromJson(Map<String, dynamic> json) {
+    return TeacherVerification(
+      teacherId: json['teacher_id'] as String? ?? '',
+      status: json['status'] as String? ?? 'not_submitted',
+      tscNumber: json['tsc_number'] as String?,
+      idDocumentUrl: json['id_document_url'] as String?,
+      tscCertificateUrl: json['tsc_certificate_url'] as String?,
+      submittedAt: DateTime.tryParse(json['submitted_at'] as String? ?? ''),
+      reviewedAt: DateTime.tryParse(json['reviewed_at'] as String? ?? ''),
+      reviewedBy: json['reviewed_by'] as String?,
+      reviewComment: json['review_comment'] as String?,
+      rejectionReason: json['rejection_reason'] as String?,
+    );
+  }
+}
+
+class TeacherVerificationAuditEntry {
+  TeacherVerificationAuditEntry({
+    required this.actorId,
+    required this.actorRole,
+    required this.action,
+    this.comment,
+    required this.at,
+  });
+
+  final String actorId;
+  final String actorRole;
+  final String action;
+  final String? comment;
+  final DateTime at;
+
+  factory TeacherVerificationAuditEntry.fromJson(Map<String, dynamic> json) {
+    return TeacherVerificationAuditEntry(
+      actorId: json['actor_id'] as String? ?? '',
+      actorRole: json['actor_role'] as String? ?? 'system',
+      action: json['action'] as String? ?? '',
+      comment: json['comment'] as String?,
+      at: DateTime.tryParse(json['at'] as String? ?? '') ?? DateTime.now(),
     );
   }
 }
