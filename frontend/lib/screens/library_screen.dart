@@ -302,6 +302,16 @@ class _DocumentTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    String retentionLabel() {
+      final expiresAt = doc.retentionExpiresAt;
+      if (expiresAt == null) return 'Auto-cleanup policy applies by plan.';
+      final now = DateTime.now();
+      final diff = expiresAt.difference(now);
+      if (diff.inSeconds <= 0) return 'Scheduled for cleanup now.';
+      if (diff.inHours < 24) return 'Auto-cleanup in ${diff.inHours}h';
+      return 'Auto-cleanup in ${diff.inDays} day(s)';
+    }
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: GlassContainer(
@@ -332,6 +342,11 @@ class _DocumentTile extends StatelessWidget {
                   Text(
                     '${doc.fileType.toUpperCase()} • ${doc.totalChunks} chunks',
                     style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    retentionLabel(),
+                    style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
                   ),
                 ],
               ),

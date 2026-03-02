@@ -138,7 +138,7 @@ class _NotesCatalogScreenState extends State<NotesCatalogScreen> {
           onSessionUpdated: widget.onSessionUpdated,
           onSessionInvalid: widget.onSessionInvalid,
           initialCbcNoteIds: [note.id],
-          initialTopic: 'Grade ${note.grade} ${note.subject}',
+          initialTopic: '${note.levelLabel} ${note.subject}',
         ),
       ),
     );
@@ -149,7 +149,7 @@ class _NotesCatalogScreenState extends State<NotesCatalogScreen> {
     final subjects = _categories.subjectsByGrade['${_selectedGrade ?? 0}'] ?? const <String>[];
     return Scaffold(
       appBar: AppBar(
-        title: const Text('CBC Notes'),
+        title: const Text('CBC / Senior School Notes'),
         actions: [
           IconButton(
             onPressed: _loadCategoriesAndNotes,
@@ -179,7 +179,7 @@ class _NotesCatalogScreenState extends State<NotesCatalogScreen> {
                     children: _categories.grades
                         .map(
                           (grade) => ChoiceChip(
-                            label: Text('Grade $grade'),
+                            label: Text('Form/Grade $grade'),
                             selected: _selectedGrade == grade,
                             onSelected: (_) {
                               if (_selectedGrade == grade) return;
@@ -270,7 +270,7 @@ class _NotesCatalogScreenState extends State<NotesCatalogScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'Grade ${note.grade} • ${note.subject} • ${(note.fileSize / 1024 / 1024).toStringAsFixed(1)} MB',
+                          '${note.levelLabel} - ${note.subject} - ${(note.fileSize / 1024 / 1024).toStringAsFixed(1)} MB',
                           style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
                         ),
                         if ((note.description ?? '').isNotEmpty) ...[
@@ -303,3 +303,4 @@ class _NotesCatalogScreenState extends State<NotesCatalogScreen> {
     );
   }
 }
+

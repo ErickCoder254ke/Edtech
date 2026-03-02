@@ -924,6 +924,21 @@ class ApiClient {
     return data is Map<String, dynamic> ? data : <String, dynamic>{};
   }
 
+  Future<Map<String, dynamic>> runAdminRetentionMaintenance({
+    required String accessToken,
+  }) async {
+    final response = await _sendRequest(
+      () => http
+          .post(
+            _uri('/v1/admin/maintenance/retention/run'),
+            headers: _jsonHeaders(accessToken: accessToken),
+          )
+          .timeout(_requestTimeout),
+    );
+    final data = _parseJson(response);
+    return data is Map<String, dynamic> ? data : <String, dynamic>{};
+  }
+
   Future<Map<String, Map<String, dynamic>>> getAdminAlertAcknowledgements({
     required String accessToken,
   }) async {

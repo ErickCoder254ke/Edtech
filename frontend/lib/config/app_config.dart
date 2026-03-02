@@ -4,7 +4,7 @@ class AppConfig {
     defaultValue: 'https://edtech-production-4bd8.up.railway.app/',
   );
   static const String apiPrefix = '/api';
-  static const String supportEmailFallback = 'support@examos.app';
+  static const String supportEmailFallback = 'examos254@gmail.com';
   static const String supportPhoneFallback = '0114090740';
 
   static String get apiRoot {

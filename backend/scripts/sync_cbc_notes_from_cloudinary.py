@@ -56,10 +56,29 @@ def _extract_grade(text: str) -> Optional[int]:
     return None
 
 
+def _extract_form(text: str) -> Optional[int]:
+    m = re.search(r"form[\s_\-]?(\d{1,2})", text, flags=re.IGNORECASE)
+    if m:
+        value = int(m.group(1))
+        if 1 <= value <= 12:
+            return value
+    return None
+
+
+def _strip_cloudinary_suffix(text: str) -> str:
+    raw = str(text or "")
+    if not raw:
+        return ""
+    # Remove Cloudinary-style random tail in filenames/public IDs like "__u3o94l"
+    return re.sub(r"__?[a-z0-9]{5,}$", "", raw, flags=re.IGNORECASE)
+
+
 def _clean_subject(raw: str) -> str:
-    tokens = re.split(r"[^a-zA-Z0-9]+", raw.lower())
+    cleaned = _strip_cloudinary_suffix(raw)
+    tokens = re.split(r"[^a-zA-Z0-9]+", cleaned.lower())
     stop = {
         "grade",
+        "form",
         "notes",
         "note",
         "term",
@@ -68,6 +87,7 @@ def _clean_subject(raw: str) -> str:
         "ke",
         "kcserevision",
         "com",
+        "comterm",
         "complete",
         "1",
         "2",
@@ -81,11 +101,24 @@ def _clean_subject(raw: str) -> str:
     return " ".join(w.capitalize() for w in keep[:4])
 
 
-def _derive_grade_subject(public_id: str, filename: str) -> Tuple[int, str]:
-    blob = f"{public_id} {filename}"
-    grade = _extract_grade(blob) or 10
+def _derive_grade_subject(public_id: str, filename: str) -> Tuple[int, str, str, str]:
+    cleaned_public_id = _strip_cloudinary_suffix(public_id)
+    cleaned_filename = _strip_cloudinary_suffix(Path(filename).stem)
+    blob = f"{cleaned_public_id} {cleaned_filename}"
+    form = _extract_form(blob)
+    grade = _extract_grade(blob)
+    if form is not None:
+        level_type = "form"
+        level_number = form
+    elif grade is not None:
+        level_type = "grade"
+        level_number = grade
+    else:
+        level_type = "grade"
+        level_number = 10
+    level_label = f"{'Form' if level_type == 'form' else 'Grade'} {level_number}"
 
-    path_parts = [p for p in public_id.split("/") if p.strip()]
+    path_parts = [p for p in cleaned_public_id.split("/") if p.strip()]
     subject_part = ""
     for idx, part in enumerate(path_parts):
         if _extract_grade(part) is not None and idx + 1 < len(path_parts):
@@ -93,8 +126,8 @@ def _derive_grade_subject(public_id: str, filename: str) -> Tuple[int, str]:
             break
     if not subject_part and path_parts:
         subject_part = path_parts[-1]
-    subject = _clean_subject(subject_part or filename)
-    return grade, subject
+    subject = _clean_subject(subject_part or cleaned_filename)
+    return level_number, subject, level_type, level_label
 
 
 def _filename_from_resource(resource: Dict[str, Any]) -> str:
@@ -299,13 +332,15 @@ def main() -> int:
             or by_filename_normalized.get(normalized_cloud_key)
         )
 
-        grade, subject = _derive_grade_subject(public_id, filename)
-        title = f"Grade {grade} {subject} Notes"
+        grade, subject, level_type, level_label = _derive_grade_subject(public_id, filename)
+        title = f"{level_label} {subject} Notes"
         update_doc: Dict[str, Any] = {
             "grade": grade,
+            "level_type": level_type,
+            "level_label": level_label,
             "subject": subject,
             "title": title,
-            "description": f"CBC Grade {grade} notes for {subject}",
+            "description": f"{level_label} notes for {subject}",
             "filename": filename,
             "source_path": f"{prefix}/{filename}",
             "cloudinary_url": secure_url,

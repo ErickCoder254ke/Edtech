@@ -21,6 +21,8 @@ class SupportCenterScreen extends StatefulWidget {
 }
 
 class _SupportCenterScreenState extends State<SupportCenterScreen> {
+  static const String _contentVersion = 'Support Pack v2.0';
+  static const String _lastUpdated = 'March 2, 2026';
   String _email = AppConfig.supportEmailFallback;
   String _phone = AppConfig.supportPhoneFallback;
 
@@ -52,12 +54,12 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
       initialIndex: widget.initialTab.clamp(0, 2).toInt(),
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Support Center'),
+          title: const Text('Support Hub'),
           bottom: const TabBar(
             tabs: [
-              Tab(text: 'About'),
-              Tab(text: 'Help'),
-              Tab(text: 'Contact'),
+              Tab(icon: Icon(Icons.auto_awesome_rounded), text: 'About'),
+              Tab(icon: Icon(Icons.lightbulb_rounded), text: 'Help'),
+              Tab(icon: Icon(Icons.support_agent_rounded), text: 'Contact'),
             ],
           ),
         ),
@@ -69,11 +71,27 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
               end: Alignment.bottomCenter,
             ),
           ),
-          child: TabBarView(
+          child: Column(
             children: [
-              _AboutTab(),
-              _HelpTab(),
-              _ContactTab(email: _email, phone: _phone),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                child: Row(
+                  children: [
+                    _MetaChip(label: _contentVersion),
+                    const SizedBox(width: 8),
+                    _MetaChip(label: 'Updated $_lastUpdated'),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: TabBarView(
+                  children: [
+                    _AboutTab(),
+                    _HelpTab(),
+                    _ContactTab(email: _email, phone: _phone),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
@@ -82,37 +100,74 @@ class _SupportCenterScreenState extends State<SupportCenterScreen> {
   }
 }
 
+class _MetaChip extends StatelessWidget {
+  const _MetaChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceDark.withValues(alpha: 0.65),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: AppColors.glassBorder),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(fontSize: 11, color: AppColors.textMuted, fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+}
+
 class _AboutTab extends StatelessWidget {
+  final List<_Pillar> _pillars = const [
+    _Pillar(
+      icon: Icons.bolt_rounded,
+      title: 'Speed With Structure',
+      body:
+          'Exam OS is built to move from source notes to classroom-ready assessments quickly, while preserving clean question structure and mark alignment.',
+    ),
+    _Pillar(
+      icon: Icons.verified_user_rounded,
+      title: 'Trust & Governance',
+      body:
+          'Role-based access, teacher verification, class payment controls, and operational diagnostics are built into the core workflow.',
+    ),
+    _Pillar(
+      icon: Icons.model_training_rounded,
+      title: 'Practical AI Layer',
+      body:
+          'Generation quality is tuned for real school use cases: exam drafts, mark schemes, summaries, and curriculum-driven outputs.',
+    ),
+  ];
+
   @override
   Widget build(BuildContext context) {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
-      children: const [
-        _HeroPanel(
-          title: 'Exam OS by EdTech Intelligence',
+      children: [
+        const _SpotlightCard(
+          title: 'Exam OS',
           subtitle:
-              'A focused learning engine for institutions, teachers, and students who need reliable assessments fast.',
+              'An academic operations platform for teachers and students: generate, teach, schedule, pay, and monitor from one place.',
+          accent: 'Built for production school workflows',
         ),
-        SizedBox(height: 12),
-        _InfoCard(
-          title: 'Our Mission',
-          body:
-              'We help educators turn course materials into structured assessments, revision packs, and guided learning artifacts with strong accuracy and clean formatting.',
-          icon: Icons.flag_rounded,
+        const SizedBox(height: 12),
+        ..._pillars.map(
+          (item) => Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: _InfoCard(title: item.title, body: item.body, icon: item.icon),
+          ),
         ),
-        SizedBox(height: 10),
-        _InfoCard(
-          title: 'What Makes Exam OS Different',
+        const SizedBox(height: 2),
+        const _InfoCard(
+          title: 'Version Scope',
           body:
-              'Exam OS is built for academic workflows first: upload-to-output speed, clear mark schemes, quiz/exam modes, and consistent document quality for real classrooms.',
-          icon: Icons.workspace_premium_rounded,
-        ),
-        SizedBox(height: 10),
-        _InfoCard(
-          title: 'Trust & Security',
-          body:
-              'We continuously harden auth, account controls, and reset flows while preserving practical UX so institutions can deploy confidently.',
-          icon: Icons.verified_user_rounded,
+              'This release includes async generation jobs, teacher verification, class payment flows, shared notes, and admin-level reliability controls.',
+          icon: Icons.change_circle_rounded,
         ),
       ],
     );
@@ -120,37 +175,86 @@ class _AboutTab extends StatelessWidget {
 }
 
 class _HelpTab extends StatelessWidget {
+  final List<_FaqItem> _faqs = const [
+    _FaqItem(
+      q: 'Why does generation sometimes queue?',
+      a:
+          'Generation runs through background workers to keep requests reliable under load. Use My Jobs to track queued, processing, and completed states.',
+    ),
+    _FaqItem(
+      q: 'Why did my document disappear?',
+      a:
+          'Documents follow retention by plan (Free 3 days, Weekly 7, Monthly 14, Annual 30). You receive reminder emails before scheduled cleanup.',
+    ),
+    _FaqItem(
+      q: 'Why can class payment show pending?',
+      a:
+          'STK callbacks can be delayed. Wait briefly, refresh class status, and retry only if payment has not reflected. Duplicate payment creation is protected server-side.',
+    ),
+    _FaqItem(
+      q: 'Can I use another person’s phone to pay?',
+      a:
+          'Yes. When paying, you can enter a new number or pick a saved one. This supports parent/guardian payment scenarios.',
+    ),
+  ];
+
   @override
   Widget build(BuildContext context) {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
-      children: const [
-        _InfoCard(
-          title: 'Getting Started',
-          body:
-              '1) Upload one clean source document.\n2) Open Generation Lab.\n3) Pick Summary, Concepts, Quiz, or Exam.\n4) Export and share.',
-          icon: Icons.play_circle_fill_rounded,
+      children: [
+        const _SpotlightCard(
+          title: 'Quick Start',
+          subtitle:
+              'Upload a document, generate content, review output, then export or assign. Keep prompts specific for best quality.',
+          accent: 'Recommended: start with one clean source file',
         ),
-        SizedBox(height: 10),
-        _InfoCard(
-          title: 'Common Upload Issues',
+        const SizedBox(height: 12),
+        const _InfoCard(
+          title: 'Generation Best Practice',
           body:
-              'Use readable PDF/DOCX/TXT files. If upload times out, retry on stable internet and reduce file size where possible.',
-          icon: Icons.upload_file_rounded,
+              'Use explicit instructions (section style, mark ranges, command verbs, and exam title/school metadata) to reduce revisions and improve first-pass output.',
+          icon: Icons.auto_fix_high_rounded,
         ),
-        SizedBox(height: 10),
-        _InfoCard(
-          title: 'Login & Account Recovery',
+        const SizedBox(height: 10),
+        const _InfoCard(
+          title: 'Upload Reliability',
           body:
-              'Use Forgot Password from sign in. Reset links are time-bound and single-use for account safety.',
-          icon: Icons.lock_reset_rounded,
+              'Use readable PDF/DOCX/TXT files. If extraction fails, upload a cleaner source file or split very large notes into smaller files.',
+          icon: Icons.file_upload_rounded,
         ),
-        SizedBox(height: 10),
-        _InfoCard(
-          title: 'Billing & Plans',
-          body:
-              'Your generation limits are tracked server-side. Deleting old content does not reset consumed quota.',
-          icon: Icons.receipt_long_rounded,
+        const SizedBox(height: 10),
+        GlassContainer(
+          borderRadius: 18,
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'FAQ',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+              ),
+              const SizedBox(height: 8),
+              ..._faqs.map(
+                (item) => ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  childrenPadding: const EdgeInsets.only(bottom: 8),
+                  iconColor: AppColors.primary,
+                  collapsedIconColor: AppColors.textMuted,
+                  title: Text(item.q, style: const TextStyle(fontWeight: FontWeight.w700)),
+                  children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        item.a,
+                        style: const TextStyle(color: AppColors.textMuted, height: 1.45),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ],
     );
@@ -168,9 +272,7 @@ class _ContactTab extends StatelessWidget {
     if (digits.startsWith('0') && digits.length >= 10) {
       return '254${digits.substring(1)}';
     }
-    if (digits.startsWith('254')) {
-      return digits;
-    }
+    if (digits.startsWith('254')) return digits;
     return digits;
   }
 
@@ -210,45 +312,49 @@ class _ContactTab extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
       children: [
-        const _HeroPanel(
-          title: 'Talk to Exam OS Support',
+        const _SpotlightCard(
+          title: 'Contact Support',
           subtitle:
-              'For onboarding, technical issues, subscription assistance, or deployment guidance, contact us directly.',
+              'For technical incidents, billing questions, onboarding, and production issues, reach out directly.',
+          accent: 'Fastest route: WhatsApp for urgent issues',
         ),
         const SizedBox(height: 12),
         _InfoCard(
-          title: 'Support Email',
+          title: 'Email',
           body: email,
-          icon: Icons.email_rounded,
-        ),
-        const SizedBox(height: 10),
-        SizedBox(
-          width: double.infinity,
-          child: OutlinedButton.icon(
-            onPressed: () => _openEmail(context),
-            icon: const Icon(Icons.forward_to_inbox_rounded),
-            label: const Text('Email Support'),
-          ),
+          icon: Icons.alternate_email_rounded,
         ),
         const SizedBox(height: 10),
         _InfoCard(
-          title: 'Support Phone',
+          title: 'Phone / WhatsApp',
           body: phone,
-          icon: Icons.phone_rounded,
+          icon: Icons.call_rounded,
         ),
         const SizedBox(height: 10),
-        SizedBox(
-          width: double.infinity,
-          child: ElevatedButton.icon(
-            onPressed: () => _openWhatsApp(context),
-            icon: const Icon(Icons.chat_bubble_rounded),
-            label: const Text('Chat on WhatsApp'),
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () => _openEmail(context),
+                icon: const Icon(Icons.mark_email_unread_rounded),
+                label: const Text('Email'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: () => _openWhatsApp(context),
+                icon: const Icon(Icons.chat_rounded),
+                label: const Text('WhatsApp'),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 10),
         const _InfoCard(
-          title: 'Support Hours',
-          body: 'Mon - Sat, 8:00 AM - 8:00 PM (EAT)',
+          title: 'Support Window',
+          body:
+              'Mon - Sat • 8:00 AM - 8:00 PM (EAT)\nCritical production incidents are prioritized by severity.',
           icon: Icons.schedule_rounded,
         ),
       ],
@@ -256,30 +362,60 @@ class _ContactTab extends StatelessWidget {
   }
 }
 
-class _HeroPanel extends StatelessWidget {
-  const _HeroPanel({required this.title, required this.subtitle});
+class _SpotlightCard extends StatelessWidget {
+  const _SpotlightCard({
+    required this.title,
+    required this.subtitle,
+    required this.accent,
+  });
 
   final String title;
   final String subtitle;
+  final String accent;
 
   @override
   Widget build(BuildContext context) {
-    return GlassContainer(
-      borderRadius: 20,
-      padding: const EdgeInsets.all(18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            subtitle,
-            style: const TextStyle(color: AppColors.textMuted, height: 1.45),
-          ),
-        ],
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        gradient: LinearGradient(
+          colors: [
+            AppColors.primary.withValues(alpha: 0.25),
+            AppColors.accent.withValues(alpha: 0.18),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: GlassContainer(
+        borderRadius: 22,
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              subtitle,
+              style: const TextStyle(color: AppColors.textMuted, height: 1.45),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppColors.surfaceDark.withValues(alpha: 0.55),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                accent,
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -305,8 +441,8 @@ class _InfoCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            width: 36,
-            height: 36,
+            width: 38,
+            height: 38,
             decoration: BoxDecoration(
               color: AppColors.primary.withValues(alpha: 0.14),
               borderRadius: BorderRadius.circular(10),
@@ -318,14 +454,11 @@ class _InfoCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w800),
-                ),
+                Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
                 const SizedBox(height: 4),
                 Text(
                   body,
-                  style: const TextStyle(color: AppColors.textMuted, height: 1.4),
+                  style: const TextStyle(color: AppColors.textMuted, height: 1.45),
                 ),
               ],
             ),
@@ -334,4 +467,22 @@ class _InfoCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _Pillar {
+  const _Pillar({
+    required this.icon,
+    required this.title,
+    required this.body,
+  });
+
+  final IconData icon;
+  final String title;
+  final String body;
+}
+
+class _FaqItem {
+  const _FaqItem({required this.q, required this.a});
+  final String q;
+  final String a;
 }

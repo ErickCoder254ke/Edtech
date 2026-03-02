@@ -25,8 +25,10 @@ class AdminIntegrationsStatusScreen extends StatefulWidget {
 
 class _AdminIntegrationsStatusScreenState extends State<AdminIntegrationsStatusScreen> {
   bool _loading = true;
+  bool _runningRetention = false;
   String? _error;
   Map<String, dynamic> _status = const {};
+  Map<String, dynamic>? _retentionRunSummary;
 
   Future<T> _runWithAuthRetry<T>(Future<T> Function(String token) op) async {
     try {
@@ -70,6 +72,36 @@ class _AdminIntegrationsStatusScreenState extends State<AdminIntegrationsStatusS
     }
   }
 
+  Future<void> _runRetentionNow() async {
+    setState(() => _runningRetention = true);
+    try {
+      final summary = await _runWithAuthRetry(
+        (token) => widget.apiClient.runAdminRetentionMaintenance(accessToken: token),
+      );
+      if (!mounted) return;
+      setState(() => _retentionRunSummary = summary);
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Retention run complete: docs deleted ${summary['deleted_docs'] ?? 0}, chunks deleted ${summary['deleted_chunks'] ?? 0}.',
+          ),
+        ),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to run retention maintenance right now.')),
+      );
+    } finally {
+      if (mounted) setState(() => _runningRetention = false);
+    }
+  }
+
   Widget _tile({
     required String title,
     required Map<String, dynamic> payload,
@@ -102,6 +134,7 @@ class _AdminIntegrationsStatusScreenState extends State<AdminIntegrationsStatusS
     final firebase = (_status['firebase'] as Map<String, dynamic>?) ?? const {};
     final brevo = (_status['brevo'] as Map<String, dynamic>?) ?? const {};
     final queue = (_status['queue'] as Map<String, dynamic>?) ?? const {};
+    final retention = (_status['retention'] as Map<String, dynamic>?) ?? const {};
 
     return Scaffold(
       appBar: AppBar(
@@ -115,6 +148,52 @@ class _AdminIntegrationsStatusScreenState extends State<AdminIntegrationsStatusS
               : ListView(
                   padding: const EdgeInsets.all(16),
                   children: [
+                    GlassContainer(
+                      borderRadius: 14,
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Expanded(
+                                child: Text(
+                                  'Retention Maintenance',
+                                  style: TextStyle(fontWeight: FontWeight.w800),
+                                ),
+                              ),
+                              FilledButton.icon(
+                                onPressed: _runningRetention ? null : _runRetentionNow,
+                                icon: _runningRetention
+                                    ? const SizedBox(
+                                        width: 14,
+                                        height: 14,
+                                        child: CircularProgressIndicator(strokeWidth: 2),
+                                      )
+                                    : const Icon(Icons.cleaning_services_rounded, size: 16),
+                                label: Text(_runningRetention ? 'Running...' : 'Run now'),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'This will backfill retention metadata, send due reminder emails, and delete expired documents/chunks/generations.',
+                            style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+                          ),
+                          if (_retentionRunSummary != null) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              'Last run summary: ${_retentionRunSummary!['status'] ?? 'ok'} '
+                              '| docs ${_retentionRunSummary!['deleted_docs'] ?? 0} '
+                              '| chunks ${_retentionRunSummary!['deleted_chunks'] ?? 0} '
+                              '| generations ${_retentionRunSummary!['deleted_generations'] ?? 0}',
+                              style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
                     _tile(title: 'LocalPro', payload: localpro),
                     const SizedBox(height: 10),
                     _tile(title: 'Firebase', payload: firebase),
@@ -122,9 +201,10 @@ class _AdminIntegrationsStatusScreenState extends State<AdminIntegrationsStatusS
                     _tile(title: 'Brevo', payload: brevo),
                     const SizedBox(height: 10),
                     _tile(title: 'Queue / Delivery', payload: queue),
+                    const SizedBox(height: 10),
+                    _tile(title: 'Retention Policy', payload: retention),
                   ],
                 ),
     );
   }
 }
-

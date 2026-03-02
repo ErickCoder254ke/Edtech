@@ -393,42 +393,16 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
     }
   }
 
-  Future<String?> _promptPhoneForPayment() async {
-    final controller = TextEditingController();
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Pay Class Fee'),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.phone,
-          decoration: const InputDecoration(
-            hintText: 'Enter M-Pesa number (e.g. 07XXXXXXXX)',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Continue'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return null;
-    return controller.text.trim();
-  }
-
   Future<bool> _pollPaymentUntilDone(String classId, String checkoutRequestId) async {
     if (checkoutRequestId.isEmpty) return false;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('STK push sent. Complete payment on your phone.')),
     );
-    for (var i = 0; i < 18; i++) {
-      await Future<void>.delayed(const Duration(seconds: 4));
+    for (var i = 0; i < 30; i++) {
+      if (i > 0) {
+        final waitSeconds = i < 10 ? 2 : 3;
+        await Future<void>.delayed(Duration(seconds: waitSeconds));
+      }
       try {
         final status = await _runWithAuthRetry(
           (token) => widget.apiClient.classPaymentStatus(
@@ -466,6 +440,76 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
       );
     }
     return false;
+  }
+
+  Future<String?> _promptPhoneForPayment({List<String> savedNumbers = const []}) async {
+    final customController = TextEditingController();
+    String selected = savedNumbers.isNotEmpty ? savedNumbers.first : '';
+    bool useCustom = savedNumbers.isEmpty;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocalState) => AlertDialog(
+          title: const Text('Pay Class Fee'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (savedNumbers.isNotEmpty) ...[
+                const Text(
+                  'Use a saved M-Pesa number or enter another number (e.g. parent).',
+                  style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  value: selected,
+                  items: savedNumbers
+                      .map((n) => DropdownMenuItem<String>(value: n, child: Text(n)))
+                      .toList(),
+                  onChanged: (v) {
+                    if (v == null) return;
+                    setLocalState(() {
+                      selected = v;
+                      useCustom = false;
+                    });
+                  },
+                  decoration: const InputDecoration(labelText: 'Saved number'),
+                ),
+                const SizedBox(height: 8),
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  value: useCustom,
+                  onChanged: (v) => setLocalState(() => useCustom = v),
+                  title: const Text('Use another number'),
+                ),
+                const SizedBox(height: 6),
+              ],
+              if (useCustom)
+                TextField(
+                  controller: customController,
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(
+                    hintText: 'Enter M-Pesa number (e.g. 07XXXXXXXX)',
+                  ),
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Continue'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return null;
+    if (useCustom) return customController.text.trim();
+    return selected.trim();
   }
 
   Future<void> _studentJoinClassFromTopic(TopicSuggestion item) async {
@@ -508,24 +552,34 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
         return;
       }
 
-      final needsPhoneForPaidFlow =
-          !classSession.joined &&
-          (classSession.paymentRequired || classSession.feeKes > 0) &&
-          !hasPaidAlready &&
-          !_paidClassIds.contains(classId);
-      String? phone;
-      if (needsPhoneForPaidFlow) {
-        phone = await _promptPhoneForPayment();
-        if (phone == null || phone.trim().isEmpty) return;
-      }
-
       var result = await _runWithAuthRetry(
         (token) => widget.apiClient.joinClassSession(
           accessToken: token,
           classId: classId,
-          phoneNumber: phone,
         ),
       );
+      final checkoutFromFirst = (result['checkout_request_id']?.toString() ?? '').trim();
+      if (result['requires_payment'] == true && checkoutFromFirst.isEmpty) {
+        final savedNumbersRaw = (result['saved_phone_numbers'] as List<dynamic>? ?? const []);
+        final savedNumbers = savedNumbersRaw.map((e) => e.toString()).where((e) => e.trim().isNotEmpty).toList();
+        final phone = await _promptPhoneForPayment(savedNumbers: savedNumbers);
+        if (phone == null || phone.trim().isEmpty) {
+          if (mounted) {
+            final msg = result['message']?.toString().trim();
+            if ((msg ?? '').isNotEmpty) {
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg!)));
+            }
+          }
+          return;
+        }
+        result = await _runWithAuthRetry(
+          (token) => widget.apiClient.joinClassSession(
+            accessToken: token,
+            classId: classId,
+            phoneNumber: phone,
+          ),
+        );
+      }
 
       if (result['requires_payment'] == true) {
         final checkoutRequestId = result['checkout_request_id']?.toString() ?? '';

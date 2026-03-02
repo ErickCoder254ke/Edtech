@@ -135,6 +135,8 @@ class DocumentMetadata {
     required this.totalChunks,
     required this.keywords,
     required this.uploadedAt,
+    this.retentionDays,
+    this.retentionExpiresAt,
   });
 
   final String id;
@@ -146,6 +148,8 @@ class DocumentMetadata {
   final int totalChunks;
   final List<String> keywords;
   final DateTime uploadedAt;
+  final int? retentionDays;
+  final DateTime? retentionExpiresAt;
 
   factory DocumentMetadata.fromJson(Map<String, dynamic> json) {
     return DocumentMetadata(
@@ -162,6 +166,10 @@ class DocumentMetadata {
       uploadedAt:
           DateTime.tryParse(json['uploaded_at'] as String? ?? '') ??
           DateTime.now(),
+      retentionDays: (json['retention_days'] as num?)?.toInt(),
+      retentionExpiresAt: DateTime.tryParse(
+        json['retention_expires_at'] as String? ?? '',
+      ),
     );
   }
 }
@@ -669,6 +677,8 @@ class CbcNote {
     required this.title,
     this.description,
     required this.grade,
+    this.levelType,
+    this.levelLabelFromApi,
     required this.subject,
     required this.cloudinaryUrl,
     required this.fileSize,
@@ -679,10 +689,29 @@ class CbcNote {
   final String title;
   final String? description;
   final int grade;
+  final String? levelType;
+  final String? levelLabelFromApi;
   final String subject;
   final String cloudinaryUrl;
   final int fileSize;
   final DateTime updatedAt;
+
+  String get levelLabel {
+    final apiLabel = (levelLabelFromApi ?? '').trim();
+    if (apiLabel.isNotEmpty) {
+      return apiLabel;
+    }
+    final blob = '${title.toLowerCase()} ${subject.toLowerCase()}';
+    final formMatch = RegExp(r'\bform[\s_-]?(\d{1,2})\b', caseSensitive: false).firstMatch(blob);
+    if (formMatch != null) {
+      return 'Form ${formMatch.group(1)}';
+    }
+    final gradeMatch = RegExp(r'\bgrade[\s_-]?(\d{1,2})\b', caseSensitive: false).firstMatch(blob);
+    if (gradeMatch != null) {
+      return 'Grade ${gradeMatch.group(1)}';
+    }
+    return 'Grade $grade';
+  }
 
   factory CbcNote.fromJson(Map<String, dynamic> json) {
     return CbcNote(
@@ -690,6 +719,8 @@ class CbcNote {
       title: json['title'] as String? ?? 'CBC Note',
       description: json['description'] as String?,
       grade: (json['grade'] as num?)?.toInt() ?? 0,
+      levelType: json['level_type'] as String?,
+      levelLabelFromApi: json['level_label'] as String?,
       subject: json['subject'] as String? ?? 'General',
       cloudinaryUrl: json['cloudinary_url'] as String? ?? '',
       fileSize: (json['file_size'] as num?)?.toInt() ?? 0,

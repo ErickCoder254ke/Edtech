@@ -39,6 +39,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
   List<ClassSession> _classes = [];
   int _withdrawableKes = 0;
   final Set<String> _busyClassIds = <String>{};
+  final Set<String> _paymentPendingClassIds = <String>{};
   int _classMinFeeKes = 50;
   int _classMaxFeeKes = 20000;
   double _classPlatformFeePercent = 10;
@@ -125,6 +126,18 @@ class _ClassesScreenState extends State<ClassesScreen> {
       setState(() {
         _classes = classes;
         _withdrawableKes = withdrawable;
+        _paymentPendingClassIds.removeWhere((id) {
+          ClassSession? matched;
+          for (final c in classes) {
+            if (c.id == id) {
+              matched = c;
+              break;
+            }
+          }
+          if (matched == null) return true;
+          final status = (matched.paymentStatus ?? '').toLowerCase();
+          return status == 'paid' || status == 'free' || matched.joined;
+        });
       });
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -305,29 +318,53 @@ class _ClassesScreenState extends State<ClassesScreen> {
     }
   }
 
+  Future<void> _openClassMeeting(String link) async {
+    final uri = Uri.tryParse(link);
+    if (uri == null) return;
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
   Future<void> _joinClass(ClassSession session) async {
     setState(() => _busyClassIds.add(session.id));
     try {
-      String? phone;
-      if (!session.joined && (session.paymentRequired || session.feeKes > 0)) {
-        phone = await _promptPhoneForPayment();
-        if (phone == null || phone.trim().isEmpty) {
-          if (mounted) setState(() => _busyClassIds.remove(session.id));
-          return;
-        }
-      }
       var result = await _runWithAuthRetry(
         (token) => widget.apiClient.joinClassSession(
           accessToken: token,
           classId: session.id,
-          phoneNumber: phone,
         ),
       );
       final requiresPayment = result['requires_payment'] == true;
+      final checkoutFromFirst = (result['checkout_request_id']?.toString() ?? '').trim();
+      if (requiresPayment && checkoutFromFirst.isEmpty) {
+        final savedNumbersRaw = (result['saved_phone_numbers'] as List<dynamic>? ?? const []);
+        final savedNumbers = savedNumbersRaw.map((e) => e.toString()).where((e) => e.trim().isNotEmpty).toList();
+        final phone = await _promptPhoneForPayment(savedNumbers: savedNumbers);
+        if (phone == null || phone.trim().isEmpty) {
+          if (mounted) {
+            final msg = result['message']?.toString().trim();
+            if ((msg ?? '').isNotEmpty) {
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg!)));
+            }
+          }
+          return;
+        }
+        result = await _runWithAuthRetry(
+          (token) => widget.apiClient.joinClassSession(
+            accessToken: token,
+            classId: session.id,
+            phoneNumber: phone,
+          ),
+        );
+      }
+      final paymentStatus = (result['payment_status']?.toString() ?? '').toLowerCase();
+      if (paymentStatus == 'pending' || result['requires_payment'] == true) {
+        if (mounted) setState(() => _paymentPendingClassIds.add(session.id));
+      }
       if (requiresPayment) {
         final checkoutRequestId = result['checkout_request_id']?.toString() ?? '';
         final paid = await _pollPaymentUntilDone(session.id, checkoutRequestId);
         if (!paid) return;
+        if (mounted) setState(() => _paymentPendingClassIds.remove(session.id));
         result = await _runWithAuthRetry(
           (token) => widget.apiClient.joinClassSession(
             accessToken: token,
@@ -348,10 +385,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
         }
         return;
       }
-      final uri = Uri.tryParse(link);
-      if (uri != null) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      }
+      await _openClassMeeting(link);
       if (!mounted) return;
       await _loadClasses();
     } on ApiException catch (e) {
@@ -452,33 +486,74 @@ class _ClassesScreenState extends State<ClassesScreen> {
     return '$y-$m-$d $hh:$mm';
   }
 
-  Future<String?> _promptPhoneForPayment() async {
-    final controller = TextEditingController();
+  Future<String?> _promptPhoneForPayment({List<String> savedNumbers = const []}) async {
+    final customController = TextEditingController();
+    String selected = savedNumbers.isNotEmpty ? savedNumbers.first : '';
+    bool useCustom = savedNumbers.isEmpty;
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Pay Class Fee'),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.phone,
-          decoration: const InputDecoration(
-            hintText: 'Enter M-Pesa number (e.g. 07XXXXXXXX)',
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocalState) => AlertDialog(
+          title: const Text('Pay Class Fee'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (savedNumbers.isNotEmpty) ...[
+                const Text(
+                  'Use a saved M-Pesa number or enter another number (e.g. parent).',
+                  style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  value: selected,
+                  items: savedNumbers
+                      .map((n) => DropdownMenuItem<String>(value: n, child: Text(n)))
+                      .toList(),
+                  onChanged: (v) {
+                    if (v == null) return;
+                    setLocalState(() {
+                      selected = v;
+                      useCustom = false;
+                    });
+                  },
+                  decoration: const InputDecoration(labelText: 'Saved number'),
+                ),
+                const SizedBox(height: 8),
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  value: useCustom,
+                  onChanged: (v) => setLocalState(() => useCustom = v),
+                  title: const Text('Use another number'),
+                ),
+                const SizedBox(height: 6),
+              ],
+              if (useCustom)
+                TextField(
+                  controller: customController,
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(
+                    hintText: 'Enter M-Pesa number (e.g. 07XXXXXXXX)',
+                  ),
+                ),
+            ],
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Continue'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Continue'),
-          ),
-        ],
       ),
     );
     if (ok != true) return null;
-    return controller.text.trim();
+    if (useCustom) return customController.text.trim();
+    return selected.trim();
   }
 
   Future<bool> _pollPaymentUntilDone(String classId, String checkoutRequestId) async {
@@ -488,8 +563,11 @@ class _ClassesScreenState extends State<ClassesScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('STK push sent. Complete payment on your phone.')),
     );
-    for (var i = 0; i < 18; i++) {
-      await Future<void>.delayed(const Duration(seconds: 4));
+    for (var i = 0; i < 30; i++) {
+      if (i > 0) {
+        final waitSeconds = i < 10 ? 2 : 3;
+        await Future<void>.delayed(Duration(seconds: waitSeconds));
+      }
       try {
         final status = await _runWithAuthRetry(
           (token) => widget.apiClient.classPaymentStatus(
@@ -501,6 +579,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
         final paymentStatus = (status['status']?.toString() ?? '').toLowerCase();
         if (paymentStatus == 'paid') {
           if (mounted) {
+            setState(() => _paymentPendingClassIds.remove(classId));
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text('Payment confirmed. Joining class.')),
             );
@@ -509,6 +588,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
         }
         if (paymentStatus == 'failed') {
           if (mounted) {
+            setState(() => _paymentPendingClassIds.remove(classId));
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(
@@ -732,6 +812,18 @@ class _ClassesScreenState extends State<ClassesScreen> {
 
   Widget _buildClassTile(ClassSession session) {
     final busy = _busyClassIds.contains(session.id);
+    final localPending = _paymentPendingClassIds.contains(session.id);
+    final paymentStatusLower = (session.paymentStatus ?? '').toLowerCase();
+    final hasPaidAccess =
+        session.joined || paymentStatusLower == 'paid' || paymentStatusLower == 'free';
+    final showPending = localPending || paymentStatusLower == 'pending';
+    final ctaLabel = hasPaidAccess
+        ? 'Join Class'
+        : showPending
+        ? 'Awaiting Payment'
+        : (session.paymentRequired || session.feeKes > 0)
+        ? 'Pay & Join'
+        : 'Join Class';
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: GlassContainer(
@@ -808,8 +900,10 @@ class _ClassesScreenState extends State<ClassesScreen> {
                 const SizedBox(width: 8),
                 if (!_isTeacher)
                   _MiniMeta(
-                    text: session.paymentRequired
-                        ? 'Payment required'
+                    text: showPending
+                        ? 'payment pending'
+                        : session.paymentRequired
+                        ? 'payment required'
                         : (session.paymentStatus ?? (session.feeKes > 0 ? 'unpaid' : 'free')),
                   ),
               ],
@@ -849,11 +943,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
                             )
                           : const Icon(Icons.video_call_rounded),
                       label: Text(
-                        session.joined
-                            ? 'Join Again'
-                            : (session.paymentRequired || session.feeKes > 0)
-                            ? 'Pay & Join'
-                            : 'Join Class',
+                        ctaLabel,
                       ),
                     ),
                   ),

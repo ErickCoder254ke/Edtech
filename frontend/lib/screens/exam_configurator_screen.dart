@@ -59,6 +59,7 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
 
   String _generationType = 'exam';
   String _difficulty = 'medium';
+  String _examSectionMode = 'mixed';
   bool _isLoadingDocuments = true;
   bool _isGenerating = false;
   bool _isPollingJob = false;
@@ -70,17 +71,83 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
   bool _templatesExpanded = true;
   final Set<String> _selectedTemplateIds = <String>{};
   final Map<String, String> _templateInsertedBlocks = <String, String>{};
+  static const List<_TemplatePreset> _templatePresets = [
+    _TemplatePreset(
+      id: 'kcse_end_term_80',
+      title: 'KCSE End-Term 80',
+      subtitle: 'Structured-only, senior-school exam quality',
+      generationType: 'exam',
+      examSectionMode: 'structured_only',
+      marks: 80,
+      templateIds: [
+        'single_section_no_mcq_essay',
+        'senior_school_exam_tone',
+        'marking_realism',
+        'directive_verbs',
+        'question_numbering_layout',
+        'strict_curriculum_anchor',
+      ],
+    ),
+    _TemplatePreset(
+      id: 'mid_term_40_structured',
+      title: 'Mid-Term 40',
+      subtitle: 'Compact structured assessment',
+      generationType: 'exam',
+      examSectionMode: 'structured_only',
+      marks: 40,
+      templateIds: [
+        'single_section_no_mcq_essay',
+        'marking_realism',
+        'directive_verbs',
+        'question_numbering_layout',
+      ],
+    ),
+    _TemplatePreset(
+      id: 'quick_revision_quiz',
+      title: 'Revision Quiz',
+      subtitle: 'Fast competency check',
+      generationType: 'quiz',
+      questions: 12,
+      templateIds: [
+        'cbc_competency_focus',
+        'directive_verbs',
+        'strict_curriculum_anchor',
+      ],
+    ),
+  ];
   static const List<_PromptTemplate> _promptTemplates = [
     _PromptTemplate(
       id: 'single_section_no_mcq_essay',
       title: 'Single Section (Question + Marks)',
-      subtitle: 'No MCQ or essay. Structured questions only.',
+      subtitle: 'Structured-only paper with professional formatting.',
       body:
           'Create ONE section only. Each item must be written as "Question ... (X marks)". '
           'Do not include multiple-choice or essay questions. Use only structured/short and medium response items. '
           'Ensure each question is clearly stated using verbs like State, Explain, Identify, Describe, and Calculate. '
-          'Distribute marks realistically based on cognitive load and expected answer length.',
+          'Distribute marks realistically based on cognitive load and expected answer length. '
+          'Each question mark should be minimum 1 and maximum 4. '
+          'Use a professional question paper layout with clear numbering, question text, and marks.',
       recommendedFor: {'exam'},
+    ),
+    _PromptTemplate(
+      id: 'senior_school_exam_tone',
+      title: 'Senior School Exam Tone',
+      subtitle: 'KCSE-style clarity and rigor.',
+      body:
+          'Write as a formal senior school examination paper. '
+          'Questions must be precise, syllabus-aligned, and free of ambiguity. '
+          'Prioritize command words such as State, Explain, Identify, Describe, Distinguish, and Calculate. '
+          'Ensure progression from basic understanding to application and analysis.',
+      recommendedFor: {'exam', 'quiz'},
+    ),
+    _PromptTemplate(
+      id: 'cbc_competency_focus',
+      title: 'CBC Competency Focus',
+      subtitle: 'Competency and application orientation.',
+      body:
+          'Frame tasks to assess competencies: knowledge application, communication, critical thinking, and problem solving. '
+          'Use contextualized prompts and avoid purely memorization-heavy items unless required by the provided material.',
+      recommendedFor: {'exam', 'quiz', 'summary', 'concepts'},
     ),
     _PromptTemplate(
       id: 'institution_header_custom',
@@ -97,7 +164,7 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
     _PromptTemplate(
       id: 'marking_realism',
       title: 'Marking Realism Guard',
-      subtitle: 'Align complexity to marks.',
+      subtitle: 'Align cognitive load to marks.',
       body:
           'Make mark allocation realistic: 1-2 marks for factual recall, 3-5 for short explanations, '
           '6+ for multi-step reasoning. Avoid over-weighting simple recall tasks. '
@@ -105,9 +172,22 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
       recommendedFor: {'exam', 'quiz'},
     ),
     _PromptTemplate(
+      id: 'senior_school_structured_1_to_4',
+      title: 'Senior School Structured (1-4 Marks)',
+      subtitle: 'Professional numbered paper, structured only.',
+      body:
+          'Create ONE section only. Each item must be written as "Question ... (X marks)". '
+          'Do not include multiple-choice or essay questions. Use only structured/short and medium response items. '
+          'Ensure each question is clearly stated using verbs like State, Explain, Identify, Describe, and Calculate. '
+          'Distribute marks realistically based on cognitive load and expected answer length. '
+          'Use a minimum of 1 mark and maximum of 4 marks per question. '
+          'Output a professional question paper format with Number, Question, and (Marks).',
+      recommendedFor: {'exam'},
+    ),
+    _PromptTemplate(
       id: 'directive_verbs',
       title: 'Directive Verb Quality',
-      subtitle: 'Clear exam-style command terms.',
+      subtitle: 'Exam command words only.',
       body:
           'Phrase each question with explicit exam directive verbs (State, Define, Identify, Explain, Compare, Evaluate). '
           'Avoid vague wording and ambiguous prompts.',
@@ -130,6 +210,16 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
           'Base all questions strictly on provided materials only. '
           'Do not introduce external or off-syllabus content.',
       recommendedFor: {'exam', 'quiz', 'summary', 'concepts', 'examples'},
+    ),
+    _PromptTemplate(
+      id: 'question_numbering_layout',
+      title: 'Numbered Layout Guard',
+      subtitle: 'Strict Number, Question, (Marks) pattern.',
+      body:
+          'Output questions in a clean numbered sequence only. '
+          'Each line must follow: Number. Question text (X marks). '
+          'Do not merge questions, and do not omit marks from any item.',
+      recommendedFor: {'exam', 'quiz'},
     ),
     _PromptTemplate(
       id: 'concise_mark_scheme',
@@ -222,6 +312,9 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
       return;
     }
 
+    final proceed = await _confirmPromptReview();
+    if (!proceed) return;
+
     setState(() {
       _isGenerating = true;
       _error = null;
@@ -244,7 +337,7 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
             ? int.tryParse(_questionsController.text.trim())
             : null,
         questionTypes: _generationType == 'exam'
-            ? const ['mcq', 'structured', 'essay']
+            ? _questionTypesForExam()
             : _generationType == 'quiz'
             ? const ['mcq', 'structured']
             : null,
@@ -409,9 +502,11 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
   }
 
   List<_PromptTemplate> _visibleTemplates() {
-    return _promptTemplates
+    final visible = _promptTemplates
         .where((t) => t.recommendedFor.contains(_generationType))
         .toList();
+    visible.sort((a, b) => a.title.compareTo(b.title));
+    return visible;
   }
 
   Future<void> _toggleTemplateSelection(_PromptTemplate template) async {
@@ -496,10 +591,9 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
     return text;
   }
 
-  String _appendInstructionSnippet(String templateId, String snippet) {
+  String _appendInstructionSnippet(String _, String snippet) {
     final current = _instructionsController.text.trim();
-    final header = 'Template[$templateId]:';
-    final block = '$header $snippet';
+    final block = snippet.trim();
     final next = current.isEmpty ? block : '$current\n\n$block';
     _instructionsController.text = next;
     _instructionsController.selection = TextSelection.fromPosition(
@@ -508,6 +602,62 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
     _instructionsFocusNode.requestFocus();
     _scrollToInstructionsEditor();
     return block;
+  }
+
+  List<String> _questionTypesForExam() {
+    switch (_examSectionMode) {
+      case 'structured_only':
+        return const ['structured'];
+      case 'mcq_only':
+        return const ['mcq'];
+      case 'essay_only':
+        return const ['essay'];
+      default:
+        return const ['mcq', 'structured', 'essay'];
+    }
+  }
+
+  Future<bool> _confirmPromptReview() async {
+    final instructions = _instructionsController.text.trim();
+    final preview = instructions.isEmpty
+        ? 'No additional instructions set.'
+        : instructions.length > 220
+        ? '${instructions.substring(0, 220)}...'
+        : instructions;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Review Prompt Before Generate'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Please confirm your prompt details before generation.',
+            ),
+            const SizedBox(height: 10),
+            Text(
+              preview,
+              style: const TextStyle(
+                fontSize: 12,
+                color: AppColors.textMuted,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Edit Prompt'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Generate Now'),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
   }
 
   void _removeTemplateSnippet(String templateId) {
@@ -536,6 +686,35 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
       _templateInsertedBlocks.clear();
     });
     _showTemplateToast('All template snippets removed.');
+  }
+
+  Future<void> _applyTemplatePreset(_TemplatePreset preset) async {
+    _clearSelectedTemplates();
+    if (preset.generationType.isNotEmpty) {
+      _generationType = preset.generationType;
+    }
+    if (preset.examSectionMode != null) {
+      _examSectionMode = preset.examSectionMode!;
+    }
+    if (preset.marks != null) {
+      _marksController.text = preset.marks!.toString();
+    }
+    if (preset.questions != null) {
+      _questionsController.text = preset.questions!.toString();
+    }
+    setState(() {});
+    for (final templateId in preset.templateIds) {
+      _PromptTemplate? template;
+      for (final candidate in _promptTemplates) {
+        if (candidate.id == templateId) {
+          template = candidate;
+          break;
+        }
+      }
+      if (template == null) continue;
+      await _toggleTemplateSelection(template);
+    }
+    _showTemplateToast('Preset "${preset.title}" applied.');
   }
 
   void _showTemplateToast(String message) {
@@ -612,8 +791,12 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
                               return ChoiceChip(
                                 label: Text(type.toUpperCase()),
                                 selected: active,
-                                onSelected: (_) =>
-                                    setState(() => _generationType = type),
+                                onSelected: (_) => setState(() {
+                                  _generationType = type;
+                                  if (type != 'exam') {
+                                    _examSectionMode = 'mixed';
+                                  }
+                                }),
                                 selectedColor: AppColors.primary.withValues(
                                   alpha: 0.25,
                                 ),
@@ -721,6 +904,54 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
                                 labelText: 'Total marks',
                               ),
                             ),
+                          if (_generationType == 'exam') ...[
+                            const SizedBox(height: 10),
+                            const Text(
+                              'Paper Section Style',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.textMuted,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                ChoiceChip(
+                                  label: const Text('Mixed'),
+                                  selected: _examSectionMode == 'mixed',
+                                  onSelected: (_) => setState(
+                                    () => _examSectionMode = 'mixed',
+                                  ),
+                                ),
+                                ChoiceChip(
+                                  label: const Text('Question + Marks'),
+                                  selected:
+                                      _examSectionMode == 'structured_only',
+                                  onSelected: (_) => setState(
+                                    () =>
+                                        _examSectionMode = 'structured_only',
+                                  ),
+                                ),
+                                ChoiceChip(
+                                  label: const Text('Multiple Choice'),
+                                  selected: _examSectionMode == 'mcq_only',
+                                  onSelected: (_) => setState(
+                                    () => _examSectionMode = 'mcq_only',
+                                  ),
+                                ),
+                                ChoiceChip(
+                                  label: const Text('Essay'),
+                                  selected: _examSectionMode == 'essay_only',
+                                  onSelected: (_) => setState(
+                                    () => _examSectionMode = 'essay_only',
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                           if (_generationType == 'quiz' ||
                               _generationType == 'examples')
                             TextField(
@@ -806,11 +1037,63 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
                                           children: [
                                             const SizedBox(height: 10),
                                             const Text(
-                                              'Tap one or more templates to append high-quality instructions.',
+                                              'Tap one or more templates to append high-quality instructions, then read and confirm before generation.',
                                               style: TextStyle(
                                                 fontSize: 12,
                                                 color: AppColors.textMuted,
                                               ),
+                                            ),
+                                            const SizedBox(height: 10),
+                                            Container(
+                                              width: double.infinity,
+                                              padding: const EdgeInsets.all(10),
+                                              decoration: BoxDecoration(
+                                                color: AppColors.primary.withValues(alpha: 0.10),
+                                                borderRadius: BorderRadius.circular(10),
+                                                border: Border.all(
+                                                  color: AppColors.primary.withValues(alpha: 0.28),
+                                                ),
+                                              ),
+                                              child: Text(
+                                                _generationType == 'exam'
+                                                    ? 'Context: You are generating an EXAM (${_examSectionMode == 'mixed' ? 'mixed sections' : _examSectionMode.replaceAll('_', ' ')}). Choose templates that match this paper style.'
+                                                    : 'Context: You are generating ${_generationType.toUpperCase()}. Choose templates that improve clarity and relevance.',
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                  color: AppColors.textMuted,
+                                                  height: 1.35,
+                                                ),
+                                              ),
+                                            ),
+                                            const SizedBox(height: 10),
+                                            const Text(
+                                              'Template Presets',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w700,
+                                                color: AppColors.textMuted,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 8),
+                                            Wrap(
+                                              spacing: 8,
+                                              runSpacing: 8,
+                                              children: _templatePresets
+                                                  .map(
+                                                    (preset) => ActionChip(
+                                                      avatar: const Icon(
+                                                        Icons.auto_awesome_rounded,
+                                                        size: 16,
+                                                      ),
+                                                      label: Text(preset.title),
+                                                      onPressed: () =>
+                                                          _applyTemplatePreset(
+                                                        preset,
+                                                      ),
+                                                      tooltip: preset.subtitle,
+                                                    ),
+                                                  )
+                                                  .toList(),
                                             ),
                                             const SizedBox(height: 10),
                                             ..._visibleTemplates().map(
@@ -1241,4 +1524,26 @@ class _PromptTemplate {
   final bool requiresSchoolName;
   final bool requiresExamTitle;
   final Set<String> recommendedFor;
+}
+
+class _TemplatePreset {
+  const _TemplatePreset({
+    required this.id,
+    required this.title,
+    required this.subtitle,
+    required this.generationType,
+    required this.templateIds,
+    this.examSectionMode,
+    this.marks,
+    this.questions,
+  });
+
+  final String id;
+  final String title;
+  final String subtitle;
+  final String generationType;
+  final List<String> templateIds;
+  final String? examSectionMode;
+  final int? marks;
+  final int? questions;
 }

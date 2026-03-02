@@ -15,6 +15,7 @@ import 'jobs_screen.dart';
 import 'library_screen.dart';
 import 'notifications_screen.dart';
 import 'notes_catalog_screen.dart';
+import 'privacy_policy_screen.dart';
 import 'profile_screen.dart';
 import 'private_tutors_screen.dart';
 import 'subscriptions_screen.dart';
@@ -351,6 +352,12 @@ class _HomeShellState extends State<HomeShell> {
     ).push(MaterialPageRoute(builder: (_) => const TermsConditionsScreen()));
   }
 
+  void _openPrivacyPage() {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const PrivacyPolicyScreen()));
+  }
+
   @override
   Widget build(BuildContext context) {
     final screens = [
@@ -487,8 +494,8 @@ class _HomeShellState extends State<HomeShell> {
                   ),
                   _MenuNavTile(
                     icon: Icons.menu_book_outlined,
-                    title: 'CBC Notes',
-                    subtitle: 'Pick category and generate from uploaded notes',
+                    title: 'CBC / Senior School Notes',
+                    subtitle: 'Pick form or grade and generate from uploaded notes',
                     onTap: () {
                       Navigator.of(context).pop();
                       _openNotesCatalogPage();
@@ -624,6 +631,15 @@ class _HomeShellState extends State<HomeShell> {
                     onTap: () {
                       Navigator.of(context).pop();
                       _openTermsPage();
+                    },
+                  ),
+                  _MenuNavTile(
+                    icon: Icons.privacy_tip_rounded,
+                    title: 'Privacy Policy',
+                    subtitle: 'Data handling and retention policy',
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      _openPrivacyPage();
                     },
                   ),
                   const SizedBox(height: 14),

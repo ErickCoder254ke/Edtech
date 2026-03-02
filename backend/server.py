@@ -106,6 +106,7 @@ if NVIDIA_MODEL_KEYS_JSON:
 JWT_SECRET = os.environ["JWT_SECRET"]
 UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", "/tmp/uploads"))
 UPLOAD_DIR.mkdir(exist_ok=True, parents=True)
+UPLOAD_DIR_RESOLVED = UPLOAD_DIR.resolve()
 
 ACCESS_TOKEN_MINUTES = int(os.environ.get("ACCESS_TOKEN_MINUTES", "20"))
 REFRESH_TOKEN_DAYS = int(os.environ.get("REFRESH_TOKEN_DAYS", "30"))
@@ -178,7 +179,7 @@ SUBSCRIPTION_ACCOUNT_REFERENCE_PREFIX = os.environ.get("SUBSCRIPTION_ACCOUNT_REF
 SUBSCRIPTION_TRANSACTION_DESC_PREFIX = os.environ.get("SUBSCRIPTION_TRANSACTION_DESC_PREFIX", "Exam OS")
 SUBSCRIPTION_PLANS_JSON = os.environ.get("SUBSCRIPTION_PLANS_JSON", "")
 ACCOUNT_REUSE_GRACE_DAYS = int(os.environ.get("ACCOUNT_REUSE_GRACE_DAYS", "3"))
-SUPPORT_CONTACT_EMAIL = os.environ.get("SUPPORT_CONTACT_EMAIL", "support@examos.app")
+SUPPORT_CONTACT_EMAIL = os.environ.get("SUPPORT_CONTACT_EMAIL", "examos254@gmail.com")
 SUPPORT_CONTACT_PHONE = os.environ.get("SUPPORT_CONTACT_PHONE", "0114090740")
 LOCALPRO_BASE_URL = os.environ.get("LOCALPRO_BASE_URL", "").strip().rstrip("/")
 LOCALPRO_API_KEY = os.environ.get("LOCALPRO_API_KEY", "").strip()
@@ -223,6 +224,24 @@ RETENTION_EMAIL_MIN_DAYS_BETWEEN_SENDS = int(
     os.environ.get("RETENTION_EMAIL_MIN_DAYS_BETWEEN_SENDS", "5")
 )
 ENGAGEMENT_EMAILS_ENABLED = os.environ.get("ENGAGEMENT_EMAILS_ENABLED", "true").lower() == "true"
+ENGAGEMENT_DIGEST_ENABLED = os.environ.get("ENGAGEMENT_DIGEST_ENABLED", "true").lower() == "true"
+ENGAGEMENT_DIGEST_MIN_DAYS = int(os.environ.get("ENGAGEMENT_DIGEST_MIN_DAYS", "7"))
+DOCUMENT_RETENTION_ENABLED = os.environ.get("DOCUMENT_RETENTION_ENABLED", "true").lower() == "true"
+DOCUMENT_RETENTION_FREE_DAYS = int(os.environ.get("DOCUMENT_RETENTION_FREE_DAYS", "3"))
+DOCUMENT_RETENTION_WEEKLY_DAYS = int(os.environ.get("DOCUMENT_RETENTION_WEEKLY_DAYS", "7"))
+DOCUMENT_RETENTION_MONTHLY_DAYS = int(os.environ.get("DOCUMENT_RETENTION_MONTHLY_DAYS", "14"))
+DOCUMENT_RETENTION_ANNUAL_DAYS = int(os.environ.get("DOCUMENT_RETENTION_ANNUAL_DAYS", "30"))
+DOCUMENT_RETENTION_NOTICE_HOURS = int(os.environ.get("DOCUMENT_RETENTION_NOTICE_HOURS", "24"))
+DOCUMENT_RETENTION_CLEANUP_INTERVAL_SECONDS = int(
+    os.environ.get("DOCUMENT_RETENTION_CLEANUP_INTERVAL_SECONDS", "3600")
+)
+DOCUMENT_RETENTION_EXPIRED_DELETE_BATCH = int(
+    os.environ.get("DOCUMENT_RETENTION_EXPIRED_DELETE_BATCH", "200")
+)
+DOCUMENT_RETENTION_MISSING_BACKFILL_BATCH = int(
+    os.environ.get("DOCUMENT_RETENTION_MISSING_BACKFILL_BATCH", "500")
+)
+GENERATION_RETENTION_ENABLED = os.environ.get("GENERATION_RETENTION_ENABLED", "true").lower() == "true"
 REDIS_WAKE_ON_ACTIVITY = os.environ.get("REDIS_WAKE_ON_ACTIVITY", "true").lower() == "true"
 REDIS_WAKE_INTERVAL_SECONDS = float(os.environ.get("REDIS_WAKE_INTERVAL_SECONDS", "30"))
 REDIS_WAKE_TIMEOUT_SECONDS = float(os.environ.get("REDIS_WAKE_TIMEOUT_SECONDS", "2"))
@@ -345,6 +364,31 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+def _is_within_upload_dir(path: Path) -> bool:
+    try:
+        target = path.resolve()
+    except Exception:
+        return False
+    return os.path.commonpath([str(UPLOAD_DIR_RESOLVED), str(target)]) == str(UPLOAD_DIR_RESOLVED)
+
+
+def safe_delete_uploaded_file(path_raw: str) -> bool:
+    path_raw = (path_raw or "").strip()
+    if not path_raw:
+        return False
+    candidate = Path(path_raw)
+    if not _is_within_upload_dir(candidate):
+        logger.warning("safe_delete_uploaded_file_blocked path=%s upload_dir=%s", candidate, UPLOAD_DIR_RESOLVED)
+        return False
+    if not candidate.exists() or not candidate.is_file():
+        return False
+    try:
+        candidate.unlink()
+        return True
+    except OSError as exc:
+        logger.warning("safe_delete_uploaded_file_failed path=%s error=%s", candidate, exc)
+        return False
 
 _GEMINI_KEY_COOLDOWN_UNTIL: Dict[str, float] = {}
 _LLM_PROVIDER_COOLDOWN_UNTIL: Dict[str, float] = {}
@@ -502,6 +546,8 @@ class DocumentMetadata(BaseModel):
     total_chunks: int
     keywords: List[str] = Field(default_factory=list)
     uploaded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    retention_days: Optional[int] = None
+    retention_expires_at: Optional[datetime] = None
 
 
 class DocumentChunk(BaseModel):
@@ -698,6 +744,8 @@ class CbcNoteResponse(BaseModel):
     title: str
     description: Optional[str] = None
     grade: int
+    level_type: Optional[str] = None
+    level_label: Optional[str] = None
     subject: str
     cloudinary_url: str
     file_size: int
@@ -2046,7 +2094,7 @@ async def build_class_response(
     class_doc: Dict[str, Any],
     current_user_id: str,
     current_user_role: str,
-) -> ClassSessionResponse:
+    ) -> ClassSessionResponse:
     norm = normalize_datetime_fields(dict(class_doc), ["scheduled_start_at", "scheduled_end_at", "created_at"])
     fee_kes = int(norm.get("fee_kes", 0))
     platform_fee_percent = current_class_escrow_platform_fee_percent()
@@ -2092,6 +2140,60 @@ async def build_class_response(
         review_count=review_count,
         topic_suggestion_id=norm.get("topic_suggestion_id"),
     )
+
+
+async def list_student_payment_phones(
+    *,
+    student_id: str,
+    limit: int = 5,
+) -> List[str]:
+    numbers: List[str] = []
+    seen: set[str] = set()
+
+    def _add_phone(raw: Optional[str]) -> None:
+        phone = str(raw or "").strip()
+        if not phone:
+            return
+        try:
+            normalized = mpesa_service.normalize_phone(phone)
+        except Exception:
+            normalized = phone
+        if normalized in seen:
+            return
+        seen.add(normalized)
+        numbers.append(normalized)
+
+    class_payment_docs = await db.class_payments.find(
+        {"student_id": student_id},
+        {"_id": 0, "phone_number": 1, "paid_phone_number": 1, "updated_at": 1, "created_at": 1},
+    ).sort([("updated_at", -1), ("created_at", -1)]).to_list(max(1, min(limit * 3, 30)))
+    for doc in class_payment_docs:
+        _add_phone(doc.get("paid_phone_number"))
+        _add_phone(doc.get("phone_number"))
+        if len(numbers) >= limit:
+            return numbers[:limit]
+
+    subscription_docs = await db.subscription_payments.find(
+        {"user_id": student_id},
+        {"_id": 0, "phone_number": 1, "paid_phone_number": 1, "updated_at": 1, "created_at": 1},
+    ).sort([("updated_at", -1), ("created_at", -1)]).to_list(max(1, min(limit * 3, 30)))
+    for doc in subscription_docs:
+        _add_phone(doc.get("paid_phone_number"))
+        _add_phone(doc.get("phone_number"))
+        if len(numbers) >= limit:
+            break
+    return numbers[:limit]
+
+
+async def resolve_student_payment_phone(
+    *,
+    student_id: str,
+    explicit_phone: Optional[str] = None,
+) -> Optional[str]:
+    raw = (explicit_phone or "").strip()
+    if raw:
+        return raw
+    return None
 
 
 async def create_class_session_record(
@@ -2438,6 +2540,71 @@ async def get_active_subscription(user_id: str) -> Optional[Dict[str, Any]]:
     )
 
 
+def retention_days_for_plan_id(plan_id: Optional[str]) -> int:
+    normalized = str(plan_id or "free").strip().lower()
+    if normalized == "weekly":
+        return max(1, DOCUMENT_RETENTION_WEEKLY_DAYS)
+    if normalized == "monthly":
+        return max(1, DOCUMENT_RETENTION_MONTHLY_DAYS)
+    if normalized == "annual":
+        return max(1, DOCUMENT_RETENTION_ANNUAL_DAYS)
+    return max(1, DOCUMENT_RETENTION_FREE_DAYS)
+
+
+def _parse_iso_datetime(raw: Any) -> Optional[datetime]:
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        dt = raw
+    else:
+        try:
+            dt = datetime.fromisoformat(str(raw))
+        except Exception:
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def retention_expiry_for_uploaded_at(uploaded_at: datetime, retention_days: int) -> datetime:
+    return uploaded_at + timedelta(days=max(1, retention_days))
+
+
+async def get_user_retention_days(user_id: str) -> int:
+    active_sub = await get_active_subscription(user_id)
+    plan_id = str((active_sub or {}).get("plan_id") or "free")
+    return retention_days_for_plan_id(plan_id)
+
+
+async def backfill_document_retention_metadata(
+    doc: Dict[str, Any],
+    *,
+    user_retention_days: Optional[int] = None,
+) -> Dict[str, Any]:
+    retention_days = int(doc.get("retention_days") or 0)
+    expires_at = _parse_iso_datetime(doc.get("retention_expires_at"))
+    if retention_days > 0 and expires_at is not None:
+        return doc
+    if user_retention_days is None:
+        user_retention_days = await get_user_retention_days(str(doc.get("user_id") or ""))
+    uploaded_at = _parse_iso_datetime(doc.get("uploaded_at")) or datetime.now(timezone.utc)
+    retention_days = max(1, user_retention_days)
+    expires_at = retention_expiry_for_uploaded_at(uploaded_at, retention_days)
+    await db.documents.update_one(
+        {"id": str(doc.get("id") or "")},
+        {
+            "$set": {
+                "retention_days": retention_days,
+                "retention_expires_at": expires_at.isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        },
+    )
+    doc["retention_days"] = retention_days
+    doc["retention_expires_at"] = expires_at.isoformat()
+    return doc
+
+
 async def get_generation_entitlement(user_id: str) -> Dict[str, Any]:
     active_sub = await get_active_subscription(user_id)
     counters = await get_usage_counters(user_id)
@@ -2487,6 +2654,7 @@ async def get_generation_entitlement(user_id: str) -> Dict[str, Any]:
             "document_remaining": None,
             "document_used_lifetime": counters["documents_uploaded_total"],
             "document_current_items": current_documents,
+            "document_retention_days": retention_days_for_plan_id(plan.plan_id),
         }
 
     # Free plan limits are lifetime counters and do not reset on deletion.
@@ -2528,6 +2696,7 @@ async def get_generation_entitlement(user_id: str) -> Dict[str, Any]:
         "document_remaining": max(0, FREE_PLAN_MAX_DOCUMENTS - docs_used),
         "document_used_lifetime": docs_used,
         "document_current_items": current_documents,
+        "document_retention_days": retention_days_for_plan_id("free"),
     }
 
 
@@ -4096,10 +4265,29 @@ async def mpesa_callback(payload: Dict[str, Any], background_tasks: BackgroundTa
             )
             if amount is not None:
                 class_updates["amount_kes"] = amount
-            await db.class_payments.update_one(
-                {"checkout_request_id": checkout_request_id},
-                {"$set": class_updates},
-            )
+            try:
+                await db.class_payments.update_one(
+                    {"checkout_request_id": checkout_request_id},
+                    {"$set": class_updates},
+                )
+            except DuplicateKeyError:
+                # Another paid record already exists for this class/student pair.
+                # Mark this callback payment as duplicate and continue with existing paid record.
+                callback_logged_status = "paid_duplicate_ignored"
+                await db.class_payments.update_one(
+                    {"checkout_request_id": checkout_request_id},
+                    {"$set": {"status": "failed", "result_desc": "Duplicate paid callback ignored", "updated_at": datetime.now(timezone.utc).isoformat()}},
+                )
+                class_payment = await db.class_payments.find_one(
+                    {
+                        "class_id": class_payment["class_id"],
+                        "student_id": class_payment["student_id"],
+                        "status": "paid",
+                    },
+                    {"_id": 0},
+                    sort=[("updated_at", -1)],
+                ) or class_payment
+                was_already_paid = True
             if not was_already_paid:
                 now_iso = datetime.now(timezone.utc).isoformat()
                 enrollment_doc = {
@@ -4114,11 +4302,15 @@ async def mpesa_callback(payload: Dict[str, Any], background_tasks: BackgroundTa
                         "class_id": class_payment["class_id"],
                         "student_id": class_payment["student_id"],
                     },
-                    {
-                        "$setOnInsert": enrollment_doc,
-                        "$set": {"payment_status": "paid", "payment_id": class_payment["id"]},
-                    },
+                    {"$setOnInsert": enrollment_doc},
                     upsert=True,
+                )
+                await db.class_enrollments.update_one(
+                    {
+                        "class_id": class_payment["class_id"],
+                        "student_id": class_payment["student_id"],
+                    },
+                    {"$set": {"payment_status": "paid", "payment_id": class_payment["id"]}},
                 )
                 if join_result.upserted_id is not None:
                     await db.class_sessions.update_one(
@@ -4178,12 +4370,7 @@ async def mpesa_callback(payload: Dict[str, Any], background_tasks: BackgroundTa
 async def delete_user_data(user_id: str):
     docs = await db.documents.find({"user_id": user_id}, {"_id": 0}).to_list(1000)
     for doc in docs:
-        file_path = Path(doc.get("file_path", ""))
-        if file_path.exists():
-            try:
-                file_path.unlink()
-            except OSError:
-                logger.warning("Unable to delete uploaded file: %s", file_path)
+        safe_delete_uploaded_file(str(doc.get("file_path") or ""))
 
     await db.document_chunks.delete_many({"user_id": user_id})
     await db.documents.delete_many({"user_id": user_id})
@@ -4317,11 +4504,29 @@ async def delete_account(
 
 def build_cbc_note_response(note_doc: Dict[str, Any]) -> CbcNoteResponse:
     norm = normalize_datetime_fields(note_doc, ["updated_at"])
+    level_type_raw = str(norm.get("level_type") or "").strip().lower()
+    level_type = level_type_raw if level_type_raw in {"grade", "form"} else None
+    grade_value = int(norm.get("grade") or 0)
+    level_label = str(norm.get("level_label") or "").strip() or None
+    if level_label is None:
+        blob = f"{str(norm.get('title') or '')} {str(norm.get('subject') or '')}"
+        form_match = re.search(r"\bform[\s_\-]?(\d{1,2})\b", blob, flags=re.IGNORECASE)
+        grade_match = re.search(r"\bgrade[\s_\-]?(\d{1,2})\b", blob, flags=re.IGNORECASE)
+        if form_match:
+            level_type = "form"
+            level_label = f"Form {form_match.group(1)}"
+        elif grade_match:
+            level_type = "grade"
+            level_label = f"Grade {grade_match.group(1)}"
+        elif grade_value > 0:
+            level_label = f"Grade {grade_value}"
     return CbcNoteResponse(
         id=str(norm.get("id") or ""),
         title=str(norm.get("title") or "CBC Note"),
         description=norm.get("description"),
-        grade=int(norm.get("grade") or 0),
+        grade=grade_value,
+        level_type=level_type,
+        level_label=level_label,
         subject=str(norm.get("subject") or "General"),
         cloudinary_url=str(norm.get("cloudinary_url") or ""),
         file_size=int(norm.get("bytes") or norm.get("file_size") or 0),
@@ -4339,7 +4544,7 @@ async def ingest_cbc_note_as_document(
         {"_id": 0},
     )
     if existing:
-        return DocumentMetadata(**normalize_datetime_fields(existing, ["uploaded_at"]))
+        return DocumentMetadata(**normalize_datetime_fields(existing, ["uploaded_at", "retention_expires_at"]))
 
     entitlement = await get_generation_entitlement(current_user["id"])
     if entitlement["is_free"] and entitlement["document_used"] >= FREE_PLAN_MAX_DOCUMENTS:
@@ -4426,9 +4631,16 @@ async def ingest_cbc_note_as_document(
         file_size=len(file_content),
         total_chunks=len(chunks),
         keywords=extract_keywords(text),
+        retention_days=int(entitlement.get("document_retention_days") or retention_days_for_plan_id(entitlement.get("plan_id"))),
+        retention_expires_at=retention_expiry_for_uploaded_at(
+            datetime.now(timezone.utc),
+            int(entitlement.get("document_retention_days") or retention_days_for_plan_id(entitlement.get("plan_id"))),
+        ),
     )
     doc_dict = doc_metadata.model_dump()
     doc_dict["uploaded_at"] = doc_dict["uploaded_at"].isoformat()
+    if doc_dict.get("retention_expires_at"):
+        doc_dict["retention_expires_at"] = doc_dict["retention_expires_at"].isoformat()
     doc_dict["source_note_id"] = str(note_doc.get("id") or "")
     doc_dict["source_note_url"] = note_url
     doc_dict["source_note_title"] = str(note_doc.get("title") or "")
@@ -4440,8 +4652,7 @@ async def ingest_cbc_note_as_document(
     except HTTPException as exc:
         await db.documents.delete_one({"id": doc_id})
         await db.document_chunks.delete_many({"document_id": doc_id})
-        if file_path.exists():
-            file_path.unlink()
+        safe_delete_uploaded_file(str(file_path))
         raise exc
 
     await increment_usage_counter(current_user["id"], "documents_uploaded_total", 1)
@@ -4506,10 +4717,17 @@ async def upload_document(
         file_size=file_size,
         total_chunks=len(chunks),
         keywords=extract_keywords(text),
+        retention_days=int(entitlement.get("document_retention_days") or retention_days_for_plan_id(entitlement.get("plan_id"))),
+        retention_expires_at=retention_expiry_for_uploaded_at(
+            datetime.now(timezone.utc),
+            int(entitlement.get("document_retention_days") or retention_days_for_plan_id(entitlement.get("plan_id"))),
+        ),
     )
 
     doc_dict = doc_metadata.model_dump()
     doc_dict["uploaded_at"] = doc_dict["uploaded_at"].isoformat()
+    if doc_dict.get("retention_expires_at"):
+        doc_dict["retention_expires_at"] = doc_dict["retention_expires_at"].isoformat()
     await db.documents.insert_one(doc_dict)
 
     try:
@@ -4517,8 +4735,7 @@ async def upload_document(
     except HTTPException as exc:
         await db.documents.delete_one({"id": doc_id})
         await db.document_chunks.delete_many({"document_id": doc_id})
-        if file_path.exists():
-            file_path.unlink()
+        safe_delete_uploaded_file(str(file_path))
         logger.warning(
             "Document upload rolled back doc_id=%s user_id=%s status=%s detail=%s",
             doc_id,
@@ -4540,7 +4757,20 @@ async def list_documents(
 ):
     safe_limit = max(1, min(limit, 200))
     docs = await db.documents.find({"user_id": current_user["id"]}, {"_id": 0}).sort("uploaded_at", -1).to_list(safe_limit)
-    return [DocumentMetadata(**normalize_datetime_fields(doc, ["uploaded_at"])) for doc in docs]
+    user_retention_days = await get_user_retention_days(current_user["id"])
+    hydrated: List[DocumentMetadata] = []
+    for doc in docs:
+        if not doc.get("retention_expires_at") or not doc.get("retention_days"):
+            doc = await backfill_document_retention_metadata(
+                doc,
+                user_retention_days=user_retention_days,
+            )
+        hydrated.append(
+            DocumentMetadata(
+                **normalize_datetime_fields(doc, ["uploaded_at", "retention_expires_at"])
+            )
+        )
+    return hydrated
 
 
 @api_router.get("/v1/notes/categories", response_model=CbcNoteCategoriesResponse)
@@ -4632,9 +4862,7 @@ async def delete_document(document_id: str, current_user: Dict[str, Any] = Depen
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    file_path = Path(doc["file_path"])
-    if file_path.exists():
-        file_path.unlink()
+    safe_delete_uploaded_file(str(doc.get("file_path") or ""))
 
     await db.documents.delete_one({"id": document_id})
     await db.document_chunks.delete_many({"document_id": document_id})
@@ -5352,6 +5580,7 @@ async def join_class_session(
         }
 
     fee_kes = int(class_doc.get("fee_kes", 0))
+    saved_phone_numbers = await list_student_payment_phones(student_id=current_user["id"])
     now_iso = datetime.now(timezone.utc).isoformat()
     if fee_kes <= 0:
         enrollment = {
@@ -5396,11 +5625,12 @@ async def join_class_session(
         }
         join_result = await db.class_enrollments.update_one(
             {"class_id": class_id, "student_id": current_user["id"]},
-            {
-                "$setOnInsert": enrollment,
-                "$set": {"payment_status": "paid", "payment_id": paid_payment.get("id")},
-            },
+            {"$setOnInsert": enrollment},
             upsert=True,
+        )
+        await db.class_enrollments.update_one(
+            {"class_id": class_id, "student_id": current_user["id"]},
+            {"$set": {"payment_status": "paid", "payment_id": paid_payment.get("id")}},
         )
         if join_result.upserted_id is not None:
             await db.class_sessions.update_one({"id": class_id}, {"$inc": {"join_count": 1}})
@@ -5424,12 +5654,13 @@ async def join_class_session(
     )
     if existing_pending_payment and existing_pending_payment.get("checkout_request_id"):
         return {
-            "message": "Payment already initiated. Complete M-Pesa prompt on your phone.",
+            "message": "Your payment has not yet reflected. If you already paid, wait and retry. Otherwise, pay again.",
             "class_id": class_id,
             "requires_payment": True,
             "payment_status": "pending",
             "checkout_request_id": existing_pending_payment.get("checkout_request_id"),
             "amount_kes": int(existing_pending_payment.get("amount_kes", fee_kes)),
+            "saved_phone_numbers": saved_phone_numbers,
         }
 
     if not mpesa_service.enabled:
@@ -5476,34 +5707,63 @@ async def join_class_session(
         )
         if pending_after_lock and pending_after_lock.get("checkout_request_id"):
             return {
-                "message": "Payment already initiated. Complete M-Pesa prompt on your phone.",
+                "message": "Your payment has not yet reflected. If you already paid, wait and retry. Otherwise, pay again.",
                 "class_id": class_id,
                 "requires_payment": True,
                 "payment_status": "pending",
                 "checkout_request_id": pending_after_lock.get("checkout_request_id"),
                 "amount_kes": int(pending_after_lock.get("amount_kes", fee_kes)),
+                "saved_phone_numbers": saved_phone_numbers,
             }
         raise HTTPException(
             status_code=409,
             detail="Payment is already being initiated for this class. Please retry in a moment.",
         )
 
-    phone_number = ((payload.phone_number if payload else None) or "").strip()
+    phone_number = await resolve_student_payment_phone(
+        student_id=current_user["id"],
+        explicit_phone=(payload.phone_number if payload else None),
+    )
     if not phone_number:
-        raise HTTPException(status_code=400, detail="Phone number is required for paid classes")
+        return {
+            "message": "Your payment has not yet reflected. If you already paid, wait and retry. To pay again, select a saved phone number or enter another number.",
+            "class_id": class_id,
+            "requires_payment": True,
+            "payment_status": "awaiting_phone",
+            "amount_kes": fee_kes,
+            "saved_phone_numbers": saved_phone_numbers,
+        }
 
     account_reference = f"CLS{class_id[-6:].upper()}"
     transaction_desc = f"Class {class_doc.get('title', 'Session')}"
-    stk_result = await mpesa_service.stk_push(
-        phone_number=phone_number,
-        amount=fee_kes,
-        account_reference=account_reference,
-        transaction_desc=transaction_desc,
-    )
+    stk_result: Dict[str, Any] = {}
+    last_stk_error = "Unknown error"
+    for attempt in range(1, 3):
+        try:
+            stk_result = await mpesa_service.stk_push(
+                phone_number=phone_number,
+                amount=fee_kes,
+                account_reference=account_reference,
+                transaction_desc=transaction_desc,
+            )
+        except Exception as exc:
+            logger.exception(
+                "class_join_stk_push_exception class_id=%s student_id=%s attempt=%s error=%s",
+                class_id,
+                current_user["id"],
+                attempt,
+                exc,
+            )
+            stk_result = {"success": False, "error": str(exc) or type(exc).__name__}
+        if stk_result.get("success"):
+            break
+        last_stk_error = str(stk_result.get("error") or "STK push failed")
+        if attempt < 2:
+            await asyncio.sleep(1.2)
     if not stk_result.get("success"):
         raise HTTPException(
             status_code=502,
-            detail=f"STK push failed: {stk_result.get('error', 'Unknown error')}",
+            detail=f"STK push failed: {last_stk_error}",
         )
 
     payment_doc = {
@@ -5532,6 +5792,7 @@ async def join_class_session(
             "payment_status": "pending",
             "checkout_request_id": payment_doc["checkout_request_id"],
             "amount_kes": fee_kes,
+            "saved_phone_numbers": saved_phone_numbers,
         }
     except DuplicateKeyError:
         pending_duplicate = await db.class_payments.find_one(
@@ -5545,12 +5806,13 @@ async def join_class_session(
         )
         if pending_duplicate and pending_duplicate.get("checkout_request_id"):
             return {
-                "message": "Payment already initiated. Complete M-Pesa prompt on your phone.",
+                "message": "Your payment has not yet reflected. If you already paid, wait and retry. Otherwise, pay again.",
                 "class_id": class_id,
                 "requires_payment": True,
                 "payment_status": "pending",
                 "checkout_request_id": pending_duplicate.get("checkout_request_id"),
                 "amount_kes": int(pending_duplicate.get("amount_kes", fee_kes)),
+                "saved_phone_numbers": saved_phone_numbers,
             }
         raise HTTPException(status_code=409, detail="A duplicate payment request was blocked.")
     finally:
@@ -5887,6 +6149,21 @@ async def admin_integrations_status(
     callback_total_24h = await db.mpesa_callback_logs.count_documents(
         {"created_at": {"$gte": since_24h}}
     )
+    retention_notice_until_iso = (now + timedelta(hours=max(1, DOCUMENT_RETENTION_NOTICE_HOURS))).isoformat()
+    retention_due_24h = await db.documents.count_documents(
+        {"retention_expires_at": {"$gt": now.isoformat(), "$lte": retention_notice_until_iso}}
+    )
+    retention_expired = await db.documents.count_documents(
+        {"retention_expires_at": {"$lte": now.isoformat()}}
+    )
+    retention_missing_meta = await db.documents.count_documents(
+        {
+            "$or": [
+                {"retention_expires_at": {"$exists": False}},
+                {"retention_days": {"$exists": False}},
+            ]
+        }
+    )
     queued_before_iso = (now - timedelta(minutes=max(1, ALERT_QUEUED_JOB_MAX_AGE_MINUTES))).isoformat()
     queued_stale_24h = await db.generation_jobs.count_documents(
         {
@@ -5965,6 +6242,19 @@ async def admin_integrations_status(
             "callback_failure_rate_24h": callback_failure_rate,
             "callback_failure_alert_threshold_24h": ALERT_PAYMENT_CALLBACK_FAILURES_24H,
         },
+        "retention": {
+            "enabled": DOCUMENT_RETENTION_ENABLED,
+            "generation_retention_enabled": GENERATION_RETENTION_ENABLED,
+            "free_days": DOCUMENT_RETENTION_FREE_DAYS,
+            "weekly_days": DOCUMENT_RETENTION_WEEKLY_DAYS,
+            "monthly_days": DOCUMENT_RETENTION_MONTHLY_DAYS,
+            "annual_days": DOCUMENT_RETENTION_ANNUAL_DAYS,
+            "notice_hours": DOCUMENT_RETENTION_NOTICE_HOURS,
+            "cleanup_interval_seconds": DOCUMENT_RETENTION_CLEANUP_INTERVAL_SECONDS,
+            "documents_due_notice_window": int(retention_due_24h),
+            "documents_expired_now": int(retention_expired),
+            "documents_missing_retention_meta": int(retention_missing_meta),
+        },
     }
 
 
@@ -6031,6 +6321,16 @@ async def admin_unacknowledge_alert(
         upsert=True,
     )
     return {"success": True, "alert_key": normalized}
+
+
+@api_router.post("/v1/admin/maintenance/retention/run")
+async def admin_run_retention_maintenance(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    ensure_admin_user(current_user)
+    await ensure_rate_limit(current_user["id"], "admin_withdraw_user", ADMIN_WITHDRAW_PER_MIN_LIMIT)
+    summary = await run_retention_maintenance_cycle(reason=f"admin_manual:{current_user['id']}")
+    return summary
 
 
 @api_router.get("/v1/admin/runtime-settings")
@@ -7149,7 +7449,9 @@ async def dashboard_overview(current_user: Dict[str, Any] = Depends(get_current_
         "documents_count": docs_count,
         "generations_count": gens_count,
         "recent_documents": [
-            DocumentMetadata(**normalize_datetime_fields(doc, ["uploaded_at"])).model_dump()
+            DocumentMetadata(
+                **normalize_datetime_fields(doc, ["uploaded_at", "retention_expires_at"])
+            ).model_dump()
             for doc in recent_docs
         ],
     }
@@ -7230,12 +7532,301 @@ async def runtime_config():
         "retention_email_daily_limit": RETENTION_EMAIL_DAILY_LIMIT,
         "retention_email_batch_size": RETENTION_EMAIL_BATCH_SIZE,
         "retention_email_min_days_between_sends": RETENTION_EMAIL_MIN_DAYS_BETWEEN_SENDS,
+        "engagement_digest_enabled": ENGAGEMENT_DIGEST_ENABLED,
+        "engagement_digest_min_days": ENGAGEMENT_DIGEST_MIN_DAYS,
+        "document_retention_enabled": DOCUMENT_RETENTION_ENABLED,
+        "generation_retention_enabled": GENERATION_RETENTION_ENABLED,
+        "document_retention_free_days": DOCUMENT_RETENTION_FREE_DAYS,
+        "document_retention_weekly_days": DOCUMENT_RETENTION_WEEKLY_DAYS,
+        "document_retention_monthly_days": DOCUMENT_RETENTION_MONTHLY_DAYS,
+        "document_retention_annual_days": DOCUMENT_RETENTION_ANNUAL_DAYS,
+        "document_retention_notice_hours": DOCUMENT_RETENTION_NOTICE_HOURS,
         "signup_otp_ttl_minutes": SIGNUP_OTP_TTL_MINUTES,
         "signup_otp_length": SIGNUP_OTP_LENGTH,
         "signup_email_agent_name": SIGNUP_EMAIL_AGENT_NAME,
         "refresh_rotation_grace_seconds": REFRESH_ROTATION_GRACE_SECONDS,
         "generation_job_queue_timeout_seconds": GENERATION_JOB_QUEUE_TIMEOUT_SECONDS,
     }
+
+
+RETENTION_MAINTENANCE_LOCK_ID = "retention_maintenance"
+_retention_maintenance_task: Optional[asyncio.Task] = None
+
+
+async def _acquire_retention_maintenance_lock(now: datetime) -> bool:
+    now_iso = now.isoformat()
+    lock_until = (now + timedelta(seconds=max(60, DOCUMENT_RETENTION_CLEANUP_INTERVAL_SECONDS // 2))).isoformat()
+    result = await db.maintenance_locks.find_one_and_update(
+        {
+            "lock_id": RETENTION_MAINTENANCE_LOCK_ID,
+            "$or": [
+                {"locked_until": {"$exists": False}},
+                {"locked_until": {"$lte": now_iso}},
+            ],
+        },
+        {
+            "$set": {
+                "lock_id": RETENTION_MAINTENANCE_LOCK_ID,
+                "locked_until": lock_until,
+                "updated_at": now_iso,
+            },
+            "$setOnInsert": {"created_at": now_iso},
+        },
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
+    return bool(result and str(result.get("locked_until") or "") == lock_until)
+
+
+async def _consume_retention_email_quota() -> bool:
+    day_key = f"doc_retention:{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+    now_iso = datetime.now(timezone.utc).isoformat()
+    usage = await db.retention_email_daily_usage.find_one_and_update(
+        {"day_key": day_key},
+        {
+            "$inc": {"sent_count": 1},
+            "$set": {"updated_at": now_iso},
+            "$setOnInsert": {"created_at": now_iso, "sent_count": 0},
+        },
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
+    sent_count = int((usage or {}).get("sent_count", 0))
+    if sent_count <= RETENTION_EMAIL_DAILY_LIMIT:
+        return True
+    await db.retention_email_daily_usage.update_one({"day_key": day_key}, {"$inc": {"sent_count": -1}})
+    return False
+
+
+async def _send_doc_retention_notice_email(*, user: Dict[str, Any], doc: Dict[str, Any], hours_left: int) -> bool:
+    api_key = (BREVO_API_KEY2 or BREVO_API_KEY).strip()
+    if not api_key or not BREVO_SENDER_EMAIL:
+        logger.info("doc_retention_notice_email_skipped reason=brevo_not_configured user_id=%s", user.get("id"))
+        return False
+    recipient = str(user.get("email") or "").strip()
+    if not recipient:
+        logger.info("doc_retention_notice_email_skipped reason=missing_recipient user_id=%s", user.get("id"))
+        return False
+    if not await _consume_retention_email_quota():
+        logger.info("doc_retention_notice_email_skipped reason=daily_limit user_id=%s", user.get("id"))
+        return False
+    filename = str(doc.get("filename") or "your document")
+    retention_days = int(doc.get("retention_days") or 0)
+    expires_at = str(doc.get("retention_expires_at") or "")
+    payload = {
+        "sender": {"email": BREVO_SENDER_EMAIL, "name": BREVO_SENDER_NAME},
+        "to": [{"email": recipient, "name": str(user.get("full_name") or recipient)}],
+        "subject": "Document retention reminder - deletion is scheduled soon",
+        "htmlContent": (
+            f"<p>Hello {str(user.get('full_name') or 'there')},</p>"
+            f"<p>Your document <strong>{filename}</strong> is scheduled for auto-cleanup in about "
+            f"<strong>{max(hours_left, 1)} hour(s)</strong>.</p>"
+            f"<p>Retention policy for your current plan: <strong>{retention_days} day(s)</strong>.</p>"
+            f"<p>Scheduled deletion time (UTC): {expires_at}</p>"
+            "<p>If you still need it, open Exam OS and upload it again before expiry.</p>"
+            "<p>Thanks,<br/>Exam OS</p>"
+        ),
+    }
+    await send_brevo_transactional_email(api_key=api_key, payload=payload)
+    logger.info(
+        "doc_retention_notice_email_sent user_id=%s doc_id=%s recipient=%s",
+        user.get("id"),
+        doc.get("id"),
+        recipient,
+    )
+    return True
+
+
+async def _send_engagement_digest_email(*, user: Dict[str, Any], docs_count: int, gens_count: int) -> bool:
+    if not ENGAGEMENT_EMAILS_ENABLED or not ENGAGEMENT_DIGEST_ENABLED:
+        logger.info("engagement_digest_email_skipped reason=disabled user_id=%s", user.get("id"))
+        return False
+    api_key = (BREVO_API_KEY2 or BREVO_API_KEY).strip()
+    if not api_key or not BREVO_SENDER_EMAIL:
+        logger.info("engagement_digest_email_skipped reason=brevo_not_configured user_id=%s", user.get("id"))
+        return False
+    recipient = str(user.get("email") or "").strip()
+    if not recipient:
+        logger.info("engagement_digest_email_skipped reason=missing_recipient user_id=%s", user.get("id"))
+        return False
+    if not await _consume_retention_email_quota():
+        logger.info("engagement_digest_email_skipped reason=daily_limit user_id=%s", user.get("id"))
+        return False
+    full_name = str(user.get("full_name") or "").strip()
+    payload = {
+        "sender": {"email": BREVO_SENDER_EMAIL, "name": BREVO_SENDER_NAME},
+        "to": [{"email": recipient, "name": full_name or recipient}],
+        "subject": "Your Exam OS activity snapshot",
+        "htmlContent": (
+            f"<p>Hello {full_name or 'there'},</p>"
+            "<p>Here is your latest Exam OS snapshot:</p>"
+            f"<ul><li>Documents in library: <strong>{docs_count}</strong></li>"
+            f"<li>Saved generations: <strong>{gens_count}</strong></li></ul>"
+            "<p>Tip: keep key materials active and regenerate when you need updated assessments.</p>"
+            "<p>Thanks for learning with Exam OS.</p>"
+        ),
+    }
+    await send_brevo_transactional_email(api_key=api_key, payload=payload)
+    logger.info("engagement_digest_email_sent user_id=%s recipient=%s", user.get("id"), recipient)
+    return True
+
+
+async def run_retention_maintenance_cycle(reason: str = "manual") -> Dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+    if not await _acquire_retention_maintenance_lock(now):
+        return {"status": "skipped_locked"}
+    summary: Dict[str, Any] = {
+        "reason": reason,
+        "backfilled_docs": 0,
+        "notice_emails_sent": 0,
+        "deleted_docs": 0,
+        "deleted_chunks": 0,
+        "deleted_generations": 0,
+        "deleted_jobs": 0,
+    }
+    try:
+        if DOCUMENT_RETENTION_ENABLED:
+            missing_docs = await db.documents.find(
+                {
+                    "$or": [
+                        {"retention_expires_at": {"$exists": False}},
+                        {"retention_days": {"$exists": False}},
+                    ]
+                },
+                {"_id": 0},
+            ).sort("uploaded_at", 1).to_list(max(1, DOCUMENT_RETENTION_MISSING_BACKFILL_BATCH))
+            for doc in missing_docs:
+                await backfill_document_retention_metadata(doc)
+                summary["backfilled_docs"] += 1
+
+            notice_until = (now + timedelta(hours=max(1, DOCUMENT_RETENTION_NOTICE_HOURS))).isoformat()
+            notify_docs = await db.documents.find(
+                {
+                    "retention_expires_at": {"$gt": now_iso, "$lte": notice_until},
+                    "retention_notice_sent_at": {"$exists": False},
+                },
+                {"_id": 0},
+            ).sort("retention_expires_at", 1).to_list(200)
+            for doc in notify_docs:
+                user = await db.users.find_one(
+                    {"id": str(doc.get("user_id") or "")},
+                    {"_id": 0, "id": 1, "email": 1, "full_name": 1},
+                )
+                if not user or not str(user.get("email") or "").strip():
+                    continue
+                expires_dt = _parse_iso_datetime(doc.get("retention_expires_at")) or now
+                hours_left = int(max(1, (expires_dt - now).total_seconds() // 3600))
+                try:
+                    sent = await _send_doc_retention_notice_email(user=user, doc=doc, hours_left=hours_left)
+                    if sent:
+                        await db.documents.update_one(
+                            {"id": str(doc.get("id") or "")},
+                            {"$set": {"retention_notice_sent_at": now_iso, "updated_at": now_iso}},
+                        )
+                        summary["notice_emails_sent"] += 1
+                except Exception as exc:
+                    logger.error(
+                        "doc_retention_notice_email_failed user_id=%s doc_id=%s error=%s",
+                        user.get("id"),
+                        doc.get("id"),
+                        exc,
+                    )
+
+            expired_docs = await db.documents.find(
+                {"retention_expires_at": {"$lte": now_iso}},
+                {"_id": 0},
+            ).sort("retention_expires_at", 1).to_list(max(1, DOCUMENT_RETENTION_EXPIRED_DELETE_BATCH))
+            for doc in expired_docs:
+                doc_id = str(doc.get("id") or "")
+                if not doc_id:
+                    continue
+                deleted_chunks = await db.document_chunks.delete_many({"document_id": doc_id})
+                summary["deleted_chunks"] += int(deleted_chunks.deleted_count)
+                file_path_raw = str(doc.get("file_path") or "").strip()
+                if file_path_raw:
+                    safe_delete_uploaded_file(file_path_raw)
+                deleted_doc = await db.documents.delete_one({"id": doc_id})
+                if deleted_doc.deleted_count:
+                    summary["deleted_docs"] += 1
+
+        if GENERATION_RETENTION_ENABLED:
+            users = await db.users.find({}, {"_id": 0, "id": 1}).to_list(2000)
+            for user in users:
+                user_id = str(user.get("id") or "")
+                if not user_id:
+                    continue
+                retention_days = await get_user_retention_days(user_id)
+                cutoff = (now - timedelta(days=max(1, retention_days))).isoformat()
+                gen_deleted = await db.generations.delete_many(
+                    {"user_id": user_id, "created_at": {"$lt": cutoff}}
+                )
+                summary["deleted_generations"] += int(gen_deleted.deleted_count)
+                jobs_deleted = await db.generation_jobs.delete_many(
+                    {
+                        "user_id": user_id,
+                        "created_at": {"$lt": cutoff},
+                        "status": {"$in": ["completed", "failed"]},
+                    }
+                )
+                summary["deleted_jobs"] += int(jobs_deleted.deleted_count)
+
+        if ENGAGEMENT_EMAILS_ENABLED and ENGAGEMENT_DIGEST_ENABLED:
+            digest_cutoff_iso = (now - timedelta(days=max(1, ENGAGEMENT_DIGEST_MIN_DAYS))).isoformat()
+            digest_users = await db.users.find(
+                {
+                    "email": {"$exists": True, "$ne": ""},
+                    "$or": [
+                        {"engagement_digest_sent_at": {"$exists": False}},
+                        {"engagement_digest_sent_at": {"$lte": digest_cutoff_iso}},
+                    ],
+                },
+                {"_id": 0, "id": 1, "email": 1, "full_name": 1},
+            ).to_list(80)
+            sent_digests = 0
+            for user in digest_users:
+                user_id = str(user.get("id") or "")
+                if not user_id:
+                    continue
+                docs_count, gens_count = await asyncio.gather(
+                    db.documents.count_documents({"user_id": user_id}),
+                    db.generations.count_documents({"user_id": user_id}),
+                )
+                try:
+                    sent = await _send_engagement_digest_email(
+                        user=user,
+                        docs_count=int(docs_count),
+                        gens_count=int(gens_count),
+                    )
+                    if sent:
+                        await db.users.update_one(
+                            {"id": user_id},
+                            {"$set": {"engagement_digest_sent_at": now_iso, "updated_at": now_iso}},
+                        )
+                        sent_digests += 1
+                except Exception as exc:
+                    logger.error("engagement_digest_send_failed user_id=%s error=%s", user_id, exc)
+            summary["engagement_digest_sent"] = sent_digests
+
+        logger.info("retention_maintenance_completed summary=%s", summary)
+        return {"status": "ok", **summary}
+    finally:
+        await db.maintenance_locks.update_one(
+            {"lock_id": RETENTION_MAINTENANCE_LOCK_ID},
+            {"$set": {"locked_until": now_iso, "updated_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True,
+        )
+
+
+async def _retention_maintenance_loop() -> None:
+    # Run one short delayed cycle at boot, then interval cycles.
+    await asyncio.sleep(15)
+    while True:
+        try:
+            await run_retention_maintenance_cycle(reason="scheduled")
+        except Exception as exc:
+            logger.error("retention_maintenance_cycle_failed error=%s", exc)
+        await asyncio.sleep(max(300, DOCUMENT_RETENTION_CLEANUP_INTERVAL_SECONDS))
 
 @app.on_event("startup")
 async def startup_checks():
@@ -7305,6 +7896,19 @@ async def startup_checks():
         raise RuntimeError("RETENTION_EMAIL_BATCH_SIZE must be greater than zero")
     if RETENTION_EMAIL_MIN_DAYS_BETWEEN_SENDS < 0:
         raise RuntimeError("RETENTION_EMAIL_MIN_DAYS_BETWEEN_SENDS cannot be negative")
+    if DOCUMENT_RETENTION_NOTICE_HOURS < 1:
+        raise RuntimeError("DOCUMENT_RETENTION_NOTICE_HOURS must be at least 1")
+    if DOCUMENT_RETENTION_CLEANUP_INTERVAL_SECONDS < 300:
+        raise RuntimeError("DOCUMENT_RETENTION_CLEANUP_INTERVAL_SECONDS must be at least 300")
+    if min(
+        DOCUMENT_RETENTION_FREE_DAYS,
+        DOCUMENT_RETENTION_WEEKLY_DAYS,
+        DOCUMENT_RETENTION_MONTHLY_DAYS,
+        DOCUMENT_RETENTION_ANNUAL_DAYS,
+    ) < 1:
+        raise RuntimeError("Document retention days must be at least 1 for all plans")
+    if ENGAGEMENT_DIGEST_MIN_DAYS < 1:
+        raise RuntimeError("ENGAGEMENT_DIGEST_MIN_DAYS must be at least 1")
     if GENERATION_JOB_QUEUE_TIMEOUT_SECONDS < 30:
         raise RuntimeError("GENERATION_JOB_QUEUE_TIMEOUT_SECONDS must be at least 30")
     if RETENTION_INSIGHTS_ENABLED and not BREVO_API_KEY2:
@@ -7313,9 +7917,12 @@ async def startup_checks():
 
     await db.users.create_index("email", unique=True)
     await db.users.create_index("fcm_token", sparse=True)
+    await db.users.create_index([("engagement_digest_sent_at", 1)])
     await db.runtime_settings.create_index("id", unique=True)
     await db.documents.create_index("user_id")
     await db.documents.create_index([("user_id", 1), ("uploaded_at", -1)])
+    await db.documents.create_index([("retention_expires_at", 1)])
+    await db.documents.create_index([("retention_notice_sent_at", 1)])
     try:
         existing_doc_indexes = await db.documents.list_indexes().to_list(200)
         legacy_source_index_exists = any(
@@ -7382,6 +7989,8 @@ async def startup_checks():
     )
     await db.class_join_payment_locks.create_index("lock_id", unique=True)
     await db.class_join_payment_locks.create_index([("locked_until", 1)])
+    await db.maintenance_locks.create_index("lock_id", unique=True)
+    await db.maintenance_locks.create_index([("locked_until", 1)])
     await db.class_escrow.create_index("id", unique=True)
     await db.class_escrow.create_index("payment_id", unique=True)
     await db.class_escrow.create_index([("class_id", 1), ("status", 1)])
@@ -7489,10 +8098,21 @@ async def startup_checks():
         logger.warning("Vector index validation skipped due to error: %s", e)
 
     logger.info("Startup checks completed")
+    global _retention_maintenance_task
+    if _retention_maintenance_task is None:
+        _retention_maintenance_task = asyncio.create_task(_retention_maintenance_loop())
 
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    global _retention_maintenance_task
+    if _retention_maintenance_task is not None:
+        _retention_maintenance_task.cancel()
+        try:
+            await _retention_maintenance_task
+        except asyncio.CancelledError:
+            pass
+        _retention_maintenance_task = None
     client.close()
 
 

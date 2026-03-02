@@ -524,6 +524,11 @@ class _RecentDocumentTile extends StatelessWidget {
                   '${doc.fileType.toUpperCase()} - ${doc.totalChunks} chunks',
                   style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
                 ),
+                if (doc.retentionDays != null)
+                  Text(
+                    'Retention: ${doc.retentionDays} day(s)',
+                    style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+                  ),
               ],
             ),
           ),
