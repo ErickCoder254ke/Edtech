@@ -383,14 +383,16 @@ def _build_email_signature_block() -> str:
         return ""
     if EMAIL_SIGNATURE_IMAGE_URL:
         return (
-            '<div style="margin:0 0 14px 0;max-width:340px;">'
-            '<div style="margin-top:-28px;margin-left:10px;display:inline-block;'
-            'background:rgba(9,15,28,0.72);color:#e2e8f0;padding:4px 10px;'
-            'border-radius:999px;font-size:11px;font-weight:700;">'
-            'Exam OS Support'
-            "</div>"
+            '<div style="margin:0 0 14px 0;max-width:560px;">'
+            '<div style="margin-left:14px;margin-bottom:-14px;display:inline-block;'
+            'background:#0f172a;color:#f8fafc;padding:4px 12px;'
+            'border-radius:999px;font-size:11px;font-weight:700;">Exam OS Support</div>'
+            '<div style="background:linear-gradient(135deg,#E6F0FF 0%,#F5FAFF 100%);'
+            'border:1px solid #cbdcf6;'
+            'border-radius:16px;padding:12px 16px;">'
             f'<img src="{EMAIL_SIGNATURE_IMAGE_URL}" alt="Exam OS" '
-            'style="max-width:340px;width:100%;height:auto;display:block;"/>'
+            'style="max-width:520px;width:100%;height:auto;display:block;"/>'
+            "</div>"
             "</div>"
         )
     image_path = Path(EMAIL_SIGNATURE_IMAGE_PATH)
@@ -402,14 +404,16 @@ def _build_email_signature_block() -> str:
         mime = mimetypes.guess_type(image_path.name)[0] or "image/png"
         encoded = base64.b64encode(image_bytes).decode("ascii")
         return (
-            '<div style="margin:0 0 14px 0;max-width:340px;">'
-            '<div style="margin-top:-28px;margin-left:10px;display:inline-block;'
-            'background:rgba(9,15,28,0.72);color:#e2e8f0;padding:4px 10px;'
-            'border-radius:999px;font-size:11px;font-weight:700;">'
-            'Exam OS Support'
-            "</div>"
+            '<div style="margin:0 0 14px 0;max-width:560px;">'
+            '<div style="margin-left:14px;margin-bottom:-14px;display:inline-block;'
+            'background:#0f172a;color:#f8fafc;padding:4px 12px;'
+            'border-radius:999px;font-size:11px;font-weight:700;">Exam OS Support</div>'
+            '<div style="background:linear-gradient(135deg,#E6F0FF 0%,#F5FAFF 100%);'
+            'border:1px solid #cbdcf6;'
+            'border-radius:16px;padding:12px 16px;">'
             f'<img src="data:{mime};base64,{encoded}" alt="Exam OS" '
-            'style="max-width:340px;width:100%;height:auto;display:block;"/>'
+            'style="max-width:520px;width:100%;height:auto;display:block;"/>'
+            "</div>"
             "</div>"
         )
     except Exception as exc:
@@ -7772,7 +7776,19 @@ async def _send_engagement_digest_email(
     user_id = str(user.get("id") or "").strip()
     now = datetime.now(timezone.utc)
     availability_line = "We could not find active documents in your library yet."
+    generation_retention_line = (
+        "Generated outputs can also expire based on your plan retention policy. "
+        "Download important generations from Library to keep a local copy."
+    )
     try:
+        if user_id:
+            entitlement = await get_generation_entitlement(user_id)
+            retention_days = int(entitlement.get("document_retention_days") or 0)
+            if retention_days > 0:
+                generation_retention_line = (
+                    f"Generated outputs may expire after about <strong>{retention_days} day(s)</strong> "
+                    "under your current plan. Download important generations from Library and keep a local copy."
+                )
         if user_id:
             active_docs = await db.documents.find(
                 {
@@ -7819,6 +7835,7 @@ async def _send_engagement_digest_email(
             f"<li>Saved generations: <strong>{gens_count}</strong></li></ul>"
             f"<p><strong>Document availability:</strong> {availability_line}</p>"
             "<p>Tip: if you still need a document, open Library and re-upload it before expiry.</p>"
+            f"<p><strong>Generation availability:</strong> {generation_retention_line}</p>"
             "<p>Tip: keep key materials active and regenerate when you need updated assessments.</p>"
             "<p>Thanks for learning with Exam OS.</p>"
         ),

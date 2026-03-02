@@ -775,6 +775,7 @@ async def _build_retention_email_payload(target: Dict[str, Any]) -> Dict[str, An
     exam_used = entitlement.get("exam_used")
     exam_remaining = entitlement.get("exam_remaining")
     is_free = bool(entitlement.get("is_free", True))
+    retention_days = int(entitlement.get("document_retention_days") or 0)
 
     if is_free and generation_remaining <= 0:
         headline = "Your free generation credits are fully used"
@@ -847,6 +848,9 @@ async def _build_retention_email_payload(target: Dict[str, Any]) -> Dict[str, An
         "</ul>"
         f"<p><strong>Document availability:</strong> {availability_line}</p>"
         "<p>Tip: if you still need a document, open Library and re-upload it before expiry.</p>"
+        f"<p><strong>Generation availability:</strong> Generated outputs may expire after about "
+        f"<strong>{max(1, retention_days)} day(s)</strong> under your current plan. "
+        "Download important generations from Library and keep a local copy.</p>"
         "<p><strong>Recommended next step:</strong> "
         f"{next_step}</p>"
         "<p>Pro tip: combine Topic Board demand signals with Generation Lab prompts for faster exam planning.</p>"
