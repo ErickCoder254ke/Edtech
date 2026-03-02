@@ -384,7 +384,7 @@ def _build_email_signature_block() -> str:
     if EMAIL_SIGNATURE_IMAGE_URL:
         return (
             '<div style="margin:0 0 14px 0;max-width:560px;">'
-            '<div style="margin-left:14px;margin-bottom:-14px;display:inline-block;'
+            '<div style="margin-left:10px;margin-bottom:6px;display:inline-block;'
             'background:#0f172a;color:#f8fafc;padding:4px 12px;'
             'border-radius:999px;font-size:11px;font-weight:700;">Exam OS Support</div>'
             '<div style="background:linear-gradient(135deg,#E6F0FF 0%,#F5FAFF 100%);'
@@ -405,7 +405,7 @@ def _build_email_signature_block() -> str:
         encoded = base64.b64encode(image_bytes).decode("ascii")
         return (
             '<div style="margin:0 0 14px 0;max-width:560px;">'
-            '<div style="margin-left:14px;margin-bottom:-14px;display:inline-block;'
+            '<div style="margin-left:10px;margin-bottom:6px;display:inline-block;'
             'background:#0f172a;color:#f8fafc;padding:4px 12px;'
             'border-radius:999px;font-size:11px;font-weight:700;">Exam OS Support</div>'
             '<div style="background:linear-gradient(135deg,#E6F0FF 0%,#F5FAFF 100%);'
@@ -427,7 +427,12 @@ def _inject_email_signature(html_content: str) -> str:
     if "data-signature=\"exam-os\"" in html_content:
         return html_content
     signature_wrapper = f'<div data-signature="exam-os">{_EMAIL_SIGNATURE_BLOCK}</div>'
-    return f"{signature_wrapper}{html_content}"
+    return (
+        f"{signature_wrapper}"
+        '<div style="color:#0f172a;font-family:Arial,Helvetica,sans-serif;line-height:1.5;">'
+        f"{html_content}"
+        "</div>"
+    )
 
 def _is_within_upload_dir(path: Path) -> bool:
     try:
@@ -1081,6 +1086,21 @@ async def send_brevo_transactional_email(
     if isinstance(html_content, str) and html_content.strip():
         payload = dict(payload)
         payload["htmlContent"] = _inject_email_signature(html_content)
+    else:
+        payload = dict(payload)
+    # Force independent email threading across mailbox clients.
+    # Many clients honor custom Message-ID / entity headers for conversation splitting.
+    headers = payload.get("headers")
+    if not isinstance(headers, dict):
+        headers = {}
+    if "In-Reply-To" in headers:
+        headers.pop("In-Reply-To", None)
+    if "References" in headers:
+        headers.pop("References", None)
+    thread_ref = str(uuid.uuid4())
+    headers["X-Entity-Ref-ID"] = thread_ref
+    headers["Message-ID"] = f"<exam-os-{thread_ref}@mail.examos.app>"
+    payload["headers"] = headers
     headers = {
         "accept": "application/json",
         "api-key": api_key,
