@@ -600,10 +600,64 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       ),
     }..removeWhere((_, value) => value == null);
 
-    if (payload.length != 47) {
+    const requiredSettingKeys = <String>{
+      'free_plan_max_generations',
+      'weekly_plan_max_generations',
+      'monthly_plan_max_generations',
+      'annual_plan_max_generations',
+      'subscription_weekly_kes',
+      'subscription_monthly_kes',
+      'subscription_annual_kes',
+      'weekly_plan_max_exams',
+      'monthly_plan_max_exams',
+      'annual_plan_max_exams',
+      'exam_pack_small_price_kes',
+      'exam_pack_small_cost_kes',
+      'exam_pack_small_exams',
+      'exam_pack_medium_price_kes',
+      'exam_pack_medium_cost_kes',
+      'exam_pack_medium_exams',
+      'exam_pack_large_price_kes',
+      'exam_pack_large_cost_kes',
+      'exam_pack_large_exams',
+      'task_pack_starter_price_kes',
+      'task_pack_starter_cost_kes',
+      'task_pack_starter_tasks',
+      'task_pack_medium_price_kes',
+      'task_pack_medium_cost_kes',
+      'task_pack_medium_tasks',
+      'task_pack_large_price_kes',
+      'task_pack_large_cost_kes',
+      'task_pack_large_tasks',
+      'topup_task_booster_price_kes',
+      'topup_task_booster_cost_kes',
+      'topup_task_booster_tasks',
+      'topup_exam_booster_price_kes',
+      'topup_exam_booster_cost_kes',
+      'topup_exam_booster_exams',
+      'exam_pack_small_on_offer',
+      'exam_pack_medium_on_offer',
+      'exam_pack_large_on_offer',
+      'task_pack_starter_on_offer',
+      'task_pack_medium_on_offer',
+      'task_pack_large_on_offer',
+      'topup_task_booster_on_offer',
+      'topup_exam_booster_on_offer',
+      'document_retention_days',
+      'class_escrow_platform_fee_percent',
+      'class_min_fee_kes',
+      'class_max_fee_kes',
+      'account_reuse_grace_days',
+    };
+    final missingKeys = requiredSettingKeys
+        .where((k) => !payload.containsKey(k))
+        .toList();
+    if (missingKeys.isNotEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter valid values for all settings.'),
+        SnackBar(
+          content: Text(
+            'Please enter valid values for all settings (${missingKeys.length} missing).',
+          ),
         ),
       );
       return;

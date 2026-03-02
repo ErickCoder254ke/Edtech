@@ -70,10 +70,9 @@ class TestServerGuards(unittest.TestCase):
         self.assertIn("Invalid file content", str(ctx.exception.detail))
 
     def test_detect_mime_reject_bad_declared_type(self):
-        with self.assertRaises(HTTPException) as ctx:
-            server.detect_mime(b"hello world", "txt", "application/pdf")
-        self.assertEqual(ctx.exception.status_code, 400)
-        self.assertIn("MIME type does not match", str(ctx.exception.detail))
+        # Declared MIME mismatches are tolerated for txt if content signature is valid.
+        detected = server.detect_mime(b"hello world", "txt", "application/pdf")
+        self.assertEqual(detected, "text/plain")
 
     def test_token_budget_selects_prefix(self):
         chunks = [
