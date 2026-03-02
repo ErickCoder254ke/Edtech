@@ -6336,11 +6336,17 @@ async def admin_unacknowledge_alert(
 
 @api_router.post("/v1/admin/maintenance/retention/run")
 async def admin_run_retention_maintenance(
+    force_engagement_digest: bool = True,
+    force_retention_notice: bool = False,
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     ensure_admin_user(current_user)
     await ensure_rate_limit(current_user["id"], "admin_withdraw_user", ADMIN_WITHDRAW_PER_MIN_LIMIT)
-    summary = await run_retention_maintenance_cycle(reason=f"admin_manual:{current_user['id']}")
+    summary = await run_retention_maintenance_cycle(
+        reason=f"admin_manual:{current_user['id']}",
+        force_engagement_digest=force_engagement_digest,
+        force_retention_notice=force_retention_notice,
+    )
     return summary
 
 
@@ -7689,7 +7695,12 @@ async def _send_engagement_digest_email(*, user: Dict[str, Any], docs_count: int
     return True
 
 
-async def run_retention_maintenance_cycle(reason: str = "manual") -> Dict[str, Any]:
+async def run_retention_maintenance_cycle(
+    reason: str = "manual",
+    *,
+    force_engagement_digest: bool = False,
+    force_retention_notice: bool = False,
+) -> Dict[str, Any]:
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
     if not await _acquire_retention_maintenance_lock(now):
@@ -7719,11 +7730,13 @@ async def run_retention_maintenance_cycle(reason: str = "manual") -> Dict[str, A
                 summary["backfilled_docs"] += 1
 
             notice_until = (now + timedelta(hours=max(1, DOCUMENT_RETENTION_NOTICE_HOURS))).isoformat()
+            notify_query: Dict[str, Any] = {
+                "retention_expires_at": {"$gt": now_iso, "$lte": notice_until},
+            }
+            if not force_retention_notice:
+                notify_query["retention_notice_sent_at"] = {"$exists": False}
             notify_docs = await db.documents.find(
-                {
-                    "retention_expires_at": {"$gt": now_iso, "$lte": notice_until},
-                    "retention_notice_sent_at": {"$exists": False},
-                },
+                notify_query,
                 {"_id": 0},
             ).sort("retention_expires_at", 1).to_list(200)
             for doc in notify_docs:
@@ -7791,14 +7804,14 @@ async def run_retention_maintenance_cycle(reason: str = "manual") -> Dict[str, A
 
         if ENGAGEMENT_EMAILS_ENABLED and ENGAGEMENT_DIGEST_ENABLED:
             digest_cutoff_iso = (now - timedelta(days=max(1, ENGAGEMENT_DIGEST_MIN_DAYS))).isoformat()
+            digest_query: Dict[str, Any] = {"email": {"$exists": True, "$ne": ""}}
+            if not force_engagement_digest:
+                digest_query["$or"] = [
+                    {"engagement_digest_sent_at": {"$exists": False}},
+                    {"engagement_digest_sent_at": {"$lte": digest_cutoff_iso}},
+                ]
             digest_users = await db.users.find(
-                {
-                    "email": {"$exists": True, "$ne": ""},
-                    "$or": [
-                        {"engagement_digest_sent_at": {"$exists": False}},
-                        {"engagement_digest_sent_at": {"$lte": digest_cutoff_iso}},
-                    ],
-                },
+                digest_query,
                 {"_id": 0, "id": 1, "email": 1, "full_name": 1},
             ).to_list(80)
             sent_digests = 0
@@ -7826,6 +7839,8 @@ async def run_retention_maintenance_cycle(reason: str = "manual") -> Dict[str, A
                     logger.error("engagement_digest_send_failed user_id=%s error=%s", user_id, exc)
             summary["engagement_digest_sent"] = sent_digests
 
+        summary["force_engagement_digest"] = bool(force_engagement_digest)
+        summary["force_retention_notice"] = bool(force_retention_notice)
         logger.info("retention_maintenance_completed summary=%s", summary)
         return {"status": "ok", **summary}
     finally:
