@@ -190,6 +190,14 @@ LOCALPRO_TUTORS_PATH = os.environ.get("LOCALPRO_TUTORS_PATH", "/api/services").s
 LOCALPRO_TUTOR_CATEGORY = os.environ.get("LOCALPRO_TUTOR_CATEGORY", "tutoring").strip().lower()
 LOCALPRO_TIMEOUT_SECONDS = float(os.environ.get("LOCALPRO_TIMEOUT_SECONDS", "12"))
 LOCALPRO_APP_SCHEME = os.environ.get("LOCALPRO_APP_SCHEME", "localpro").strip() or "localpro"
+LOCALPRO_DEEP_LINK_TEMPLATE = (
+    os.environ.get("LOCALPRO_DEEP_LINK_TEMPLATE", "{scheme}://service/{id}").strip()
+    or "{scheme}://service/{id}"
+)
+LOCALPRO_WEB_URL_TEMPLATE = (
+    os.environ.get("LOCALPRO_WEB_URL_TEMPLATE", "{base_url}/service/{id}").strip()
+    or "{base_url}/service/{id}"
+)
 LOCALPRO_APP_PACKAGE = os.environ.get("LOCALPRO_APP_PACKAGE", "com.ericko2525.petsoko").strip() or "com.ericko2525.petsoko"
 LOCALPRO_PLAYSTORE_URL = os.environ.get(
     "LOCALPRO_PLAYSTORE_URL",
@@ -2433,6 +2441,30 @@ def _localpro_headers() -> Dict[str, str]:
     return headers
 
 
+def _build_localpro_booking_links(tutor_id: str) -> Tuple[str, Optional[str]]:
+    safe_id = quote((tutor_id or "").strip(), safe="")
+    deep_link = LOCALPRO_DEEP_LINK_TEMPLATE.format(
+        id=safe_id,
+        scheme=LOCALPRO_APP_SCHEME,
+        base_url=LOCALPRO_BASE_URL,
+    )
+    if "://" not in deep_link:
+        deep_link = f"{LOCALPRO_APP_SCHEME}://{deep_link.lstrip('/')}"
+
+    web_url: Optional[str] = None
+    if LOCALPRO_BASE_URL:
+        built_web = LOCALPRO_WEB_URL_TEMPLATE.format(
+            id=safe_id,
+            scheme=LOCALPRO_APP_SCHEME,
+            base_url=LOCALPRO_BASE_URL,
+        ).strip()
+        if built_web:
+            if built_web.startswith("/"):
+                built_web = f"{LOCALPRO_BASE_URL}{built_web}"
+            web_url = built_web
+    return deep_link, web_url
+
+
 def _normalize_localpro_tutor(raw: Dict[str, Any]) -> PrivateTutorProfileResponse:
     tutor_id = str(raw.get("id") or raw.get("_id") or "")
     provider_id = str(raw.get("seller_id") or "")
@@ -2450,8 +2482,7 @@ def _normalize_localpro_tutor(raw: Dict[str, Any]) -> PrivateTutorProfileRespons
     photos = raw.get("photos") if isinstance(raw.get("photos"), list) else []
     photo_url = str(photos[0]).strip() if photos else None
     available_now = bool(raw.get("seller_available_now", False))
-    deep_link = f"{LOCALPRO_APP_SCHEME}://service/{tutor_id}"
-    web_url = f"{LOCALPRO_BASE_URL}/service/{tutor_id}" if LOCALPRO_BASE_URL else None
+    deep_link, web_url = _build_localpro_booking_links(tutor_id)
 
     return PrivateTutorProfileResponse(
         id=tutor_id,
@@ -6088,8 +6119,7 @@ async def private_tutor_booking_intent(
     tutor_id = (tutor_id or "").strip()
     if not tutor_id:
         raise HTTPException(status_code=400, detail="Tutor ID is required")
-    deep_link = f"{LOCALPRO_APP_SCHEME}://service/{tutor_id}"
-    web_url = f"{LOCALPRO_BASE_URL}/service/{tutor_id}" if LOCALPRO_BASE_URL else None
+    deep_link, web_url = _build_localpro_booking_links(tutor_id)
     return PrivateTutorBookingIntentResponse(
         tutor_id=tutor_id,
         deep_link=deep_link,
@@ -6113,6 +6143,8 @@ async def private_tutors_health(
         "last_fetch_at": _LOCALPRO_LAST_FETCH_AT,
         "last_fetch_error": _LOCALPRO_LAST_FETCH_ERROR,
         "app_scheme": LOCALPRO_APP_SCHEME,
+        "deep_link_template": LOCALPRO_DEEP_LINK_TEMPLATE,
+        "web_url_template": LOCALPRO_WEB_URL_TEMPLATE,
         "app_package": LOCALPRO_APP_PACKAGE,
         "playstore_url": LOCALPRO_PLAYSTORE_URL,
     }
@@ -6300,6 +6332,8 @@ async def admin_integrations_status(
             "configured": _localpro_enabled(),
             "base_url": LOCALPRO_BASE_URL,
             "tutors_path": LOCALPRO_TUTORS_PATH,
+            "deep_link_template": LOCALPRO_DEEP_LINK_TEMPLATE,
+            "web_url_template": LOCALPRO_WEB_URL_TEMPLATE,
             "has_api_key": bool(LOCALPRO_API_KEY),
             "api_key_header": LOCALPRO_API_KEY_HEADER,
             "last_fetch_at": _LOCALPRO_LAST_FETCH_AT,
@@ -7627,6 +7661,8 @@ async def runtime_config():
         "localpro_enabled": _localpro_enabled(),
         "localpro_tutor_category": LOCALPRO_TUTOR_CATEGORY,
         "localpro_app_scheme": LOCALPRO_APP_SCHEME,
+        "localpro_deep_link_template": LOCALPRO_DEEP_LINK_TEMPLATE,
+        "localpro_web_url_template": LOCALPRO_WEB_URL_TEMPLATE,
         "localpro_app_package": LOCALPRO_APP_PACKAGE,
         "localpro_playstore_url": LOCALPRO_PLAYSTORE_URL,
         "support_contact_email": SUPPORT_CONTACT_EMAIL,
