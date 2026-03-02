@@ -11,8 +11,6 @@ from notification_service import send_push_to_user
 from server import (
     BREVO_API_KEY2,
     BREVO_API_KEY,
-    BREVO_SENDER_EMAIL,
-    BREVO_SENDER_NAME,
     ENGAGEMENT_EMAILS_ENABLED,
     RETENTION_EMAIL_BATCH_SIZE,
     RETENTION_EMAIL_DAILY_LIMIT,
@@ -21,6 +19,7 @@ from server import (
     current_runtime_settings,
     db,
     get_generation_entitlement,
+    resolve_brevo_sender_for_api_key,
     send_brevo_transactional_email,
 )
 
@@ -191,7 +190,8 @@ async def _send_first_exam_upgrade_nudge_impl(user_id: str) -> None:
     if not ENGAGEMENT_EMAILS_ENABLED:
         return
     api_key = (BREVO_API_KEY2 or BREVO_API_KEY).strip()
-    if not api_key or not BREVO_SENDER_EMAIL:
+    sender_email, sender_name = resolve_brevo_sender_for_api_key(api_key)
+    if not api_key or not sender_email:
         logger.info("engagement_email_skip_missing_config user_id=%s", user_id)
         return
 
@@ -259,7 +259,7 @@ async def _send_first_exam_upgrade_nudge_impl(user_id: str) -> None:
             "<p>Keep building great assessments.<br/>Exam OS Team</p>"
         )
         payload = {
-            "sender": {"email": BREVO_SENDER_EMAIL, "name": BREVO_SENDER_NAME},
+            "sender": {"email": sender_email, "name": sender_name},
             "to": [{"email": str(user["email"]), "name": full_name or str(user["email"])}],
             "subject": ENGAGEMENT_UPGRADE_SUBJECT,
             "htmlContent": html,
@@ -315,7 +315,8 @@ async def _send_quota_exhausted_nudge_impl(user_id: str, quota_type: str) -> Non
 
     normalized_type = "exam" if str(quota_type).strip().lower() == "exam" else "generation"
     api_key = (BREVO_API_KEY2 or BREVO_API_KEY).strip()
-    if not api_key or not BREVO_SENDER_EMAIL:
+    sender_email, sender_name = resolve_brevo_sender_for_api_key(api_key)
+    if not api_key or not sender_email:
         logger.info(
             "engagement_quota_exhausted_email_skip_missing_config user_id=%s quota_type=%s",
             user_id,
@@ -422,7 +423,7 @@ async def _send_quota_exhausted_nudge_impl(user_id: str, quota_type: str) -> Non
             "<p>— Exam OS Team</p>"
         )
         payload = {
-            "sender": {"email": BREVO_SENDER_EMAIL, "name": BREVO_SENDER_NAME},
+            "sender": {"email": sender_email, "name": sender_name},
             "to": [{"email": str(user["email"]), "name": full_name or str(user["email"])}],
             "subject": ENGAGEMENT_QUOTA_EXHAUSTED_SUBJECT,
             "htmlContent": html,
@@ -466,8 +467,9 @@ async def _process_retention_campaign_impl(worker_task_id: str, campaign_id: str
     if not RETENTION_INSIGHTS_ENABLED:
         await _mark_campaign_failed(campaign_id, "Retention insights are disabled")
         return {"campaign_id": campaign_id, "status": "failed", "reason": "disabled"}
-    if not BREVO_API_KEY2 or not BREVO_SENDER_EMAIL:
-        await _mark_campaign_failed(campaign_id, "BREVO_API_KEY2 or BREVO_SENDER_EMAIL missing")
+    sender_email2, _ = resolve_brevo_sender_for_api_key(BREVO_API_KEY2)
+    if not BREVO_API_KEY2 or not sender_email2:
+        await _mark_campaign_failed(campaign_id, "BREVO_API_KEY2 or sender for key2 missing")
         return {"campaign_id": campaign_id, "status": "failed", "reason": "brevo_config_missing"}
 
     campaign = await _claim_campaign(campaign_id=campaign_id, worker_task_id=worker_task_id)
@@ -811,8 +813,9 @@ async def _build_retention_email_payload(target: Dict[str, Any]) -> Dict[str, An
         "<p>— Exam OS Team</p>"
     )
 
+    sender_email, sender_name = resolve_brevo_sender_for_api_key(BREVO_API_KEY2)
     return {
-        "sender": {"email": BREVO_SENDER_EMAIL, "name": BREVO_SENDER_NAME},
+        "sender": {"email": sender_email, "name": sender_name},
         "to": [{"email": user_email, "name": full_name or user_email}],
         "subject": subject,
         "htmlContent": html,

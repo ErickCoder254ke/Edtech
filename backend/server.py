@@ -213,6 +213,8 @@ BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "")
 BREVO_API_KEY2 = os.environ.get("BREVO_API_KEY2", "").strip()
 BREVO_SENDER_EMAIL = os.environ.get("BREVO_SENDER_EMAIL", "")
 BREVO_SENDER_NAME = os.environ.get("BREVO_SENDER_NAME", "Exam OS")
+BREVO_SENDER_EMAIL2 = os.environ.get("BREVO_SENDER_EMAIL2", "").strip()
+BREVO_SENDER_NAME2 = os.environ.get("BREVO_SENDER_NAME2", BREVO_SENDER_NAME).strip() or BREVO_SENDER_NAME
 BREVO_TEMPLATE_ID = os.environ.get("BREVO_TEMPLATE_ID", "").strip()
 BREVO_PASSWORD_RESET_TEMPLATE_ID = os.environ.get("BREVO_PASSWORD_RESET_TEMPLATE_ID", "").strip()
 BREVO_SIGNUP_OTP_TEMPLATE_ID = os.environ.get("BREVO_SIGNUP_OTP_TEMPLATE_ID", "").strip()
@@ -1060,6 +1062,13 @@ async def send_brevo_transactional_email(
             }
         )
         raise
+
+
+def resolve_brevo_sender_for_api_key(api_key: str) -> Tuple[str, str]:
+    key = (api_key or "").strip()
+    if key and BREVO_API_KEY2 and key == BREVO_API_KEY2 and BREVO_SENDER_EMAIL2:
+        return BREVO_SENDER_EMAIL2, BREVO_SENDER_NAME2
+    return BREVO_SENDER_EMAIL, BREVO_SENDER_NAME
 
 
 async def send_password_reset_email(email: str, full_name: str, deep_link: str) -> None:
@@ -6215,6 +6224,8 @@ async def admin_integrations_status(
             "has_brevo_api_key": bool(BREVO_API_KEY),
             "has_brevo_api_key2": bool(BREVO_API_KEY2),
             "sender_email": BREVO_SENDER_EMAIL,
+            "sender_email2": BREVO_SENDER_EMAIL2 or None,
+            "sender_for_key2": resolve_brevo_sender_for_api_key(BREVO_API_KEY2)[0] if BREVO_API_KEY2 else None,
             "emails_sent_24h": int(email_sent_24h),
             "emails_failed_24h": int(email_failed_24h),
             "emails_total_24h": int(email_total_24h),
@@ -6457,8 +6468,12 @@ async def admin_create_retention_campaign(
         raise HTTPException(status_code=400, detail="Retention insights emails are disabled")
     if not BREVO_API_KEY2:
         raise HTTPException(status_code=400, detail="BREVO_API_KEY2 is not configured")
-    if not BREVO_SENDER_EMAIL:
-        raise HTTPException(status_code=400, detail="BREVO_SENDER_EMAIL is required for retention insights")
+    sender_email2, _ = resolve_brevo_sender_for_api_key(BREVO_API_KEY2)
+    if not sender_email2:
+        raise HTTPException(
+            status_code=400,
+            detail="A sender email is required for BREVO_API_KEY2 (set BREVO_SENDER_EMAIL2 or BREVO_SENDER_EMAIL)",
+        )
 
     audience_roles = normalize_retention_audience_roles(payload.audience_roles)
     filter_query: Dict[str, Any] = {
@@ -7526,6 +7541,7 @@ async def runtime_config():
         "has_brevo_api_key": bool(BREVO_API_KEY),
         "has_brevo_api_key2": bool(BREVO_API_KEY2),
         "has_brevo_sender_email": bool(BREVO_SENDER_EMAIL),
+        "has_brevo_sender_email2": bool(BREVO_SENDER_EMAIL2),
         "has_brevo_password_reset_template_id": bool(BREVO_PASSWORD_RESET_TEMPLATE_ID_INT or BREVO_TEMPLATE_ID_INT),
         "has_brevo_signup_otp_template_id": bool(BREVO_SIGNUP_OTP_TEMPLATE_ID_INT),
         "retention_insights_enabled": RETENTION_INSIGHTS_ENABLED,
@@ -7600,7 +7616,8 @@ async def _consume_retention_email_quota() -> bool:
 
 async def _send_doc_retention_notice_email(*, user: Dict[str, Any], doc: Dict[str, Any], hours_left: int) -> bool:
     api_key = (BREVO_API_KEY2 or BREVO_API_KEY).strip()
-    if not api_key or not BREVO_SENDER_EMAIL:
+    sender_email, sender_name = resolve_brevo_sender_for_api_key(api_key)
+    if not api_key or not sender_email:
         logger.info("doc_retention_notice_email_skipped reason=brevo_not_configured user_id=%s", user.get("id"))
         return False
     recipient = str(user.get("email") or "").strip()
@@ -7614,7 +7631,7 @@ async def _send_doc_retention_notice_email(*, user: Dict[str, Any], doc: Dict[st
     retention_days = int(doc.get("retention_days") or 0)
     expires_at = str(doc.get("retention_expires_at") or "")
     payload = {
-        "sender": {"email": BREVO_SENDER_EMAIL, "name": BREVO_SENDER_NAME},
+        "sender": {"email": sender_email, "name": sender_name},
         "to": [{"email": recipient, "name": str(user.get("full_name") or recipient)}],
         "subject": "Document retention reminder - deletion is scheduled soon",
         "htmlContent": (
@@ -7642,7 +7659,8 @@ async def _send_engagement_digest_email(*, user: Dict[str, Any], docs_count: int
         logger.info("engagement_digest_email_skipped reason=disabled user_id=%s", user.get("id"))
         return False
     api_key = (BREVO_API_KEY2 or BREVO_API_KEY).strip()
-    if not api_key or not BREVO_SENDER_EMAIL:
+    sender_email, sender_name = resolve_brevo_sender_for_api_key(api_key)
+    if not api_key or not sender_email:
         logger.info("engagement_digest_email_skipped reason=brevo_not_configured user_id=%s", user.get("id"))
         return False
     recipient = str(user.get("email") or "").strip()
@@ -7654,7 +7672,7 @@ async def _send_engagement_digest_email(*, user: Dict[str, Any], docs_count: int
         return False
     full_name = str(user.get("full_name") or "").strip()
     payload = {
-        "sender": {"email": BREVO_SENDER_EMAIL, "name": BREVO_SENDER_NAME},
+        "sender": {"email": sender_email, "name": sender_name},
         "to": [{"email": recipient, "name": full_name or recipient}],
         "subject": "Your Exam OS activity snapshot",
         "htmlContent": (
@@ -7884,6 +7902,10 @@ async def startup_checks():
         raise RuntimeError("BREVO_API_KEY is required for signup OTP and password reset emails")
     if not BREVO_SENDER_EMAIL:
         raise RuntimeError("BREVO_SENDER_EMAIL must be configured when BREVO_API_KEY is set")
+    if BREVO_API_KEY2 and not resolve_brevo_sender_for_api_key(BREVO_API_KEY2)[0]:
+        raise RuntimeError(
+            "BREVO_API_KEY2 is configured but no sender found. Set BREVO_SENDER_EMAIL2 or BREVO_SENDER_EMAIL."
+        )
     if BREVO_TEMPLATE_ID and BREVO_TEMPLATE_ID_INT is None:
         raise RuntimeError("BREVO_TEMPLATE_ID must be a valid integer")
     if BREVO_PASSWORD_RESET_TEMPLATE_ID and BREVO_PASSWORD_RESET_TEMPLATE_ID_INT is None:
