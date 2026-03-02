@@ -19,6 +19,8 @@ import sys
 import secrets
 import hashlib
 import math
+import base64
+import mimetypes
 from collections import Counter
 from datetime import datetime, timezone, timedelta
 import time
@@ -219,6 +221,11 @@ BREVO_TEMPLATE_ID = os.environ.get("BREVO_TEMPLATE_ID", "").strip()
 BREVO_PASSWORD_RESET_TEMPLATE_ID = os.environ.get("BREVO_PASSWORD_RESET_TEMPLATE_ID", "").strip()
 BREVO_SIGNUP_OTP_TEMPLATE_ID = os.environ.get("BREVO_SIGNUP_OTP_TEMPLATE_ID", "").strip()
 BREVO_TIMEOUT_SECONDS = float(os.environ.get("BREVO_TIMEOUT_SECONDS", "10"))
+EMAIL_SIGNATURE_ENABLED = os.environ.get("EMAIL_SIGNATURE_ENABLED", "true").lower() == "true"
+EMAIL_SIGNATURE_IMAGE_PATH = (
+    os.environ.get("EMAIL_SIGNATURE_IMAGE_PATH", str(ROOT_DIR / "sign.png")).strip()
+    or str(ROOT_DIR / "sign.png")
+)
 RETENTION_INSIGHTS_ENABLED = os.environ.get("RETENTION_INSIGHTS_ENABLED", "false").lower() == "true"
 RETENTION_EMAIL_DAILY_LIMIT = int(os.environ.get("RETENTION_EMAIL_DAILY_LIMIT", "300"))
 RETENTION_EMAIL_BATCH_SIZE = int(os.environ.get("RETENTION_EMAIL_BATCH_SIZE", "300"))
@@ -366,6 +373,39 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+_EMAIL_SIGNATURE_BLOCK = ""
+
+
+def _build_email_signature_block() -> str:
+    if not EMAIL_SIGNATURE_ENABLED:
+        return ""
+    image_path = Path(EMAIL_SIGNATURE_IMAGE_PATH)
+    if not image_path.exists():
+        logger.warning("email_signature_missing path=%s", image_path)
+        return ""
+    try:
+        image_bytes = image_path.read_bytes()
+        mime = mimetypes.guess_type(image_path.name)[0] or "image/png"
+        encoded = base64.b64encode(image_bytes).decode("ascii")
+        return (
+            '<div style="margin-bottom:14px;">'
+            f'<img src="data:{mime};base64,{encoded}" alt="Exam OS" '
+            'style="max-width:220px;width:100%;height:auto;display:block;"/>'
+            "</div>"
+        )
+    except Exception as exc:
+        logger.warning("email_signature_load_failed path=%s error=%s", image_path, exc)
+        return ""
+
+
+def _inject_email_signature(html_content: str) -> str:
+    if not _EMAIL_SIGNATURE_BLOCK:
+        return html_content
+    if "data-signature=\"exam-os\"" in html_content:
+        return html_content
+    signature_wrapper = f'<div data-signature="exam-os">{_EMAIL_SIGNATURE_BLOCK}</div>'
+    return f"{signature_wrapper}{html_content}"
 
 def _is_within_upload_dir(path: Path) -> bool:
     try:
@@ -1010,8 +1050,15 @@ async def send_brevo_transactional_email(
     api_key: str,
     payload: Dict[str, Any],
 ) -> Dict[str, Any]:
+    global _EMAIL_SIGNATURE_BLOCK
     if not api_key:
         raise RuntimeError("Brevo API key is missing")
+    if EMAIL_SIGNATURE_ENABLED and not _EMAIL_SIGNATURE_BLOCK:
+        _EMAIL_SIGNATURE_BLOCK = _build_email_signature_block()
+    html_content = payload.get("htmlContent")
+    if isinstance(html_content, str) and html_content.strip():
+        payload = dict(payload)
+        payload["htmlContent"] = _inject_email_signature(html_content)
     headers = {
         "accept": "application/json",
         "api-key": api_key,
@@ -7863,6 +7910,7 @@ async def _retention_maintenance_loop() -> None:
 
 @app.on_event("startup")
 async def startup_checks():
+    global _EMAIL_SIGNATURE_BLOCK
     if EMBEDDING_PROVIDER not in {"openai", "gemini"}:
         raise RuntimeError("EMBEDDING_PROVIDER must be 'openai' or 'gemini'")
     if LLM_PROVIDER not in {"openai", "gemini", "nvidia", "hybrid"}:
@@ -7921,6 +7969,7 @@ async def startup_checks():
         raise RuntimeError(
             "BREVO_API_KEY2 is configured but no sender found. Set BREVO_SENDER_EMAIL2 or BREVO_SENDER_EMAIL."
         )
+    _EMAIL_SIGNATURE_BLOCK = _build_email_signature_block()
     if BREVO_TEMPLATE_ID and BREVO_TEMPLATE_ID_INT is None:
         raise RuntimeError("BREVO_TEMPLATE_ID must be a valid integer")
     if BREVO_PASSWORD_RESET_TEMPLATE_ID and BREVO_PASSWORD_RESET_TEMPLATE_ID_INT is None:
