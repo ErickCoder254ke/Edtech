@@ -6393,6 +6393,7 @@ async def admin_unacknowledge_alert(
 async def admin_run_retention_maintenance(
     force_engagement_digest: bool = True,
     force_retention_notice: bool = False,
+    ignore_email_quota: bool = True,
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     ensure_admin_user(current_user)
@@ -6401,6 +6402,7 @@ async def admin_run_retention_maintenance(
         reason=f"admin_manual:{current_user['id']}",
         force_engagement_digest=force_engagement_digest,
         force_retention_notice=force_retention_notice,
+        ignore_email_quota=ignore_email_quota,
     )
     return summary
 
@@ -7666,7 +7668,9 @@ async def _acquire_retention_maintenance_lock(now: datetime) -> bool:
     return bool(result and str(result.get("locked_until") or "") == lock_until)
 
 
-async def _consume_retention_email_quota() -> bool:
+async def _consume_retention_email_quota(*, ignore_limit: bool = False) -> bool:
+    if ignore_limit:
+        return True
     day_key = f"doc_retention:{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
     now_iso = datetime.now(timezone.utc).isoformat()
     usage = await db.retention_email_daily_usage.find_one_and_update(
@@ -7686,7 +7690,13 @@ async def _consume_retention_email_quota() -> bool:
     return False
 
 
-async def _send_doc_retention_notice_email(*, user: Dict[str, Any], doc: Dict[str, Any], hours_left: int) -> bool:
+async def _send_doc_retention_notice_email(
+    *,
+    user: Dict[str, Any],
+    doc: Dict[str, Any],
+    hours_left: int,
+    ignore_quota: bool = False,
+) -> bool:
     api_key = (BREVO_API_KEY2 or BREVO_API_KEY).strip()
     sender_email, sender_name = resolve_brevo_sender_for_api_key(api_key)
     if not api_key or not sender_email:
@@ -7696,7 +7706,7 @@ async def _send_doc_retention_notice_email(*, user: Dict[str, Any], doc: Dict[st
     if not recipient:
         logger.info("doc_retention_notice_email_skipped reason=missing_recipient user_id=%s", user.get("id"))
         return False
-    if not await _consume_retention_email_quota():
+    if not await _consume_retention_email_quota(ignore_limit=ignore_quota):
         logger.info("doc_retention_notice_email_skipped reason=daily_limit user_id=%s", user.get("id"))
         return False
     filename = str(doc.get("filename") or "your document")
@@ -7726,7 +7736,13 @@ async def _send_doc_retention_notice_email(*, user: Dict[str, Any], doc: Dict[st
     return True
 
 
-async def _send_engagement_digest_email(*, user: Dict[str, Any], docs_count: int, gens_count: int) -> bool:
+async def _send_engagement_digest_email(
+    *,
+    user: Dict[str, Any],
+    docs_count: int,
+    gens_count: int,
+    ignore_quota: bool = False,
+) -> bool:
     if not ENGAGEMENT_EMAILS_ENABLED or not ENGAGEMENT_DIGEST_ENABLED:
         logger.info("engagement_digest_email_skipped reason=disabled user_id=%s", user.get("id"))
         return False
@@ -7739,7 +7755,7 @@ async def _send_engagement_digest_email(*, user: Dict[str, Any], docs_count: int
     if not recipient:
         logger.info("engagement_digest_email_skipped reason=missing_recipient user_id=%s", user.get("id"))
         return False
-    if not await _consume_retention_email_quota():
+    if not await _consume_retention_email_quota(ignore_limit=ignore_quota):
         logger.info("engagement_digest_email_skipped reason=daily_limit user_id=%s", user.get("id"))
         return False
     full_name = str(user.get("full_name") or "").strip()
@@ -7801,6 +7817,7 @@ async def run_retention_maintenance_cycle(
     *,
     force_engagement_digest: bool = False,
     force_retention_notice: bool = False,
+    ignore_email_quota: bool = False,
 ) -> Dict[str, Any]:
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
@@ -7850,7 +7867,12 @@ async def run_retention_maintenance_cycle(
                 expires_dt = _parse_iso_datetime(doc.get("retention_expires_at")) or now
                 hours_left = int(max(1, (expires_dt - now).total_seconds() // 3600))
                 try:
-                    sent = await _send_doc_retention_notice_email(user=user, doc=doc, hours_left=hours_left)
+                    sent = await _send_doc_retention_notice_email(
+                        user=user,
+                        doc=doc,
+                        hours_left=hours_left,
+                        ignore_quota=ignore_email_quota,
+                    )
                     if sent:
                         await db.documents.update_one(
                             {"id": str(doc.get("id") or "")},
@@ -7929,6 +7951,7 @@ async def run_retention_maintenance_cycle(
                         user=user,
                         docs_count=int(docs_count),
                         gens_count=int(gens_count),
+                        ignore_quota=ignore_email_quota,
                     )
                     if sent:
                         await db.users.update_one(
@@ -7942,6 +7965,7 @@ async def run_retention_maintenance_cycle(
 
         summary["force_engagement_digest"] = bool(force_engagement_digest)
         summary["force_retention_notice"] = bool(force_retention_notice)
+        summary["ignore_email_quota"] = bool(ignore_email_quota)
         logger.info("retention_maintenance_completed summary=%s", summary)
         return {"status": "ok", **summary}
     finally:
