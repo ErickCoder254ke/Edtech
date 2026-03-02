@@ -32,6 +32,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   List<NotificationItem> _items = [];
   final Set<String> _markingRead = <String>{};
 
+  bool get _isStudent => widget.session.user.role.toLowerCase() == 'student';
+
   @override
   void initState() {
     super.initState();
@@ -285,7 +287,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                               const SizedBox(height: 10),
                               Row(
                                 children: [
-                                  if (item.meetingLink != null &&
+                                  if (!_isStudent &&
+                                      item.meetingLink != null &&
                                       item.meetingLink!.trim().isNotEmpty)
                                     Expanded(
                                       child: OutlinedButton.icon(
@@ -296,7 +299,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                                         label: const Text('Open Link'),
                                       ),
                                     ),
-                                  if (item.meetingLink != null &&
+                                  if (!_isStudent &&
+                                      item.meetingLink != null &&
                                       item.meetingLink!.trim().isNotEmpty)
                                     const SizedBox(width: 8),
                                   Expanded(

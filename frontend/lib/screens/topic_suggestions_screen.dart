@@ -552,12 +552,34 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
         return;
       }
 
-      var result = await _runWithAuthRetry(
-        (token) => widget.apiClient.joinClassSession(
-          accessToken: token,
-          classId: classId,
-        ),
-      );
+      Future<Map<String, dynamic>> joinWithRetry({String? phoneNumber}) async {
+        ApiException? lastError;
+        for (var attempt = 1; attempt <= 3; attempt++) {
+          try {
+            return await _runWithAuthRetry(
+              (token) => widget.apiClient.joinClassSession(
+                accessToken: token,
+                classId: classId,
+                phoneNumber: phoneNumber,
+              ),
+            );
+          } on ApiException catch (e) {
+            lastError = e;
+            final detail = e.message.toLowerCase();
+            final retryableInitConflict =
+                e.statusCode == 409 &&
+                detail.contains('payment is already being initiated') &&
+                attempt < 3;
+            if (!retryableInitConflict) {
+              rethrow;
+            }
+            await Future.delayed(const Duration(seconds: 2));
+          }
+        }
+        throw lastError ?? ApiException('Unable to join class.');
+      }
+
+      var result = await joinWithRetry();
       final checkoutFromFirst = (result['checkout_request_id']?.toString() ?? '').trim();
       if (result['requires_payment'] == true && checkoutFromFirst.isEmpty) {
         final savedNumbersRaw = (result['saved_phone_numbers'] as List<dynamic>? ?? const []);
@@ -572,13 +594,7 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
           }
           return;
         }
-        result = await _runWithAuthRetry(
-          (token) => widget.apiClient.joinClassSession(
-            accessToken: token,
-            classId: classId,
-            phoneNumber: phone,
-          ),
-        );
+        result = await joinWithRetry(phoneNumber: phone);
       }
 
       if (result['requires_payment'] == true) {
@@ -588,12 +604,7 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
         if (mounted) {
           setState(() => _paidClassIds.add(classId));
         }
-        result = await _runWithAuthRetry(
-          (token) => widget.apiClient.joinClassSession(
-            accessToken: token,
-            classId: classId,
-          ),
-        );
+        result = await joinWithRetry();
       }
 
       final paymentStatus = (result['payment_status']?.toString() ?? '').toLowerCase();

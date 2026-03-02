@@ -68,7 +68,7 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
   GenerationJobResponse? _latestQueuedJob;
   JobStatusResponse? _activeJobStatus;
   Timer? _jobPollTimer;
-  bool _templatesExpanded = true;
+  bool _templatesExpanded = false;
   final Set<String> _selectedTemplateIds = <String>{};
   final Map<String, String> _templateInsertedBlocks = <String, String>{};
   static const List<_TemplatePreset> _templatePresets = [
@@ -321,6 +321,7 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
     });
 
     try {
+      final mergedInstructions = _buildRequestInstructions();
       final request = GenerationRequest(
         documentIds: _selectedDocumentIds.toList(),
         cbcNoteIds: _selectedCbcNoteIds.toList(),
@@ -341,9 +342,7 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
             : _generationType == 'quiz'
             ? const ['mcq', 'structured']
             : null,
-        additionalInstructions: _instructionsController.text.trim().isEmpty
-            ? null
-            : _instructionsController.text.trim(),
+        additionalInstructions: mergedInstructions,
       );
 
       final queued = await _runWithAuthRetry(
@@ -370,6 +369,30 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
         setState(() => _isGenerating = false);
       }
     }
+  }
+
+  String? _buildRequestInstructions() {
+    final base = _instructionsController.text.trim();
+    final autoHints = <String>[];
+    if (_generationType == 'exam' && _examSectionMode == 'structured_only') {
+      autoHints.add(
+        'Question and marks only. Output one numbered section. '
+        'Every item must be an answerable exam question using an exam command verb '
+        '(State, Explain, Identify, Describe, Calculate, Compare). '
+        'Do not output topic statements, options, or essay-style prompts.',
+      );
+    }
+    if (_generationType == 'quiz') {
+      autoHints.add(
+        'Every quiz item must be a real answerable question, not a statement or note. '
+        'Each item must include marks and clear question wording.',
+      );
+    }
+    final merged = [
+      if (base.isNotEmpty) base,
+      ...autoHints,
+    ].join('\n\n').trim();
+    return merged.isEmpty ? null : merged;
   }
 
   void _startJobPolling(String jobId) {
@@ -512,6 +535,16 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
           onSessionUpdated: widget.onSessionUpdated,
           onSessionInvalid: widget.onSessionInvalid,
         ),
+      ),
+    );
+  }
+
+  void _openLatestGeneration() {
+    final latest = _latestGeneration;
+    if (latest == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => GenerationViewerScreen(generation: latest),
       ),
     );
   }
@@ -1356,13 +1389,21 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
                                     borderRadius: BorderRadius.circular(999),
                                   ),
                                   const SizedBox(height: 8),
-                                  SizedBox(
-                                    width: double.infinity,
-                                    child: OutlinedButton.icon(
-                                      onPressed: _openJobsScreen,
-                                      icon: const Icon(Icons.schedule_rounded),
-                                      label: const Text('Open My Jobs'),
-                                    ),
+                                  Row(
+                                    children: [
+                                      TextButton.icon(
+                                        onPressed: _openJobsScreen,
+                                        icon: const Icon(Icons.schedule_rounded),
+                                        label: const Text('My Jobs'),
+                                      ),
+                                      const Spacer(),
+                                      if (_latestGeneration != null)
+                                        OutlinedButton.icon(
+                                          onPressed: _openLatestGeneration,
+                                          icon: const Icon(Icons.open_in_new_rounded),
+                                          label: const Text('Open Output'),
+                                        ),
+                                    ],
                                   ),
                                 ],
                               ),
@@ -1400,6 +1441,8 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
                                     ? 'Queueing...'
                                     : hasActiveJob
                                     ? 'Generation In Progress'
+                                    : _latestGeneration != null
+                                    ? 'Generate New'
                                     : 'Generate',
                                 style: const TextStyle(
                                   fontWeight: FontWeight.w700,
@@ -1407,32 +1450,6 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
                               ),
                             ),
                           ),
-                          if (_latestGeneration != null) ...[
-                            const SizedBox(height: 10),
-                            SizedBox(
-                              width: double.infinity,
-                              child: OutlinedButton.icon(
-                                onPressed: () {
-                                  final latest = _latestGeneration;
-                                  if (latest == null) return;
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute(
-                                      builder: (_) => GenerationViewerScreen(
-                                        generation: latest,
-                                      ),
-                                    ),
-                                  );
-                                },
-                                icon: const Icon(Icons.open_in_new_rounded),
-                                label: Text(
-                                  'Open Latest ${_latestGeneration!.generationType.toUpperCase()}',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
                           const SizedBox(height: 16),
                         ],
                       ),

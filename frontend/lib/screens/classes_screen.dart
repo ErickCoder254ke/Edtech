@@ -327,12 +327,34 @@ class _ClassesScreenState extends State<ClassesScreen> {
   Future<void> _joinClass(ClassSession session) async {
     setState(() => _busyClassIds.add(session.id));
     try {
-      var result = await _runWithAuthRetry(
-        (token) => widget.apiClient.joinClassSession(
-          accessToken: token,
-          classId: session.id,
-        ),
-      );
+      Future<Map<String, dynamic>> joinWithRetry({String? phoneNumber}) async {
+        ApiException? lastError;
+        for (var attempt = 1; attempt <= 3; attempt++) {
+          try {
+            return await _runWithAuthRetry(
+              (token) => widget.apiClient.joinClassSession(
+                accessToken: token,
+                classId: session.id,
+                phoneNumber: phoneNumber,
+              ),
+            );
+          } on ApiException catch (e) {
+            lastError = e;
+            final detail = e.message.toLowerCase();
+            final retryableInitConflict =
+                e.statusCode == 409 &&
+                detail.contains('payment is already being initiated') &&
+                attempt < 3;
+            if (!retryableInitConflict) {
+              rethrow;
+            }
+            await Future.delayed(const Duration(seconds: 2));
+          }
+        }
+        throw lastError ?? ApiException('Unable to join class.');
+      }
+
+      var result = await joinWithRetry();
       final requiresPayment = result['requires_payment'] == true;
       final checkoutFromFirst = (result['checkout_request_id']?.toString() ?? '').trim();
       if (requiresPayment && checkoutFromFirst.isEmpty) {
@@ -348,13 +370,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
           }
           return;
         }
-        result = await _runWithAuthRetry(
-          (token) => widget.apiClient.joinClassSession(
-            accessToken: token,
-            classId: session.id,
-            phoneNumber: phone,
-          ),
-        );
+        result = await joinWithRetry(phoneNumber: phone);
       }
       final paymentStatus = (result['payment_status']?.toString() ?? '').toLowerCase();
       if (paymentStatus == 'pending' || result['requires_payment'] == true) {
@@ -365,12 +381,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
         final paid = await _pollPaymentUntilDone(session.id, checkoutRequestId);
         if (!paid) return;
         if (mounted) setState(() => _paymentPendingClassIds.remove(session.id));
-        result = await _runWithAuthRetry(
-          (token) => widget.apiClient.joinClassSession(
-            accessToken: token,
-            classId: session.id,
-          ),
-        );
+        result = await joinWithRetry();
       }
       final link = result['meeting_link']?.toString().trim().isNotEmpty == true
           ? (result['meeting_link']?.toString() ?? session.meetingLink)

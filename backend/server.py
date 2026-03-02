@@ -2844,6 +2844,114 @@ def validate_structured_output(generation_type: str, payload: Dict[str, Any]) ->
         raise HTTPException(status_code=502, detail=f"LLM output schema validation failed: {ve.errors()}")
 
 
+_ASSESSMENT_COMMAND_VERBS = {
+    "state",
+    "define",
+    "identify",
+    "describe",
+    "explain",
+    "calculate",
+    "compare",
+    "distinguish",
+    "evaluate",
+    "outline",
+    "discuss",
+    "give",
+    "name",
+    "show",
+    "write",
+}
+
+
+def _trim_numbering_prefix(text: str) -> str:
+    return re.sub(r"^\s*(?:\d+[\).\s:-]+|[ivxlcdm]+[\).\s:-]+)", "", text.strip(), flags=re.IGNORECASE)
+
+
+def _looks_like_assessment_question(text: str) -> bool:
+    clean = _trim_numbering_prefix(str(text or ""))
+    if not clean:
+        return False
+    lowered = clean.lower()
+    if "?" in clean:
+        return True
+    first_word = re.split(r"\s+", lowered, maxsplit=1)[0]
+    return first_word in _ASSESSMENT_COMMAND_VERBS
+
+
+def _coerce_to_assessment_question(text: str) -> str:
+    clean = _trim_numbering_prefix(str(text or ""))
+    if not clean:
+        return "Explain the key idea using the provided material."
+    if _looks_like_assessment_question(clean):
+        return clean
+    core = re.sub(r"[\s\.\!\:;]+$", "", clean).strip()
+    if not core:
+        return "Explain the key idea using the provided material."
+    if len(core) == 1:
+        return f"Explain {core.lower()}."
+    return f"Explain {core[0].lower() + core[1:]}."
+
+
+def enforce_assessment_output_quality(generation_type: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    if generation_type == "quiz":
+        quiz_items = payload.get("quiz")
+        if not isinstance(quiz_items, list) or not quiz_items:
+            raise HTTPException(status_code=502, detail="Quiz output must contain at least one question.")
+        normalized_quiz: List[Dict[str, Any]] = []
+        for item in quiz_items:
+            if not isinstance(item, dict):
+                continue
+            question_text = _coerce_to_assessment_question(item.get("question"))
+            marks = int(item.get("marks", 0) or 0)
+            if marks <= 0:
+                marks = 1
+            normalized = dict(item)
+            normalized["question"] = question_text
+            normalized["marks"] = marks
+            normalized_quiz.append(normalized)
+        if not normalized_quiz:
+            raise HTTPException(status_code=502, detail="Quiz output did not include valid question objects.")
+        payload["quiz"] = normalized_quiz
+        return payload
+
+    if generation_type == "exam":
+        sections = payload.get("sections")
+        if not isinstance(sections, list) or not sections:
+            raise HTTPException(status_code=502, detail="Exam output must contain at least one section.")
+        normalized_sections: List[Dict[str, Any]] = []
+        total_questions = 0
+        for section in sections:
+            if not isinstance(section, dict):
+                continue
+            questions = section.get("questions")
+            if not isinstance(questions, list):
+                continue
+            normalized_questions: List[Dict[str, Any]] = []
+            for question in questions:
+                if not isinstance(question, dict):
+                    continue
+                question_text = _coerce_to_assessment_question(question.get("question_text"))
+                marks = int(question.get("marks", 0) or 0)
+                if marks <= 0:
+                    marks = 1
+                normalized_question = dict(question)
+                normalized_question["question_text"] = question_text
+                normalized_question["marks"] = marks
+                normalized_questions.append(normalized_question)
+            if not normalized_questions:
+                continue
+            total_questions += len(normalized_questions)
+            normalized_section = dict(section)
+            normalized_section["questions"] = normalized_questions
+            normalized_sections.append(normalized_section)
+        if total_questions <= 0:
+            raise HTTPException(status_code=502, detail="Exam output did not include valid questions.")
+        payload["sections"] = normalized_sections
+        return payload
+
+    return payload
+
+
 def parse_llm_json_output(text: str) -> Any:
     cleaned = (text or "").strip()
     if not cleaned:
@@ -5048,6 +5156,8 @@ Rules:
 - Include options and correct_answer for MCQ.
 - Include model_answer for every question (including non-MCQ).
 - Include marks for every question.
+- Every item must be an answerable assessment question, not a statement or note.
+- Start each item with a question form or exam command verb (State, Explain, Identify, Describe, Calculate, Compare).
 {strict_json_clause}"""
 
     if request.generation_type == "exam":
@@ -5102,6 +5212,8 @@ Provide JSON:
 Rules:
 - Ensure total marks equals {total_marks}.
 - Follow additional instructions exactly.
+- Every question must be an answerable assessment item, not a statement or revision note.
+- Question text must use interrogative wording or exam command verbs.
 {strict_json_clause}"""
 
     raise HTTPException(status_code=400, detail="Invalid generation type")
@@ -5354,6 +5466,10 @@ async def run_generation_pipeline(
     if request.generation_type == "exam":
         raw_content = apply_exam_constraints(raw_content, request.additional_instructions)
     content = validate_structured_output(request.generation_type, raw_content)
+    content = validate_structured_output(
+        request.generation_type,
+        enforce_assessment_output_quality(request.generation_type, content),
+    )
     logger.info(
         "generation_validation_success user_id=%s type=%s",
         user_id,
@@ -5806,22 +5922,36 @@ async def join_class_session(
             {"locked_until": {"$lte": now_iso}},
         ],
     }
+    lock_owner = str(uuid.uuid4())
     lock_update = {
-        "$set": {"lock_id": lock_id, "locked_until": lock_until_iso, "updated_at": now_iso},
-        "$setOnInsert": {"created_at": now_iso},
+        "$set": {
+            "locked_until": lock_until_iso,
+            "updated_at": now_iso,
+            "owner": lock_owner,
+        },
     }
     lock_acquired = False
     try:
         lock_result = await db.class_join_payment_locks.update_one(
             lock_filter,
             lock_update,
-            upsert=True,
+            upsert=False,
         )
-        lock_acquired = bool(
-            lock_result.upserted_id is not None
-            or lock_result.matched_count > 0
-            or lock_result.modified_count > 0
-        )
+        lock_acquired = bool(lock_result.matched_count > 0 or lock_result.modified_count > 0)
+        if not lock_acquired:
+            try:
+                await db.class_join_payment_locks.insert_one(
+                    {
+                        "lock_id": lock_id,
+                        "owner": lock_owner,
+                        "locked_until": lock_until_iso,
+                        "created_at": now_iso,
+                        "updated_at": now_iso,
+                    }
+                )
+                lock_acquired = True
+            except DuplicateKeyError:
+                lock_acquired = False
     except DuplicateKeyError:
         lock_acquired = False
     if not lock_acquired:
@@ -5945,11 +6075,13 @@ async def join_class_session(
             }
         raise HTTPException(status_code=409, detail="A duplicate payment request was blocked.")
     finally:
-        await db.class_join_payment_locks.update_one(
-            {"lock_id": lock_id},
-            {"$set": {"locked_until": datetime.now(timezone.utc).isoformat(), "updated_at": datetime.now(timezone.utc).isoformat()}},
-            upsert=True,
-        )
+        if lock_acquired:
+            release_iso = datetime.now(timezone.utc).isoformat()
+            await db.class_join_payment_locks.update_one(
+                {"lock_id": lock_id, "owner": lock_owner},
+                {"$set": {"locked_until": release_iso, "updated_at": release_iso}},
+                upsert=False,
+            )
 
 
 @api_router.post("/v1/classes/{class_id}/complete", response_model=ClassSessionResponse)
