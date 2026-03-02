@@ -226,6 +226,7 @@ EMAIL_SIGNATURE_IMAGE_PATH = (
     os.environ.get("EMAIL_SIGNATURE_IMAGE_PATH", str(ROOT_DIR / "sign.png")).strip()
     or str(ROOT_DIR / "sign.png")
 )
+EMAIL_SIGNATURE_IMAGE_URL = os.environ.get("EMAIL_SIGNATURE_IMAGE_URL", "").strip()
 RETENTION_INSIGHTS_ENABLED = os.environ.get("RETENTION_INSIGHTS_ENABLED", "false").lower() == "true"
 RETENTION_EMAIL_DAILY_LIMIT = int(os.environ.get("RETENTION_EMAIL_DAILY_LIMIT", "300"))
 RETENTION_EMAIL_BATCH_SIZE = int(os.environ.get("RETENTION_EMAIL_BATCH_SIZE", "300"))
@@ -380,6 +381,13 @@ _EMAIL_SIGNATURE_BLOCK = ""
 def _build_email_signature_block() -> str:
     if not EMAIL_SIGNATURE_ENABLED:
         return ""
+    if EMAIL_SIGNATURE_IMAGE_URL:
+        return (
+            '<div style="margin-bottom:14px;">'
+            f'<img src="{EMAIL_SIGNATURE_IMAGE_URL}" alt="Exam OS" '
+            'style="max-width:220px;width:100%;height:auto;display:block;"/>'
+            "</div>"
+        )
     image_path = Path(EMAIL_SIGNATURE_IMAGE_PATH)
     if not image_path.exists():
         logger.warning("email_signature_missing path=%s", image_path)
