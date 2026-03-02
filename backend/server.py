@@ -389,9 +389,9 @@ def _build_email_signature_block() -> str:
             'border-radius:999px;font-size:11px;font-weight:700;">Exam OS Support</div>'
             '<div style="background:linear-gradient(135deg,#E6F0FF 0%,#F5FAFF 100%);'
             'border:1px solid #cbdcf6;'
-            'border-radius:16px;padding:12px 16px;">'
+            'border-radius:16px;padding:8px 12px;">'
             f'<img src="{EMAIL_SIGNATURE_IMAGE_URL}" alt="Exam OS" '
-            'style="max-width:520px;width:100%;height:auto;display:block;"/>'
+            'style="max-width:520px;max-height:120px;width:auto;height:auto;display:block;object-fit:contain;"/>'
             "</div>"
             "</div>"
         )
@@ -410,9 +410,9 @@ def _build_email_signature_block() -> str:
             'border-radius:999px;font-size:11px;font-weight:700;">Exam OS Support</div>'
             '<div style="background:linear-gradient(135deg,#E6F0FF 0%,#F5FAFF 100%);'
             'border:1px solid #cbdcf6;'
-            'border-radius:16px;padding:12px 16px;">'
+            'border-radius:16px;padding:8px 12px;">'
             f'<img src="data:{mime};base64,{encoded}" alt="Exam OS" '
-            'style="max-width:520px;width:100%;height:auto;display:block;"/>'
+            'style="max-width:520px;max-height:120px;width:auto;height:auto;display:block;object-fit:contain;"/>'
             "</div>"
             "</div>"
         )
