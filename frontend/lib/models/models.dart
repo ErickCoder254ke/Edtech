@@ -470,6 +470,16 @@ class SubscriptionPlan {
     this.examQuota,
     required this.discountPct,
     this.savingsLabel,
+    this.category,
+    this.unitsLabel,
+    this.unitsCount,
+    this.costKes,
+    this.profitKes,
+    this.profitMarginPct,
+    this.featured = false,
+    this.visible = true,
+    this.description,
+    this.onOffer = false,
   });
 
   final String planId;
@@ -480,6 +490,16 @@ class SubscriptionPlan {
   final int? examQuota;
   final int discountPct;
   final String? savingsLabel;
+  final String? category;
+  final String? unitsLabel;
+  final int? unitsCount;
+  final int? costKes;
+  final int? profitKes;
+  final double? profitMarginPct;
+  final bool featured;
+  final bool visible;
+  final String? description;
+  final bool onOffer;
 
   factory SubscriptionPlan.fromJson(Map<String, dynamic> json) {
     return SubscriptionPlan(
@@ -491,6 +511,16 @@ class SubscriptionPlan {
       examQuota: (json['exam_quota'] as num?)?.toInt(),
       discountPct: (json['discount_pct'] as num?)?.toInt() ?? 0,
       savingsLabel: json['savings_label'] as String?,
+      category: json['category'] as String?,
+      unitsLabel: json['units_label'] as String?,
+      unitsCount: (json['units_count'] as num?)?.toInt(),
+      costKes: (json['cost_kes'] as num?)?.toInt(),
+      profitKes: (json['profit_kes'] as num?)?.toInt(),
+      profitMarginPct: (json['profit_margin_pct'] as num?)?.toDouble(),
+      featured: json['featured'] as bool? ?? false,
+      visible: json['visible'] as bool? ?? true,
+      description: json['description'] as String?,
+      onOffer: json['on_offer'] as bool? ?? false,
     );
   }
 }
@@ -957,6 +987,39 @@ class AdminRuntimeSettings {
     required this.weeklyPlanMaxExams,
     required this.monthlyPlanMaxExams,
     required this.annualPlanMaxExams,
+    required this.examPackSmallPriceKes,
+    required this.examPackSmallCostKes,
+    required this.examPackSmallExams,
+    required this.examPackMediumPriceKes,
+    required this.examPackMediumCostKes,
+    required this.examPackMediumExams,
+    required this.examPackLargePriceKes,
+    required this.examPackLargeCostKes,
+    required this.examPackLargeExams,
+    required this.taskPackStarterPriceKes,
+    required this.taskPackStarterCostKes,
+    required this.taskPackStarterTasks,
+    required this.taskPackMediumPriceKes,
+    required this.taskPackMediumCostKes,
+    required this.taskPackMediumTasks,
+    required this.taskPackLargePriceKes,
+    required this.taskPackLargeCostKes,
+    required this.taskPackLargeTasks,
+    required this.topupTaskBoosterPriceKes,
+    required this.topupTaskBoosterCostKes,
+    required this.topupTaskBoosterTasks,
+    required this.topupExamBoosterPriceKes,
+    required this.topupExamBoosterCostKes,
+    required this.topupExamBoosterExams,
+    required this.examPackSmallOnOffer,
+    required this.examPackMediumOnOffer,
+    required this.examPackLargeOnOffer,
+    required this.taskPackStarterOnOffer,
+    required this.taskPackMediumOnOffer,
+    required this.taskPackLargeOnOffer,
+    required this.topupTaskBoosterOnOffer,
+    required this.topupExamBoosterOnOffer,
+    required this.documentRetentionDays,
     required this.classEscrowPlatformFeePercent,
     required this.classMinFeeKes,
     required this.classMaxFeeKes,
@@ -973,6 +1036,39 @@ class AdminRuntimeSettings {
   final int weeklyPlanMaxExams;
   final int monthlyPlanMaxExams;
   final int annualPlanMaxExams;
+  final int examPackSmallPriceKes;
+  final int examPackSmallCostKes;
+  final int examPackSmallExams;
+  final int examPackMediumPriceKes;
+  final int examPackMediumCostKes;
+  final int examPackMediumExams;
+  final int examPackLargePriceKes;
+  final int examPackLargeCostKes;
+  final int examPackLargeExams;
+  final int taskPackStarterPriceKes;
+  final int taskPackStarterCostKes;
+  final int taskPackStarterTasks;
+  final int taskPackMediumPriceKes;
+  final int taskPackMediumCostKes;
+  final int taskPackMediumTasks;
+  final int taskPackLargePriceKes;
+  final int taskPackLargeCostKes;
+  final int taskPackLargeTasks;
+  final int topupTaskBoosterPriceKes;
+  final int topupTaskBoosterCostKes;
+  final int topupTaskBoosterTasks;
+  final int topupExamBoosterPriceKes;
+  final int topupExamBoosterCostKes;
+  final int topupExamBoosterExams;
+  final bool examPackSmallOnOffer;
+  final bool examPackMediumOnOffer;
+  final bool examPackLargeOnOffer;
+  final bool taskPackStarterOnOffer;
+  final bool taskPackMediumOnOffer;
+  final bool taskPackLargeOnOffer;
+  final bool topupTaskBoosterOnOffer;
+  final bool topupExamBoosterOnOffer;
+  final int documentRetentionDays;
   final double classEscrowPlatformFeePercent;
   final int classMinFeeKes;
   final int classMaxFeeKes;
@@ -994,6 +1090,39 @@ class AdminRuntimeSettings {
       weeklyPlanMaxExams: (json['weekly_plan_max_exams'] as num?)?.toInt() ?? 2,
       monthlyPlanMaxExams: (json['monthly_plan_max_exams'] as num?)?.toInt() ?? 8,
       annualPlanMaxExams: (json['annual_plan_max_exams'] as num?)?.toInt() ?? 128,
+      examPackSmallPriceKes: (json['exam_pack_small_price_kes'] as num?)?.toInt() ?? 100,
+      examPackSmallCostKes: (json['exam_pack_small_cost_kes'] as num?)?.toInt() ?? 36,
+      examPackSmallExams: (json['exam_pack_small_exams'] as num?)?.toInt() ?? 3,
+      examPackMediumPriceKes: (json['exam_pack_medium_price_kes'] as num?)?.toInt() ?? 200,
+      examPackMediumCostKes: (json['exam_pack_medium_cost_kes'] as num?)?.toInt() ?? 84,
+      examPackMediumExams: (json['exam_pack_medium_exams'] as num?)?.toInt() ?? 7,
+      examPackLargePriceKes: (json['exam_pack_large_price_kes'] as num?)?.toInt() ?? 400,
+      examPackLargeCostKes: (json['exam_pack_large_cost_kes'] as num?)?.toInt() ?? 180,
+      examPackLargeExams: (json['exam_pack_large_exams'] as num?)?.toInt() ?? 15,
+      taskPackStarterPriceKes: (json['task_pack_starter_price_kes'] as num?)?.toInt() ?? 100,
+      taskPackStarterCostKes: (json['task_pack_starter_cost_kes'] as num?)?.toInt() ?? 84,
+      taskPackStarterTasks: (json['task_pack_starter_tasks'] as num?)?.toInt() ?? 7,
+      taskPackMediumPriceKes: (json['task_pack_medium_price_kes'] as num?)?.toInt() ?? 250,
+      taskPackMediumCostKes: (json['task_pack_medium_cost_kes'] as num?)?.toInt() ?? 204,
+      taskPackMediumTasks: (json['task_pack_medium_tasks'] as num?)?.toInt() ?? 17,
+      taskPackLargePriceKes: (json['task_pack_large_price_kes'] as num?)?.toInt() ?? 500,
+      taskPackLargeCostKes: (json['task_pack_large_cost_kes'] as num?)?.toInt() ?? 440,
+      taskPackLargeTasks: (json['task_pack_large_tasks'] as num?)?.toInt() ?? 50,
+      topupTaskBoosterPriceKes: (json['topup_task_booster_price_kes'] as num?)?.toInt() ?? 100,
+      topupTaskBoosterCostKes: (json['topup_task_booster_cost_kes'] as num?)?.toInt() ?? 120,
+      topupTaskBoosterTasks: (json['topup_task_booster_tasks'] as num?)?.toInt() ?? 10,
+      topupExamBoosterPriceKes: (json['topup_exam_booster_price_kes'] as num?)?.toInt() ?? 300,
+      topupExamBoosterCostKes: (json['topup_exam_booster_cost_kes'] as num?)?.toInt() ?? 60,
+      topupExamBoosterExams: (json['topup_exam_booster_exams'] as num?)?.toInt() ?? 5,
+      examPackSmallOnOffer: json['exam_pack_small_on_offer'] as bool? ?? false,
+      examPackMediumOnOffer: json['exam_pack_medium_on_offer'] as bool? ?? false,
+      examPackLargeOnOffer: json['exam_pack_large_on_offer'] as bool? ?? false,
+      taskPackStarterOnOffer: json['task_pack_starter_on_offer'] as bool? ?? false,
+      taskPackMediumOnOffer: json['task_pack_medium_on_offer'] as bool? ?? false,
+      taskPackLargeOnOffer: json['task_pack_large_on_offer'] as bool? ?? false,
+      topupTaskBoosterOnOffer: json['topup_task_booster_on_offer'] as bool? ?? false,
+      topupExamBoosterOnOffer: json['topup_exam_booster_on_offer'] as bool? ?? false,
+      documentRetentionDays: (json['document_retention_days'] as num?)?.toInt() ?? 3,
       classEscrowPlatformFeePercent:
           (json['class_escrow_platform_fee_percent'] as num?)?.toDouble() ?? 10,
       classMinFeeKes: (json['class_min_fee_kes'] as num?)?.toInt() ?? 50,

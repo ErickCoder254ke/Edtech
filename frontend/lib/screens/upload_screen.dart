@@ -162,7 +162,7 @@ class _UploadScreenState extends State<UploadScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('Upgrade Required'),
         content: Text(
-          '$message\n\nFree plan allows only your first document upload. Pick a plan to continue.',
+          '$message\n\nFree plan allows only your first document upload. Pick a credit pack to continue.',
         ),
         actions: [
           TextButton(
@@ -313,7 +313,7 @@ class _UploadScreenState extends State<UploadScreen> {
                   borderRadius: 14,
                   padding: const EdgeInsets.all(12),
                   child: const Text(
-                    'Retention policy: uploaded documents are auto-cleaned by plan (Free: 3 days, Weekly: 7, Monthly: 14, Annual: 30). You will get an email reminder before deletion.',
+                    'Retention policy: uploaded documents are auto-cleaned using your current account retention days set by admin. You will get an email reminder before deletion.',
                     style: TextStyle(fontSize: 12, color: AppColors.textMuted),
                   ),
                 ),
@@ -328,7 +328,7 @@ class _UploadScreenState extends State<UploadScreen> {
                     borderRadius: 14,
                     padding: const EdgeInsets.all(12),
                     child: Text(
-                      'Retention notice: this document will be auto-cleaned on ${_lastUploadedDoc!.retentionExpiresAt!.toLocal().toString().split(".").first} based on your current plan policy.',
+                      'Retention notice: this document will be auto-cleaned on ${_lastUploadedDoc!.retentionExpiresAt!.toLocal().toString().split(".").first} based on your current account retention policy.',
                       style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
                     ),
                   ),

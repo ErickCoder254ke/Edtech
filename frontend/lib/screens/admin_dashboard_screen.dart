@@ -55,6 +55,65 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       TextEditingController();
   final TextEditingController _annualPlanMaxExamsController =
       TextEditingController();
+  final TextEditingController _examPackSmallPriceKesController =
+      TextEditingController();
+  final TextEditingController _examPackSmallCostKesController =
+      TextEditingController();
+  final TextEditingController _examPackSmallExamsController =
+      TextEditingController();
+  final TextEditingController _examPackMediumPriceKesController =
+      TextEditingController();
+  final TextEditingController _examPackMediumCostKesController =
+      TextEditingController();
+  final TextEditingController _examPackMediumExamsController =
+      TextEditingController();
+  final TextEditingController _examPackLargePriceKesController =
+      TextEditingController();
+  final TextEditingController _examPackLargeCostKesController =
+      TextEditingController();
+  final TextEditingController _examPackLargeExamsController =
+      TextEditingController();
+  final TextEditingController _taskPackStarterPriceKesController =
+      TextEditingController();
+  final TextEditingController _taskPackStarterCostKesController =
+      TextEditingController();
+  final TextEditingController _taskPackStarterTasksController =
+      TextEditingController();
+  final TextEditingController _taskPackMediumPriceKesController =
+      TextEditingController();
+  final TextEditingController _taskPackMediumCostKesController =
+      TextEditingController();
+  final TextEditingController _taskPackMediumTasksController =
+      TextEditingController();
+  final TextEditingController _taskPackLargePriceKesController =
+      TextEditingController();
+  final TextEditingController _taskPackLargeCostKesController =
+      TextEditingController();
+  final TextEditingController _taskPackLargeTasksController =
+      TextEditingController();
+  final TextEditingController _topupTaskBoosterPriceKesController =
+      TextEditingController();
+  final TextEditingController _topupTaskBoosterCostKesController =
+      TextEditingController();
+  final TextEditingController _topupTaskBoosterTasksController =
+      TextEditingController();
+  final TextEditingController _topupExamBoosterPriceKesController =
+      TextEditingController();
+  final TextEditingController _topupExamBoosterCostKesController =
+      TextEditingController();
+  final TextEditingController _topupExamBoosterExamsController =
+      TextEditingController();
+  bool _examPackSmallOnOffer = false;
+  bool _examPackMediumOnOffer = false;
+  bool _examPackLargeOnOffer = false;
+  bool _taskPackStarterOnOffer = false;
+  bool _taskPackMediumOnOffer = false;
+  bool _taskPackLargeOnOffer = false;
+  bool _topupTaskBoosterOnOffer = false;
+  bool _topupExamBoosterOnOffer = false;
+  bool _legacySettingsExpanded = false;
+  final TextEditingController _documentRetentionDaysController =
+      TextEditingController();
   final TextEditingController _classEscrowPlatformFeePercentController =
       TextEditingController();
   final TextEditingController _classMinFeeKesController =
@@ -373,6 +432,40 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     _monthlyPlanMaxExamsController.text = settings.monthlyPlanMaxExams
         .toString();
     _annualPlanMaxExamsController.text = settings.annualPlanMaxExams.toString();
+    _examPackSmallPriceKesController.text = settings.examPackSmallPriceKes.toString();
+    _examPackSmallCostKesController.text = settings.examPackSmallCostKes.toString();
+    _examPackSmallExamsController.text = settings.examPackSmallExams.toString();
+    _examPackMediumPriceKesController.text = settings.examPackMediumPriceKes.toString();
+    _examPackMediumCostKesController.text = settings.examPackMediumCostKes.toString();
+    _examPackMediumExamsController.text = settings.examPackMediumExams.toString();
+    _examPackLargePriceKesController.text = settings.examPackLargePriceKes.toString();
+    _examPackLargeCostKesController.text = settings.examPackLargeCostKes.toString();
+    _examPackLargeExamsController.text = settings.examPackLargeExams.toString();
+    _taskPackStarterPriceKesController.text = settings.taskPackStarterPriceKes.toString();
+    _taskPackStarterCostKesController.text = settings.taskPackStarterCostKes.toString();
+    _taskPackStarterTasksController.text = settings.taskPackStarterTasks.toString();
+    _taskPackMediumPriceKesController.text = settings.taskPackMediumPriceKes.toString();
+    _taskPackMediumCostKesController.text = settings.taskPackMediumCostKes.toString();
+    _taskPackMediumTasksController.text = settings.taskPackMediumTasks.toString();
+    _taskPackLargePriceKesController.text = settings.taskPackLargePriceKes.toString();
+    _taskPackLargeCostKesController.text = settings.taskPackLargeCostKes.toString();
+    _taskPackLargeTasksController.text = settings.taskPackLargeTasks.toString();
+    _topupTaskBoosterPriceKesController.text = settings.topupTaskBoosterPriceKes.toString();
+    _topupTaskBoosterCostKesController.text = settings.topupTaskBoosterCostKes.toString();
+    _topupTaskBoosterTasksController.text = settings.topupTaskBoosterTasks.toString();
+    _topupExamBoosterPriceKesController.text = settings.topupExamBoosterPriceKes.toString();
+    _topupExamBoosterCostKesController.text = settings.topupExamBoosterCostKes.toString();
+    _topupExamBoosterExamsController.text = settings.topupExamBoosterExams.toString();
+    _examPackSmallOnOffer = settings.examPackSmallOnOffer;
+    _examPackMediumOnOffer = settings.examPackMediumOnOffer;
+    _examPackLargeOnOffer = settings.examPackLargeOnOffer;
+    _taskPackStarterOnOffer = settings.taskPackStarterOnOffer;
+    _taskPackMediumOnOffer = settings.taskPackMediumOnOffer;
+    _taskPackLargeOnOffer = settings.taskPackLargeOnOffer;
+    _topupTaskBoosterOnOffer = settings.topupTaskBoosterOnOffer;
+    _topupExamBoosterOnOffer = settings.topupExamBoosterOnOffer;
+    _documentRetentionDaysController.text = settings.documentRetentionDays
+        .toString();
     _classEscrowPlatformFeePercentController.text = settings
         .classEscrowPlatformFeePercent
         .toString();
@@ -414,6 +507,89 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       'annual_plan_max_exams': int.tryParse(
         _annualPlanMaxExamsController.text.trim(),
       ),
+      'exam_pack_small_price_kes': int.tryParse(
+        _examPackSmallPriceKesController.text.trim(),
+      ),
+      'exam_pack_small_cost_kes': int.tryParse(
+        _examPackSmallCostKesController.text.trim(),
+      ),
+      'exam_pack_small_exams': int.tryParse(
+        _examPackSmallExamsController.text.trim(),
+      ),
+      'exam_pack_medium_price_kes': int.tryParse(
+        _examPackMediumPriceKesController.text.trim(),
+      ),
+      'exam_pack_medium_cost_kes': int.tryParse(
+        _examPackMediumCostKesController.text.trim(),
+      ),
+      'exam_pack_medium_exams': int.tryParse(
+        _examPackMediumExamsController.text.trim(),
+      ),
+      'exam_pack_large_price_kes': int.tryParse(
+        _examPackLargePriceKesController.text.trim(),
+      ),
+      'exam_pack_large_cost_kes': int.tryParse(
+        _examPackLargeCostKesController.text.trim(),
+      ),
+      'exam_pack_large_exams': int.tryParse(
+        _examPackLargeExamsController.text.trim(),
+      ),
+      'task_pack_starter_price_kes': int.tryParse(
+        _taskPackStarterPriceKesController.text.trim(),
+      ),
+      'task_pack_starter_cost_kes': int.tryParse(
+        _taskPackStarterCostKesController.text.trim(),
+      ),
+      'task_pack_starter_tasks': int.tryParse(
+        _taskPackStarterTasksController.text.trim(),
+      ),
+      'task_pack_medium_price_kes': int.tryParse(
+        _taskPackMediumPriceKesController.text.trim(),
+      ),
+      'task_pack_medium_cost_kes': int.tryParse(
+        _taskPackMediumCostKesController.text.trim(),
+      ),
+      'task_pack_medium_tasks': int.tryParse(
+        _taskPackMediumTasksController.text.trim(),
+      ),
+      'task_pack_large_price_kes': int.tryParse(
+        _taskPackLargePriceKesController.text.trim(),
+      ),
+      'task_pack_large_cost_kes': int.tryParse(
+        _taskPackLargeCostKesController.text.trim(),
+      ),
+      'task_pack_large_tasks': int.tryParse(
+        _taskPackLargeTasksController.text.trim(),
+      ),
+      'topup_task_booster_price_kes': int.tryParse(
+        _topupTaskBoosterPriceKesController.text.trim(),
+      ),
+      'topup_task_booster_cost_kes': int.tryParse(
+        _topupTaskBoosterCostKesController.text.trim(),
+      ),
+      'topup_task_booster_tasks': int.tryParse(
+        _topupTaskBoosterTasksController.text.trim(),
+      ),
+      'topup_exam_booster_price_kes': int.tryParse(
+        _topupExamBoosterPriceKesController.text.trim(),
+      ),
+      'topup_exam_booster_cost_kes': int.tryParse(
+        _topupExamBoosterCostKesController.text.trim(),
+      ),
+      'topup_exam_booster_exams': int.tryParse(
+        _topupExamBoosterExamsController.text.trim(),
+      ),
+      'exam_pack_small_on_offer': _examPackSmallOnOffer,
+      'exam_pack_medium_on_offer': _examPackMediumOnOffer,
+      'exam_pack_large_on_offer': _examPackLargeOnOffer,
+      'task_pack_starter_on_offer': _taskPackStarterOnOffer,
+      'task_pack_medium_on_offer': _taskPackMediumOnOffer,
+      'task_pack_large_on_offer': _taskPackLargeOnOffer,
+      'topup_task_booster_on_offer': _topupTaskBoosterOnOffer,
+      'topup_exam_booster_on_offer': _topupExamBoosterOnOffer,
+      'document_retention_days': int.tryParse(
+        _documentRetentionDaysController.text.trim(),
+      ),
       'class_escrow_platform_fee_percent': double.tryParse(
         _classEscrowPlatformFeePercentController.text.trim(),
       ),
@@ -424,7 +600,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       ),
     }..removeWhere((_, value) => value == null);
 
-    if (payload.length != 14) {
+    if (payload.length != 47) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Please enter valid values for all settings.'),
@@ -597,6 +773,139 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
+  Widget _offerToggleRow(
+    String label,
+    bool value,
+    ValueChanged<bool> onChanged,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: Colors.white.withValues(alpha: 0.03),
+          border: Border.all(color: Colors.white10),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                '$label On Offer',
+                style: const TextStyle(
+                  color: AppColors.textMuted,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            Checkbox(
+              value: value,
+              onChanged: (v) => onChanged(v ?? false),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _legacyCompatibilitySection() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: Colors.amber.withValues(alpha: 0.08),
+        border: Border.all(color: Colors.amber.withValues(alpha: 0.24)),
+      ),
+      child: Column(
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => setState(() => _legacySettingsExpanded = !_legacySettingsExpanded),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Row(
+                children: [
+                  const Icon(Icons.history_rounded, size: 16, color: Colors.amberAccent),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Legacy Compatibility (Hidden Plans)',
+                      style: TextStyle(
+                        color: AppColors.textMuted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  Icon(
+                    _legacySettingsExpanded
+                        ? Icons.keyboard_arrow_up_rounded
+                        : Icons.keyboard_arrow_down_rounded,
+                    color: Colors.amberAccent,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_legacySettingsExpanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 2, 12, 6),
+              child: Column(
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      'Used only for old subscriptions created before Credit Shop.',
+                      style: TextStyle(
+                        color: AppColors.textMuted,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                  _settingsField(
+                    'Legacy Weekly Max Generations',
+                    _weeklyPlanMaxGenerationsController,
+                  ),
+                  _settingsField(
+                    'Legacy Monthly Max Generations',
+                    _monthlyPlanMaxGenerationsController,
+                  ),
+                  _settingsField(
+                    'Legacy Annual Max Generations',
+                    _annualPlanMaxGenerationsController,
+                  ),
+                  _settingsField(
+                    'Legacy Weekly Price (KES)',
+                    _subscriptionWeeklyKesController,
+                  ),
+                  _settingsField(
+                    'Legacy Monthly Price (KES)',
+                    _subscriptionMonthlyKesController,
+                  ),
+                  _settingsField(
+                    'Legacy Annual Price (KES)',
+                    _subscriptionAnnualKesController,
+                  ),
+                  _settingsField(
+                    'Legacy Weekly Max Exams',
+                    _weeklyPlanMaxExamsController,
+                  ),
+                  _settingsField(
+                    'Legacy Monthly Max Exams',
+                    _monthlyPlanMaxExamsController,
+                  ),
+                  _settingsField(
+                    'Legacy Annual Max Exams',
+                    _annualPlanMaxExamsController,
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _freePlanMaxGenerationsController.dispose();
@@ -609,6 +918,31 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     _weeklyPlanMaxExamsController.dispose();
     _monthlyPlanMaxExamsController.dispose();
     _annualPlanMaxExamsController.dispose();
+    _examPackSmallPriceKesController.dispose();
+    _examPackSmallCostKesController.dispose();
+    _examPackSmallExamsController.dispose();
+    _examPackMediumPriceKesController.dispose();
+    _examPackMediumCostKesController.dispose();
+    _examPackMediumExamsController.dispose();
+    _examPackLargePriceKesController.dispose();
+    _examPackLargeCostKesController.dispose();
+    _examPackLargeExamsController.dispose();
+    _taskPackStarterPriceKesController.dispose();
+    _taskPackStarterCostKesController.dispose();
+    _taskPackStarterTasksController.dispose();
+    _taskPackMediumPriceKesController.dispose();
+    _taskPackMediumCostKesController.dispose();
+    _taskPackMediumTasksController.dispose();
+    _taskPackLargePriceKesController.dispose();
+    _taskPackLargeCostKesController.dispose();
+    _taskPackLargeTasksController.dispose();
+    _topupTaskBoosterPriceKesController.dispose();
+    _topupTaskBoosterCostKesController.dispose();
+    _topupTaskBoosterTasksController.dispose();
+    _topupExamBoosterPriceKesController.dispose();
+    _topupExamBoosterCostKesController.dispose();
+    _topupExamBoosterExamsController.dispose();
+    _documentRetentionDaysController.dispose();
     _classEscrowPlatformFeePercentController.dispose();
     _classMinFeeKesController.dispose();
     _classMaxFeeKesController.dispose();
@@ -860,52 +1194,196 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       ),
                       const SizedBox(height: 6),
                       const Text(
-                        'These values update pricing, plan quotas, class fee rules, and account reuse policies instantly.',
+                        'These values update Credit Shop pricing, retention, class fee rules, and compatibility settings instantly.',
                         style: TextStyle(
                           color: AppColors.textMuted,
                           fontSize: 12,
                         ),
                       ),
                       const SizedBox(height: 14),
+                      const Text(
+                        'Free Tier',
+                        style: TextStyle(
+                          color: AppColors.textMuted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
                       _settingsField(
                         'Free Plan Max Generations',
                         _freePlanMaxGenerationsController,
                       ),
+                      _legacyCompatibilitySection(),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Credit Shop: Exam Packs',
+                        style: TextStyle(
+                          color: AppColors.textMuted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
                       _settingsField(
-                        'Weekly Plan Max Generations',
-                        _weeklyPlanMaxGenerationsController,
+                        'Small Exam Pack Price (KES)',
+                        _examPackSmallPriceKesController,
                       ),
                       _settingsField(
-                        'Monthly Plan Max Generations',
-                        _monthlyPlanMaxGenerationsController,
+                        'Small Exam Pack Cost (KES)',
+                        _examPackSmallCostKesController,
                       ),
                       _settingsField(
-                        'Annual Plan Max Generations',
-                        _annualPlanMaxGenerationsController,
+                        'Small Exam Pack Exams',
+                        _examPackSmallExamsController,
+                      ),
+                      _offerToggleRow(
+                        'Small Exam Pack',
+                        _examPackSmallOnOffer,
+                        (v) => setState(() => _examPackSmallOnOffer = v),
                       ),
                       _settingsField(
-                        'Subscription Weekly (KES)',
-                        _subscriptionWeeklyKesController,
+                        'Medium Exam Pack Price (KES)',
+                        _examPackMediumPriceKesController,
                       ),
                       _settingsField(
-                        'Subscription Monthly (KES)',
-                        _subscriptionMonthlyKesController,
+                        'Medium Exam Pack Cost (KES)',
+                        _examPackMediumCostKesController,
                       ),
                       _settingsField(
-                        'Subscription Annual (KES)',
-                        _subscriptionAnnualKesController,
+                        'Medium Exam Pack Exams',
+                        _examPackMediumExamsController,
+                      ),
+                      _offerToggleRow(
+                        'Medium Exam Pack',
+                        _examPackMediumOnOffer,
+                        (v) => setState(() => _examPackMediumOnOffer = v),
                       ),
                       _settingsField(
-                        'Weekly Plan Max Exams',
-                        _weeklyPlanMaxExamsController,
+                        'Large Exam Pack Price (KES)',
+                        _examPackLargePriceKesController,
                       ),
                       _settingsField(
-                        'Monthly Plan Max Exams',
-                        _monthlyPlanMaxExamsController,
+                        'Large Exam Pack Cost (KES)',
+                        _examPackLargeCostKesController,
                       ),
                       _settingsField(
-                        'Annual Plan Max Exams',
-                        _annualPlanMaxExamsController,
+                        'Large Exam Pack Exams',
+                        _examPackLargeExamsController,
+                      ),
+                      _offerToggleRow(
+                        'Large Exam Pack',
+                        _examPackLargeOnOffer,
+                        (v) => setState(() => _examPackLargeOnOffer = v),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Credit Shop: Task Packs',
+                        style: TextStyle(
+                          color: AppColors.textMuted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      _settingsField(
+                        'Starter Task Pack Price (KES)',
+                        _taskPackStarterPriceKesController,
+                      ),
+                      _settingsField(
+                        'Starter Task Pack Cost (KES)',
+                        _taskPackStarterCostKesController,
+                      ),
+                      _settingsField(
+                        'Starter Task Pack Tasks',
+                        _taskPackStarterTasksController,
+                      ),
+                      _offerToggleRow(
+                        'Starter Task Pack',
+                        _taskPackStarterOnOffer,
+                        (v) => setState(() => _taskPackStarterOnOffer = v),
+                      ),
+                      _settingsField(
+                        'Medium Task Pack Price (KES)',
+                        _taskPackMediumPriceKesController,
+                      ),
+                      _settingsField(
+                        'Medium Task Pack Cost (KES)',
+                        _taskPackMediumCostKesController,
+                      ),
+                      _settingsField(
+                        'Medium Task Pack Tasks',
+                        _taskPackMediumTasksController,
+                      ),
+                      _offerToggleRow(
+                        'Medium Task Pack',
+                        _taskPackMediumOnOffer,
+                        (v) => setState(() => _taskPackMediumOnOffer = v),
+                      ),
+                      _settingsField(
+                        'Large Task Pack Price (KES)',
+                        _taskPackLargePriceKesController,
+                      ),
+                      _settingsField(
+                        'Large Task Pack Cost (KES)',
+                        _taskPackLargeCostKesController,
+                      ),
+                      _settingsField(
+                        'Large Task Pack Tasks',
+                        _taskPackLargeTasksController,
+                      ),
+                      _offerToggleRow(
+                        'Large Task Pack',
+                        _taskPackLargeOnOffer,
+                        (v) => setState(() => _taskPackLargeOnOffer = v),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Credit Shop: Top-Ups',
+                        style: TextStyle(
+                          color: AppColors.textMuted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      _settingsField(
+                        'Task Booster Price (KES)',
+                        _topupTaskBoosterPriceKesController,
+                      ),
+                      _settingsField(
+                        'Task Booster Cost (KES)',
+                        _topupTaskBoosterCostKesController,
+                      ),
+                      _settingsField(
+                        'Task Booster Tasks',
+                        _topupTaskBoosterTasksController,
+                      ),
+                      _offerToggleRow(
+                        'Task Booster',
+                        _topupTaskBoosterOnOffer,
+                        (v) => setState(() => _topupTaskBoosterOnOffer = v),
+                      ),
+                      _settingsField(
+                        'Exam Booster Price (KES)',
+                        _topupExamBoosterPriceKesController,
+                      ),
+                      _settingsField(
+                        'Exam Booster Cost (KES)',
+                        _topupExamBoosterCostKesController,
+                      ),
+                      _settingsField(
+                        'Exam Booster Exams',
+                        _topupExamBoosterExamsController,
+                      ),
+                      _offerToggleRow(
+                        'Exam Booster',
+                        _topupExamBoosterOnOffer,
+                        (v) => setState(() => _topupExamBoosterOnOffer = v),
+                      ),
+                      _settingsField(
+                        'Document Retention Days',
+                        _documentRetentionDaysController,
                       ),
                       _settingsField(
                         'Class Escrow Platform Fee (%)',

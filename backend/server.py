@@ -302,6 +302,39 @@ def _runtime_default_settings() -> Dict[str, Any]:
         "weekly_plan_max_exams": WEEKLY_PLAN_MAX_EXAMS,
         "monthly_plan_max_exams": MONTHLY_PLAN_MAX_EXAMS,
         "annual_plan_max_exams": ANNUAL_PLAN_MAX_EXAMS,
+        "exam_pack_small_price_kes": 100,
+        "exam_pack_small_cost_kes": 36,
+        "exam_pack_small_exams": 3,
+        "exam_pack_medium_price_kes": 200,
+        "exam_pack_medium_cost_kes": 84,
+        "exam_pack_medium_exams": 7,
+        "exam_pack_large_price_kes": 400,
+        "exam_pack_large_cost_kes": 180,
+        "exam_pack_large_exams": 15,
+        "task_pack_starter_price_kes": 100,
+        "task_pack_starter_cost_kes": 84,
+        "task_pack_starter_tasks": 7,
+        "task_pack_medium_price_kes": 250,
+        "task_pack_medium_cost_kes": 204,
+        "task_pack_medium_tasks": 17,
+        "task_pack_large_price_kes": 500,
+        "task_pack_large_cost_kes": 440,
+        "task_pack_large_tasks": 50,
+        "topup_task_booster_price_kes": 100,
+        "topup_task_booster_cost_kes": 120,
+        "topup_task_booster_tasks": 10,
+        "topup_exam_booster_price_kes": 300,
+        "topup_exam_booster_cost_kes": 60,
+        "topup_exam_booster_exams": 5,
+        "exam_pack_small_on_offer": False,
+        "exam_pack_medium_on_offer": False,
+        "exam_pack_large_on_offer": False,
+        "task_pack_starter_on_offer": False,
+        "task_pack_medium_on_offer": False,
+        "task_pack_large_on_offer": False,
+        "topup_task_booster_on_offer": False,
+        "topup_exam_booster_on_offer": False,
+        "document_retention_days": 3,
         "class_escrow_platform_fee_percent": CLASS_ESCROW_PLATFORM_FEE_PERCENT,
         "class_min_fee_kes": CLASS_MIN_FEE_KES,
         "class_max_fee_kes": CLASS_MAX_FEE_KES,
@@ -594,6 +627,16 @@ class SubscriptionPlan(BaseModel):
     exam_quota: Optional[int] = None
     discount_pct: int = 0
     savings_label: Optional[str] = None
+    category: Optional[str] = None
+    units_label: Optional[str] = None
+    units_count: Optional[int] = None
+    cost_kes: Optional[int] = None
+    profit_kes: Optional[int] = None
+    profit_margin_pct: Optional[float] = None
+    featured: bool = False
+    visible: bool = True
+    description: Optional[str] = None
+    on_offer: bool = False
 
 
 class User(BaseModel):
@@ -727,6 +770,39 @@ class AdminRuntimeSettingsUpdateRequest(BaseModel):
     weekly_plan_max_exams: Optional[int] = Field(default=None, ge=1)
     monthly_plan_max_exams: Optional[int] = Field(default=None, ge=1)
     annual_plan_max_exams: Optional[int] = Field(default=None, ge=1)
+    exam_pack_small_price_kes: Optional[int] = Field(default=None, ge=1)
+    exam_pack_small_cost_kes: Optional[int] = Field(default=None, ge=0)
+    exam_pack_small_exams: Optional[int] = Field(default=None, ge=1)
+    exam_pack_medium_price_kes: Optional[int] = Field(default=None, ge=1)
+    exam_pack_medium_cost_kes: Optional[int] = Field(default=None, ge=0)
+    exam_pack_medium_exams: Optional[int] = Field(default=None, ge=1)
+    exam_pack_large_price_kes: Optional[int] = Field(default=None, ge=1)
+    exam_pack_large_cost_kes: Optional[int] = Field(default=None, ge=0)
+    exam_pack_large_exams: Optional[int] = Field(default=None, ge=1)
+    task_pack_starter_price_kes: Optional[int] = Field(default=None, ge=1)
+    task_pack_starter_cost_kes: Optional[int] = Field(default=None, ge=0)
+    task_pack_starter_tasks: Optional[int] = Field(default=None, ge=1)
+    task_pack_medium_price_kes: Optional[int] = Field(default=None, ge=1)
+    task_pack_medium_cost_kes: Optional[int] = Field(default=None, ge=0)
+    task_pack_medium_tasks: Optional[int] = Field(default=None, ge=1)
+    task_pack_large_price_kes: Optional[int] = Field(default=None, ge=1)
+    task_pack_large_cost_kes: Optional[int] = Field(default=None, ge=0)
+    task_pack_large_tasks: Optional[int] = Field(default=None, ge=1)
+    topup_task_booster_price_kes: Optional[int] = Field(default=None, ge=1)
+    topup_task_booster_cost_kes: Optional[int] = Field(default=None, ge=0)
+    topup_task_booster_tasks: Optional[int] = Field(default=None, ge=1)
+    topup_exam_booster_price_kes: Optional[int] = Field(default=None, ge=1)
+    topup_exam_booster_cost_kes: Optional[int] = Field(default=None, ge=0)
+    topup_exam_booster_exams: Optional[int] = Field(default=None, ge=1)
+    exam_pack_small_on_offer: Optional[bool] = None
+    exam_pack_medium_on_offer: Optional[bool] = None
+    exam_pack_large_on_offer: Optional[bool] = None
+    task_pack_starter_on_offer: Optional[bool] = None
+    task_pack_medium_on_offer: Optional[bool] = None
+    task_pack_large_on_offer: Optional[bool] = None
+    topup_task_booster_on_offer: Optional[bool] = None
+    topup_exam_booster_on_offer: Optional[bool] = None
+    document_retention_days: Optional[int] = Field(default=None, ge=1, le=3650)
     class_escrow_platform_fee_percent: Optional[float] = Field(default=None, ge=0, le=100)
     class_min_fee_kes: Optional[int] = Field(default=None, ge=0)
     class_max_fee_kes: Optional[int] = Field(default=None, ge=0)
@@ -1249,6 +1325,7 @@ async def send_subscription_updated_email(
     generation_limit: int,
     exam_limit: Optional[int],
     window_end_at: Optional[str],
+    retention_days: Optional[int],
 ) -> None:
     if not BREVO_API_KEY or not BREVO_SENDER_EMAIL:
         logger.warning("Subscription update email skipped: Brevo not configured")
@@ -1256,21 +1333,28 @@ async def send_subscription_updated_email(
 
     greeting_name = (full_name or "").strip().split(" ")[0] or "there"
     exam_limit_text = str(exam_limit) if exam_limit is not None else "unlimited"
-    renewal_text = window_end_at or "your current billing window end date"
+    renewal_text = window_end_at or "your current usage window end date"
+    retention_text = ""
+    if retention_days is not None and int(retention_days) > 0:
+        retention_text = (
+            f"<p>Your current document retention policy is <strong>{int(retention_days)} day(s)</strong> "
+            "from upload.</p>"
+        )
 
     html_content = (
         f"<p>Hi {greeting_name},</p>"
         "<p>Your payment has been confirmed.</p>"
-        f"<p>Your <strong>{plan_name}</strong> subscription is now active and updated.</p>"
+        f"<p>Your <strong>{plan_name}</strong> credit pack is now active.</p>"
         f"<p>You can now enjoy up to <strong>{generation_limit}</strong> total generations and "
-        f"<strong>{exam_limit_text}</strong> exam generations in this billing window.</p>"
-        f"<p>Your current window ends on: <strong>{renewal_text}</strong>.</p>"
-        "<p>Thank you for subscribing to Exam OS.</p>"
+        f"<strong>{exam_limit_text}</strong> exam generations in this usage window.</p>"
+        f"<p>Your current usage window ends on: <strong>{renewal_text}</strong>.</p>"
+        f"{retention_text}"
+        "<p>Thank you for using Exam OS.</p>"
     )
     payload = {
         "sender": {"email": BREVO_SENDER_EMAIL, "name": BREVO_SENDER_NAME},
         "to": [{"email": email, "name": full_name or email}],
-        "subject": "Your subscription has been updated",
+        "subject": "Your credit pack is active",
         "htmlContent": html_content,
     }
     await send_brevo_transactional_email(api_key=BREVO_API_KEY, payload=payload)
@@ -1297,6 +1381,7 @@ async def enqueue_subscription_updated_email(
     generation_limit: int,
     exam_limit: Optional[int],
     window_end_at: Optional[str],
+    retention_days: Optional[int],
 ) -> None:
     try:
         await send_subscription_updated_email(
@@ -1306,6 +1391,7 @@ async def enqueue_subscription_updated_email(
             generation_limit=generation_limit,
             exam_limit=exam_limit,
             window_end_at=window_end_at,
+            retention_days=retention_days,
         )
     except Exception as exc:
         logger.error("Subscription update email delivery failed: %s", exc)
@@ -2576,6 +2662,24 @@ def _runtime_float(name: str, fallback: float) -> float:
         return float(fallback)
 
 
+def _runtime_bool(name: str, fallback: bool) -> bool:
+    try:
+        value = RUNTIME_SETTINGS_CACHE.get(name, fallback)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {"true", "1", "yes", "on"}:
+                return True
+            if lowered in {"false", "0", "no", "off"}:
+                return False
+        if isinstance(value, (int, float)):
+            return bool(value)
+        return bool(fallback)
+    except Exception:
+        return bool(fallback)
+
+
 def current_account_reuse_grace_days() -> int:
     return max(0, _runtime_int("account_reuse_grace_days", ACCOUNT_REUSE_GRACE_DAYS))
 
@@ -2614,7 +2718,175 @@ def get_subscription_plans() -> List[SubscriptionPlan]:
         except Exception as exc:
             logger.warning("Invalid SUBSCRIPTION_PLANS_JSON, using defaults: %s", exc)
 
-    return [
+    def _profit_fields(amount_kes: int, cost_kes: int) -> Tuple[int, float]:
+        profit_kes = int(amount_kes) - int(cost_kes)
+        if int(amount_kes) <= 0:
+            return profit_kes, 0.0
+        return profit_kes, round((profit_kes / float(amount_kes)) * 100.0, 1)
+
+    def _build_plan(
+        *,
+        plan_id: str,
+        name: str,
+        cycle_days: int,
+        amount_kes: int,
+        generation_quota: int,
+        exam_quota: Optional[int],
+        category: str,
+        units_label: str,
+        units_count: int,
+        cost_kes: int,
+        description: str,
+        featured: bool = False,
+        visible: bool = True,
+        discount_pct: int = 0,
+        savings_label: Optional[str] = None,
+        on_offer: bool = False,
+    ) -> SubscriptionPlan:
+        profit_kes, profit_margin_pct = _profit_fields(amount_kes, cost_kes)
+        resolved_savings_label = savings_label
+        if on_offer and not resolved_savings_label:
+            resolved_savings_label = "On Offer"
+        return SubscriptionPlan(
+            plan_id=plan_id,
+            name=name,
+            cycle_days=cycle_days,
+            amount_kes=amount_kes,
+            generation_quota=generation_quota,
+            exam_quota=exam_quota,
+            discount_pct=discount_pct,
+            savings_label=resolved_savings_label,
+            category=category,
+            units_label=units_label,
+            units_count=units_count,
+            cost_kes=cost_kes,
+            profit_kes=profit_kes,
+            profit_margin_pct=profit_margin_pct,
+            featured=featured,
+            visible=visible,
+            description=description,
+            on_offer=on_offer,
+        )
+
+    credit_shop_plans = [
+        _build_plan(
+            plan_id="exam_pack_small",
+            name="Small Exam Pack",
+            cycle_days=30,
+            amount_kes=_runtime_int("exam_pack_small_price_kes", 100),
+            generation_quota=_runtime_int("exam_pack_small_exams", 3),
+            exam_quota=_runtime_int("exam_pack_small_exams", 3),
+            category="exam_packs",
+            units_label="Exams",
+            units_count=_runtime_int("exam_pack_small_exams", 3),
+            cost_kes=_runtime_int("exam_pack_small_cost_kes", 36),
+            description="Focused exam generation credits.",
+            on_offer=_runtime_bool("exam_pack_small_on_offer", False),
+        ),
+        _build_plan(
+            plan_id="exam_pack_medium",
+            name="Medium Exam Pack",
+            cycle_days=30,
+            amount_kes=_runtime_int("exam_pack_medium_price_kes", 200),
+            generation_quota=_runtime_int("exam_pack_medium_exams", 7),
+            exam_quota=_runtime_int("exam_pack_medium_exams", 7),
+            category="exam_packs",
+            units_label="Exams",
+            units_count=_runtime_int("exam_pack_medium_exams", 7),
+            cost_kes=_runtime_int("exam_pack_medium_cost_kes", 84),
+            description="Balanced exam generation bundle.",
+            featured=True,
+            on_offer=_runtime_bool("exam_pack_medium_on_offer", False),
+        ),
+        _build_plan(
+            plan_id="exam_pack_large",
+            name="Large Exam Pack",
+            cycle_days=30,
+            amount_kes=_runtime_int("exam_pack_large_price_kes", 400),
+            generation_quota=_runtime_int("exam_pack_large_exams", 15),
+            exam_quota=_runtime_int("exam_pack_large_exams", 15),
+            category="exam_packs",
+            units_label="Exams",
+            units_count=_runtime_int("exam_pack_large_exams", 15),
+            cost_kes=_runtime_int("exam_pack_large_cost_kes", 180),
+            description="High-volume exam generation bundle.",
+            on_offer=_runtime_bool("exam_pack_large_on_offer", False),
+        ),
+        _build_plan(
+            plan_id="task_pack_starter",
+            name="Starter Task Pack",
+            cycle_days=30,
+            amount_kes=_runtime_int("task_pack_starter_price_kes", 100),
+            generation_quota=_runtime_int("task_pack_starter_tasks", 7),
+            exam_quota=0,
+            category="task_packs",
+            units_label="Tasks",
+            units_count=_runtime_int("task_pack_starter_tasks", 7),
+            cost_kes=_runtime_int("task_pack_starter_cost_kes", 84),
+            description="Starter task generation credits.",
+            on_offer=_runtime_bool("task_pack_starter_on_offer", False),
+        ),
+        _build_plan(
+            plan_id="task_pack_medium",
+            name="Medium Task Pack",
+            cycle_days=30,
+            amount_kes=_runtime_int("task_pack_medium_price_kes", 250),
+            generation_quota=_runtime_int("task_pack_medium_tasks", 17),
+            exam_quota=0,
+            category="task_packs",
+            units_label="Tasks",
+            units_count=_runtime_int("task_pack_medium_tasks", 17),
+            cost_kes=_runtime_int("task_pack_medium_cost_kes", 204),
+            description="Expanded task generation credits.",
+            featured=True,
+            on_offer=_runtime_bool("task_pack_medium_on_offer", False),
+        ),
+        _build_plan(
+            plan_id="task_pack_large",
+            name="Large Task Pack",
+            cycle_days=30,
+            amount_kes=_runtime_int("task_pack_large_price_kes", 500),
+            generation_quota=_runtime_int("task_pack_large_tasks", 50),
+            exam_quota=0,
+            category="task_packs",
+            units_label="Tasks",
+            units_count=_runtime_int("task_pack_large_tasks", 50),
+            cost_kes=_runtime_int("task_pack_large_cost_kes", 440),
+            description="Heavy task workload credits.",
+            on_offer=_runtime_bool("task_pack_large_on_offer", False),
+        ),
+        _build_plan(
+            plan_id="topup_task_booster",
+            name="Task Booster",
+            cycle_days=30,
+            amount_kes=_runtime_int("topup_task_booster_price_kes", 100),
+            generation_quota=_runtime_int("topup_task_booster_tasks", 10),
+            exam_quota=0,
+            category="topups",
+            units_label="Tasks",
+            units_count=_runtime_int("topup_task_booster_tasks", 10),
+            cost_kes=_runtime_int("topup_task_booster_cost_kes", 120),
+            description="Fast top-up for tasks.",
+            on_offer=_runtime_bool("topup_task_booster_on_offer", False),
+        ),
+        _build_plan(
+            plan_id="topup_exam_booster",
+            name="Exam Booster",
+            cycle_days=30,
+            amount_kes=_runtime_int("topup_exam_booster_price_kes", 300),
+            generation_quota=_runtime_int("topup_exam_booster_exams", 5),
+            exam_quota=_runtime_int("topup_exam_booster_exams", 5),
+            category="topups",
+            units_label="Exams",
+            units_count=_runtime_int("topup_exam_booster_exams", 5),
+            cost_kes=_runtime_int("topup_exam_booster_cost_kes", 60),
+            description="Fast top-up for exam generation.",
+            featured=True,
+            on_offer=_runtime_bool("topup_exam_booster_on_offer", False),
+        ),
+    ]
+
+    legacy_subscription_plans = [
         SubscriptionPlan(
             plan_id="weekly",
             name="Weekly",
@@ -2623,6 +2895,10 @@ def get_subscription_plans() -> List[SubscriptionPlan]:
             generation_quota=_runtime_int("weekly_plan_max_generations", WEEKLY_PLAN_MAX_GENERATIONS),
             exam_quota=_runtime_int("weekly_plan_max_exams", WEEKLY_PLAN_MAX_EXAMS),
             savings_label=SUBSCRIPTION_WEEKLY_LABEL or None,
+            category="legacy",
+            units_label="Days",
+            units_count=7,
+            visible=False,
         ),
         SubscriptionPlan(
             plan_id="monthly",
@@ -2633,6 +2909,10 @@ def get_subscription_plans() -> List[SubscriptionPlan]:
             exam_quota=_runtime_int("monthly_plan_max_exams", MONTHLY_PLAN_MAX_EXAMS),
             discount_pct=SUBSCRIPTION_MONTHLY_DISCOUNT_PCT,
             savings_label=SUBSCRIPTION_MONTHLY_LABEL or None,
+            category="legacy",
+            units_label="Days",
+            units_count=30,
+            visible=False,
         ),
         SubscriptionPlan(
             plan_id="annual",
@@ -2643,8 +2923,13 @@ def get_subscription_plans() -> List[SubscriptionPlan]:
             exam_quota=_runtime_int("annual_plan_max_exams", ANNUAL_PLAN_MAX_EXAMS),
             discount_pct=SUBSCRIPTION_ANNUAL_DISCOUNT_PCT,
             savings_label=SUBSCRIPTION_ANNUAL_LABEL or None,
+            category="legacy",
+            units_label="Days",
+            units_count=365,
+            visible=False,
         ),
     ]
+    return credit_shop_plans + legacy_subscription_plans
 
 
 def get_subscription_plan(plan_id: str) -> SubscriptionPlan:
@@ -2670,14 +2955,8 @@ async def get_active_subscription(user_id: str) -> Optional[Dict[str, Any]]:
 
 
 def retention_days_for_plan_id(plan_id: Optional[str]) -> int:
-    normalized = str(plan_id or "free").strip().lower()
-    if normalized == "weekly":
-        return max(1, DOCUMENT_RETENTION_WEEKLY_DAYS)
-    if normalized == "monthly":
-        return max(1, DOCUMENT_RETENTION_MONTHLY_DAYS)
-    if normalized == "annual":
-        return max(1, DOCUMENT_RETENTION_ANNUAL_DAYS)
-    return max(1, DOCUMENT_RETENTION_FREE_DAYS)
+    del plan_id
+    return max(1, _runtime_int("document_retention_days", 3))
 
 
 def _parse_iso_datetime(raw: Any) -> Optional[datetime]:
@@ -2700,9 +2979,8 @@ def retention_expiry_for_uploaded_at(uploaded_at: datetime, retention_days: int)
 
 
 async def get_user_retention_days(user_id: str) -> int:
-    active_sub = await get_active_subscription(user_id)
-    plan_id = str((active_sub or {}).get("plan_id") or "free")
-    return retention_days_for_plan_id(plan_id)
+    del user_id
+    return max(1, _runtime_int("document_retention_days", 3))
 
 
 async def backfill_document_retention_metadata(
@@ -3633,14 +3911,14 @@ async def consume_generation_quota(user_id: str, generation_type: str) -> None:
                 status_code=402,
                 detail=(
                     "Free plan generation quota reached. "
-                    "Subscribe to continue generating content."
+                    "Buy a credit pack to continue generating content."
                 ),
             )
         raise HTTPException(
             status_code=402,
             detail=(
-                f"{entitlement['plan_name']} plan generation quota reached. "
-                "Renew or upgrade your subscription."
+                f"{entitlement['plan_name']} quota reached. "
+                "Buy another credit pack to continue."
             ),
         )
 
@@ -3693,10 +3971,10 @@ async def ensure_topic_access(user_id: str) -> None:
         if not active_sub:
             raise HTTPException(
                 status_code=402,
-                detail="An active subscription is required to use topic suggestions.",
+                detail="An active credit pack is required to use topic suggestions.",
             )
         return
-    # Validation hook: confirms subscription subsystem and current entitlement can be resolved.
+    # Validation hook: confirms billing subsystem and current entitlement can be resolved.
     await get_generation_entitlement(user_id)
 
 
@@ -4220,8 +4498,11 @@ async def get_me(current_user: Dict[str, Any] = Depends(get_current_user)):
 
 
 @api_router.get("/subscriptions/plans", response_model=List[SubscriptionPlan])
-async def subscription_plans():
-    return get_subscription_plans()
+async def subscription_plans(include_legacy: bool = False):
+    plans = get_subscription_plans()
+    if include_legacy:
+        return plans
+    return [plan for plan in plans if plan.visible]
 
 
 @api_router.get("/subscriptions/me")
@@ -4457,6 +4738,11 @@ async def mpesa_callback(payload: Dict[str, Any], background_tasks: BackgroundTa
                     generation_limit=int(entitlement.get("generation_limit", int(plan.generation_quota))),
                     exam_limit=entitlement.get("exam_limit"),
                     window_end_at=entitlement.get("window_end_at"),
+                    retention_days=(
+                        int(entitlement.get("document_retention_days", 0))
+                        if entitlement.get("document_retention_days") is not None
+                        else None
+                    ),
                 )
                 logger.info(
                     "subscription_update_email_queued user_id=%s email=%s plan=%s",
@@ -4789,7 +5075,7 @@ async def ingest_cbc_note_as_document(
             status_code=402,
             detail=(
                 f"Free plan allows only {FREE_PLAN_MAX_DOCUMENTS} document upload. "
-                "Subscribe to upload more documents."
+                "Buy a credit pack to upload more documents."
             ),
         )
 
@@ -4909,7 +5195,7 @@ async def upload_document(
             status_code=402,
             detail=(
                 f"Free plan allows only {FREE_PLAN_MAX_DOCUMENTS} document upload. "
-                "Subscribe to upload more documents."
+                "Buy a credit pack to upload more documents."
             ),
         )
     if not file.filename:
@@ -6511,10 +6797,7 @@ async def admin_integrations_status(
         "retention": {
             "enabled": DOCUMENT_RETENTION_ENABLED,
             "generation_retention_enabled": GENERATION_RETENTION_ENABLED,
-            "free_days": DOCUMENT_RETENTION_FREE_DAYS,
-            "weekly_days": DOCUMENT_RETENTION_WEEKLY_DAYS,
-            "monthly_days": DOCUMENT_RETENTION_MONTHLY_DAYS,
-            "annual_days": DOCUMENT_RETENTION_ANNUAL_DAYS,
+            "document_retention_days": _runtime_int("document_retention_days", 3),
             "notice_hours": DOCUMENT_RETENTION_NOTICE_HOURS,
             "cleanup_interval_seconds": DOCUMENT_RETENTION_CLEANUP_INTERVAL_SECONDS,
             "documents_due_notice_window": int(retention_due_24h),
@@ -7817,10 +8100,7 @@ async def runtime_config():
         "engagement_digest_min_days": ENGAGEMENT_DIGEST_MIN_DAYS,
         "document_retention_enabled": DOCUMENT_RETENTION_ENABLED,
         "generation_retention_enabled": GENERATION_RETENTION_ENABLED,
-        "document_retention_free_days": DOCUMENT_RETENTION_FREE_DAYS,
-        "document_retention_weekly_days": DOCUMENT_RETENTION_WEEKLY_DAYS,
-        "document_retention_monthly_days": DOCUMENT_RETENTION_MONTHLY_DAYS,
-        "document_retention_annual_days": DOCUMENT_RETENTION_ANNUAL_DAYS,
+        "document_retention_days": _runtime_int("document_retention_days", 3),
         "document_retention_notice_hours": DOCUMENT_RETENTION_NOTICE_HOURS,
         "signup_otp_ttl_minutes": SIGNUP_OTP_TTL_MINUTES,
         "signup_otp_length": SIGNUP_OTP_LENGTH,
@@ -7922,7 +8202,7 @@ async def _send_doc_retention_notice_email(
             f"<p>Hello {str(user.get('full_name') or 'there')},</p>"
             f"<p>Your document <strong>{filename}</strong> is scheduled for auto-cleanup in about "
             f"<strong>{max(hours_left, 1)} hour(s)</strong>.</p>"
-            f"<p>Retention policy for your current plan: <strong>{retention_days} day(s)</strong>.</p>"
+            f"<p>Your current document retention policy: <strong>{retention_days} day(s)</strong> from upload.</p>"
             f"<p>Scheduled deletion time (UTC): {expires_at}</p>"
             "<p>If you still need it, open Exam OS and upload it again before expiry.</p>"
             "<p>Thanks,<br/>Exam OS</p>"
@@ -7965,7 +8245,7 @@ async def _send_engagement_digest_email(
     now = datetime.now(timezone.utc)
     availability_line = "We could not find active documents in your library yet."
     generation_retention_line = (
-        "Generated outputs can also expire based on your plan retention policy. "
+        "Generated outputs can also expire based on your account retention policy. "
         "Download important generations from Library to keep a local copy."
     )
     try:
@@ -7975,7 +8255,7 @@ async def _send_engagement_digest_email(
             if retention_days > 0:
                 generation_retention_line = (
                     f"Generated outputs may expire after about <strong>{retention_days} day(s)</strong> "
-                    "under your current plan. Download important generations from Library and keep a local copy."
+                    "under your current account policy. Download important generations from Library and keep a local copy."
                 )
         if user_id:
             active_docs = await db.documents.find(
@@ -8285,13 +8565,8 @@ async def startup_checks():
         raise RuntimeError("DOCUMENT_RETENTION_NOTICE_HOURS must be at least 1")
     if DOCUMENT_RETENTION_CLEANUP_INTERVAL_SECONDS < 300:
         raise RuntimeError("DOCUMENT_RETENTION_CLEANUP_INTERVAL_SECONDS must be at least 300")
-    if min(
-        DOCUMENT_RETENTION_FREE_DAYS,
-        DOCUMENT_RETENTION_WEEKLY_DAYS,
-        DOCUMENT_RETENTION_MONTHLY_DAYS,
-        DOCUMENT_RETENTION_ANNUAL_DAYS,
-    ) < 1:
-        raise RuntimeError("Document retention days must be at least 1 for all plans")
+    if int(_runtime_default_settings().get("document_retention_days", 3)) < 1:
+        raise RuntimeError("Document retention days must be at least 1")
     if ENGAGEMENT_DIGEST_MIN_DAYS < 1:
         raise RuntimeError("ENGAGEMENT_DIGEST_MIN_DAYS must be at least 1")
     if GENERATION_JOB_QUEUE_TIMEOUT_SECONDS < 30:

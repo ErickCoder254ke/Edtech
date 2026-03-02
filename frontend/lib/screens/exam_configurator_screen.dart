@@ -484,7 +484,7 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
       if (days != null && days > 0) {
         return 'Expires after $days day(s) from upload';
       }
-      return 'Expiry follows your plan retention period';
+      return 'Expiry follows your current retention policy';
     }
     final diff = expiresAt.difference(DateTime.now());
     if (diff.inSeconds <= 0) return 'Expired or expiring now';
@@ -498,7 +498,7 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('Upgrade Required'),
         content: Text(
-          '$message\n\nYou have reached your current generation limit. Choose a subscription to continue.',
+          '$message\n\nYou have reached your current generation limit. Choose a credit pack to continue.',
         ),
         actions: [
           TextButton(

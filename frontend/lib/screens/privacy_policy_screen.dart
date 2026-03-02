@@ -45,7 +45,7 @@ class PrivacyPolicyScreen extends StatelessWidget {
             _Section(
               title: '3. Retention Windows',
               body:
-                  'Documents and derived artifacts may be auto-cleaned based on plan retention policy. You may receive reminders before scheduled cleanup.',
+                  'Documents and derived artifacts may be auto-cleaned based on the current account retention policy configured by admin. You may receive reminders before scheduled cleanup.',
               icon: Icons.auto_delete_rounded,
             ),
             SizedBox(height: 10),

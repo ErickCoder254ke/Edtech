@@ -58,7 +58,7 @@ class TermsConditionsScreen extends StatelessWidget {
             _SectionCard(
               title: '5. Data Retention Policy',
               body:
-                  'Uploaded documents and derived artifacts may be auto-cleaned by plan retention windows. Reminder notifications may be sent before scheduled cleanup.',
+                  'Uploaded documents and derived artifacts may be auto-cleaned by the current account retention policy configured by admin. Reminder notifications may be sent before scheduled cleanup.',
               icon: Icons.auto_delete_rounded,
             ),
             SizedBox(height: 10),

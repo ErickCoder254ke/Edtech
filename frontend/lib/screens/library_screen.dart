@@ -304,7 +304,7 @@ class _DocumentTile extends StatelessWidget {
   Widget build(BuildContext context) {
     String retentionLabel() {
       final expiresAt = doc.retentionExpiresAt;
-      if (expiresAt == null) return 'Auto-cleanup policy applies by plan.';
+      if (expiresAt == null) return 'Auto-cleanup follows current account retention policy.';
       final now = DateTime.now();
       final diff = expiresAt.difference(now);
       if (diff.inSeconds <= 0) return 'Scheduled for cleanup now.';

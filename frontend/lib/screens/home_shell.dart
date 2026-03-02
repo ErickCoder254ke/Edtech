@@ -402,19 +402,62 @@ class _HomeShellState extends State<HomeShell> {
           key: _scaffoldKey,
           drawer: Drawer(
             width: 338,
-            backgroundColor: AppColors.surfaceDark,
+            backgroundColor: Colors.transparent,
+            elevation: 0,
             shape: const RoundedRectangleBorder(
               borderRadius: BorderRadius.horizontal(right: Radius.circular(28)),
             ),
-            child: SafeArea(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(14, 16, 14, 22),
-                children: [
-                  _MenuProfileCard(
-                    user: widget.session.user,
-                    teacherVerificationStatus: _teacherVerificationStatus,
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: const BorderRadius.horizontal(
+                  right: Radius.circular(28),
+                ),
+                gradient: LinearGradient(
+                  colors: [
+                    const Color(0xFF101D34).withValues(alpha: 0.98),
+                    const Color(0xFF0A1325).withValues(alpha: 0.98),
+                    const Color(0xFF090F1C).withValues(alpha: 0.98),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                border: Border.all(color: Colors.white12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.35),
+                    blurRadius: 22,
+                    offset: const Offset(2, 0),
                   ),
-                  const SizedBox(height: 16),
+                ],
+              ),
+              child: SafeArea(
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(14, 16, 14, 22),
+                  children: [
+                    _MenuProfileCard(
+                      user: widget.session.user,
+                      teacherVerificationStatus: _teacherVerificationStatus,
+                    ),
+                    const SizedBox(height: 12),
+                    _MenuQuickActions(
+                      onDashboard: () {
+                        Navigator.of(context).pop();
+                        setState(() => _index = 0);
+                      },
+                      onGeneration: () {
+                        Navigator.of(context).pop();
+                        setState(() => _index = 3);
+                      },
+                      onJobs: () {
+                        Navigator.of(context).pop();
+                        _openJobsPage();
+                      },
+                      onClasses: () {
+                        Navigator.of(context).pop();
+                        _openClassesPage();
+                      },
+                    ),
+                    const SizedBox(height: 14),
                   const _MenuSectionTitle('Shortcuts'),
                   _MenuNavTile(
                     icon: Icons.grid_view_rounded,
@@ -666,6 +709,7 @@ class _HomeShellState extends State<HomeShell> {
                     ),
                   ),
                 ],
+              ),
               ),
             ),
           ),
@@ -1217,14 +1261,130 @@ class _MenuSectionTitle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 2, 8, 8),
-      child: Text(
-        text.toUpperCase(),
-        style: const TextStyle(
-          fontSize: 11,
-          letterSpacing: 1.5,
-          color: AppColors.textMuted,
-          fontWeight: FontWeight.w700,
+      padding: const EdgeInsets.fromLTRB(8, 4, 8, 10),
+      child: Row(
+        children: [
+          Text(
+            text.toUpperCase(),
+            style: const TextStyle(
+              fontSize: 11,
+              letterSpacing: 1.5,
+              color: AppColors.textMuted,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Container(
+              height: 1,
+              color: Colors.white.withValues(alpha: 0.08),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MenuQuickActions extends StatelessWidget {
+  const _MenuQuickActions({
+    required this.onDashboard,
+    required this.onGeneration,
+    required this.onJobs,
+    required this.onClasses,
+  });
+
+  final VoidCallback onDashboard;
+  final VoidCallback onGeneration;
+  final VoidCallback onJobs;
+  final VoidCallback onClasses;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        color: Colors.white.withValues(alpha: 0.03),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _MenuShortcutChip(
+              label: 'Dash',
+              icon: Icons.grid_view_rounded,
+              onTap: onDashboard,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _MenuShortcutChip(
+              label: 'Gen',
+              icon: Icons.auto_awesome_rounded,
+              onTap: onGeneration,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _MenuShortcutChip(
+              label: 'Jobs',
+              icon: Icons.schedule_rounded,
+              onTap: onJobs,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _MenuShortcutChip(
+              label: 'Class',
+              icon: Icons.class_rounded,
+              onTap: onClasses,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MenuShortcutChip extends StatelessWidget {
+  const _MenuShortcutChip({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: Ink(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: Colors.white.withValues(alpha: 0.05),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 18, color: AppColors.accent),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 10,
+                letterSpacing: 0.3,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textMuted,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1252,65 +1412,94 @@ class _MenuNavTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        minLeadingWidth: 0,
-        dense: true,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        tileColor: active
-            ? AppColors.primary.withValues(alpha: 0.14)
-            : Colors.white.withValues(alpha: 0.025),
-        leading: Container(
-          height: 34,
-          width: 34,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            color: active
-                ? AppColors.primary.withValues(alpha: 0.22)
-                : Colors.white.withValues(alpha: 0.06),
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(16),
+            gradient: active
+                ? LinearGradient(
+                    colors: [
+                      AppColors.primary.withValues(alpha: 0.2),
+                      AppColors.accent.withValues(alpha: 0.12),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  )
+                : null,
+            color: active ? null : Colors.white.withValues(alpha: 0.03),
+            border: Border.all(
+              color: active
+                  ? AppColors.primary.withValues(alpha: 0.45)
+                  : Colors.white.withValues(alpha: 0.08),
+            ),
           ),
-          child: Icon(
-            icon,
-            size: 19,
-            color: active ? AppColors.primary : Colors.white70,
-          ),
-        ),
-        title: Text(
-          title,
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-            color: active ? Colors.white : null,
-          ),
-        ),
-        subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if ((badge ?? '').isNotEmpty)
+          child: Row(
+            children: [
               Container(
-                margin: const EdgeInsets.only(right: 8),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                height: 36,
+                width: 36,
                 decoration: BoxDecoration(
-                  color: Colors.redAccent.withValues(alpha: 0.18),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: Colors.redAccent.withValues(alpha: 0.5)),
+                  color: active
+                      ? AppColors.primary.withValues(alpha: 0.26)
+                      : Colors.white.withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(11),
                 ),
-                child: Text(
-                  badge!,
-                  style: const TextStyle(
-                    color: Colors.redAccent,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                  ),
+                child: Icon(
+                  icon,
+                  size: 19,
+                  color: active ? AppColors.primary : Colors.white70,
                 ),
               ),
-            const Icon(
-              Icons.chevron_right_rounded,
-              color: AppColors.textMuted,
-            ),
-          ],
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: active ? Colors.white : null,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(subtitle, style: const TextStyle(fontSize: 12)),
+                  ],
+                ),
+              ),
+              if ((badge ?? '').isNotEmpty)
+                Container(
+                  margin: const EdgeInsets.only(right: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.redAccent.withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: Colors.redAccent.withValues(alpha: 0.5),
+                    ),
+                  ),
+                  child: Text(
+                    badge!,
+                    style: const TextStyle(
+                      color: Colors.redAccent,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: active ? Colors.white70 : AppColors.textMuted,
+              ),
+            ],
+          ),
         ),
-        onTap: onTap,
       ),
     );
   }

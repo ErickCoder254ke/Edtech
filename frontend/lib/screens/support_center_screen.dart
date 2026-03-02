@@ -184,7 +184,7 @@ class _HelpTab extends StatelessWidget {
     _FaqItem(
       q: 'Why did my document disappear?',
       a:
-          'Documents follow retention by plan (Free 3 days, Weekly 7, Monthly 14, Annual 30). You receive reminder emails before scheduled cleanup.',
+          'Documents follow the current account retention days configured by admin. You receive reminder emails before scheduled cleanup.',
     ),
     _FaqItem(
       q: 'Why can class payment show pending?',
