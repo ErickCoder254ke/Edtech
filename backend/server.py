@@ -7724,6 +7724,40 @@ async def _send_engagement_digest_email(*, user: Dict[str, Any], docs_count: int
         logger.info("engagement_digest_email_skipped reason=daily_limit user_id=%s", user.get("id"))
         return False
     full_name = str(user.get("full_name") or "").strip()
+    user_id = str(user.get("id") or "").strip()
+    now = datetime.now(timezone.utc)
+    availability_line = "No active document retention timeline found yet."
+    try:
+        if user_id:
+            active_docs = await db.documents.find(
+                {
+                    "user_id": user_id,
+                    "retention_expires_at": {"$exists": True},
+                },
+                {"_id": 0, "retention_expires_at": 1},
+            ).to_list(200)
+            expiry_times: List[datetime] = []
+            for doc in active_docs:
+                expiry = _parse_iso_datetime(doc.get("retention_expires_at"))
+                if expiry:
+                    expiry_times.append(expiry)
+            future_expiry = [dt for dt in expiry_times if dt > now]
+            if future_expiry:
+                next_expiry = min(future_expiry)
+                expiring_soon = len([dt for dt in future_expiry if dt <= now + timedelta(days=3)])
+                remaining = next_expiry - now
+                if remaining.total_seconds() < 3600 * 24:
+                    remaining_label = f"{max(1, int(remaining.total_seconds() // 3600))} hour(s)"
+                else:
+                    remaining_label = f"{max(1, remaining.days)} day(s)"
+                availability_line = (
+                    f"Next document cleanup in about <strong>{remaining_label}</strong>"
+                    f" (documents expiring within 3 days: <strong>{expiring_soon}</strong>)."
+                )
+            elif expiry_times:
+                availability_line = "Some document records are already at/after expiry and pending cleanup."
+    except Exception as exc:
+        logger.warning("engagement_digest_availability_compute_failed user_id=%s error=%s", user_id, exc)
     payload = {
         "sender": {"email": sender_email, "name": sender_name},
         "to": [{"email": recipient, "name": full_name or recipient}],
@@ -7733,6 +7767,7 @@ async def _send_engagement_digest_email(*, user: Dict[str, Any], docs_count: int
             "<p>Here is your latest Exam OS snapshot:</p>"
             f"<ul><li>Documents in library: <strong>{docs_count}</strong></li>"
             f"<li>Saved generations: <strong>{gens_count}</strong></li></ul>"
+            f"<p><strong>Document availability:</strong> {availability_line}</p>"
             "<p>Tip: keep key materials active and regenerate when you need updated assessments.</p>"
             "<p>Thanks for learning with Exam OS.</p>"
         ),

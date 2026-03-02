@@ -797,6 +797,39 @@ async def _build_retention_email_payload(target: Dict[str, Any]) -> Dict[str, An
         )
 
     subject = f"Exam OS Retention Insight: {headline}"
+    availability_line = "No active document retention timeline found yet."
+    try:
+        now = _utc_now()
+        docs = await db.documents.find(
+            {"user_id": user_id, "retention_expires_at": {"$exists": True}},
+            {"_id": 0, "retention_expires_at": 1},
+        ).to_list(200)
+        parsed: list[datetime] = []
+        for doc in docs:
+            raw = str(doc.get("retention_expires_at") or "").strip()
+            if not raw:
+                continue
+            dt = datetime.fromisoformat(raw)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            parsed.append(dt)
+        future = [dt for dt in parsed if dt > now]
+        if future:
+            next_expiry = min(future)
+            expiring_soon = len([dt for dt in future if dt <= now + timedelta(days=3)])
+            remaining = next_expiry - now
+            if remaining.total_seconds() < 3600 * 24:
+                remaining_label = f"{max(1, int(remaining.total_seconds() // 3600))} hour(s)"
+            else:
+                remaining_label = f"{max(1, remaining.days)} day(s)"
+            availability_line = (
+                f"Next document cleanup in about <strong>{remaining_label}</strong>"
+                f" (expiring within 3 days: <strong>{expiring_soon}</strong>)."
+            )
+        elif parsed:
+            availability_line = "Some document records are already at/after expiry and pending cleanup."
+    except Exception as exc:
+        logger.warning("retention_campaign_availability_compute_failed user_id=%s error=%s", user_id, exc)
     html = (
         f"<p>Hi {first_name},</p>"
         f"<p>{headline}.</p>"
@@ -807,6 +840,7 @@ async def _build_retention_email_payload(target: Dict[str, Any]) -> Dict[str, An
         f"(remaining: {generation_remaining})</li>"
         f"{exam_line}"
         "</ul>"
+        f"<p><strong>Document availability:</strong> {availability_line}</p>"
         "<p><strong>Recommended next step:</strong> "
         f"{next_step}</p>"
         "<p>Pro tip: combine Topic Board demand signals with Generation Lab prompts for faster exam planning.</p>"
