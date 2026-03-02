@@ -383,9 +383,14 @@ def _build_email_signature_block() -> str:
         return ""
     if EMAIL_SIGNATURE_IMAGE_URL:
         return (
-            '<div style="margin-bottom:14px;">'
+            '<div style="margin:0 0 14px 0;max-width:340px;">'
+            '<div style="margin-top:-28px;margin-left:10px;display:inline-block;'
+            'background:rgba(9,15,28,0.72);color:#e2e8f0;padding:4px 10px;'
+            'border-radius:999px;font-size:11px;font-weight:700;">'
+            'Exam OS Support'
+            "</div>"
             f'<img src="{EMAIL_SIGNATURE_IMAGE_URL}" alt="Exam OS" '
-            'style="max-width:220px;width:100%;height:auto;display:block;"/>'
+            'style="max-width:340px;width:100%;height:auto;display:block;"/>'
             "</div>"
         )
     image_path = Path(EMAIL_SIGNATURE_IMAGE_PATH)
@@ -397,9 +402,14 @@ def _build_email_signature_block() -> str:
         mime = mimetypes.guess_type(image_path.name)[0] or "image/png"
         encoded = base64.b64encode(image_bytes).decode("ascii")
         return (
-            '<div style="margin-bottom:14px;">'
+            '<div style="margin:0 0 14px 0;max-width:340px;">'
+            '<div style="margin-top:-28px;margin-left:10px;display:inline-block;'
+            'background:rgba(9,15,28,0.72);color:#e2e8f0;padding:4px 10px;'
+            'border-radius:999px;font-size:11px;font-weight:700;">'
+            'Exam OS Support'
+            "</div>"
             f'<img src="data:{mime};base64,{encoded}" alt="Exam OS" '
-            'style="max-width:220px;width:100%;height:auto;display:block;"/>'
+            'style="max-width:340px;width:100%;height:auto;display:block;"/>'
             "</div>"
         )
     except Exception as exc:
@@ -7761,7 +7771,7 @@ async def _send_engagement_digest_email(
     full_name = str(user.get("full_name") or "").strip()
     user_id = str(user.get("id") or "").strip()
     now = datetime.now(timezone.utc)
-    availability_line = "No active document retention timeline found yet."
+    availability_line = "We could not find active documents in your library yet."
     try:
         if user_id:
             active_docs = await db.documents.find(
@@ -7785,12 +7795,17 @@ async def _send_engagement_digest_email(
                     remaining_label = f"{max(1, int(remaining.total_seconds() // 3600))} hour(s)"
                 else:
                     remaining_label = f"{max(1, remaining.days)} day(s)"
-                availability_line = (
-                    f"Next document cleanup in about <strong>{remaining_label}</strong>"
-                    f" (documents expiring within 3 days: <strong>{expiring_soon}</strong>)."
-                )
+                if expiring_soon > 1:
+                    availability_line = (
+                        f"Your documents start expiring in about <strong>{remaining_label}</strong>. "
+                        f"<strong>{expiring_soon}</strong> document(s) expire within 3 days."
+                    )
+                else:
+                    availability_line = (
+                        f"Your next document expires in about <strong>{remaining_label}</strong>."
+                    )
             elif expiry_times:
-                availability_line = "Some document records are already at/after expiry and pending cleanup."
+                availability_line = "Some documents are already due for cleanup. Open Library to review."
     except Exception as exc:
         logger.warning("engagement_digest_availability_compute_failed user_id=%s error=%s", user_id, exc)
     payload = {
@@ -7803,6 +7818,7 @@ async def _send_engagement_digest_email(
             f"<ul><li>Documents in library: <strong>{docs_count}</strong></li>"
             f"<li>Saved generations: <strong>{gens_count}</strong></li></ul>"
             f"<p><strong>Document availability:</strong> {availability_line}</p>"
+            "<p>Tip: if you still need a document, open Library and re-upload it before expiry.</p>"
             "<p>Tip: keep key materials active and regenerate when you need updated assessments.</p>"
             "<p>Thanks for learning with Exam OS.</p>"
         ),

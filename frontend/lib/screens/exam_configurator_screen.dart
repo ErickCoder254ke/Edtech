@@ -459,14 +459,14 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
     if (expiresAt == null) {
       final days = doc.retentionDays;
       if (days != null && days > 0) {
-        return 'Available for about $days day(s) from upload';
+        return 'Expires after $days day(s) from upload';
       }
-      return 'Retention policy applies by plan';
+      return 'Expiry follows your plan retention period';
     }
     final diff = expiresAt.difference(DateTime.now());
-    if (diff.inSeconds <= 0) return 'Expires soon';
-    if (diff.inHours < 24) return 'Available for ~${diff.inHours}h more';
-    return 'Available for ~${diff.inDays} day(s) more';
+    if (diff.inSeconds <= 0) return 'Expired or expiring now';
+    if (diff.inHours < 24) return 'Expires in about ${diff.inHours} hour(s)';
+    return 'Expires in about ${diff.inDays} day(s)';
   }
 
   void _showSubscriptionPrompt(String message) {
