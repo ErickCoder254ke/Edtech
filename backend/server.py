@@ -7586,7 +7586,7 @@ async def _consume_retention_email_quota() -> bool:
         {
             "$inc": {"sent_count": 1},
             "$set": {"updated_at": now_iso},
-            "$setOnInsert": {"created_at": now_iso, "sent_count": 0},
+            "$setOnInsert": {"created_at": now_iso},
         },
         upsert=True,
         return_document=ReturnDocument.AFTER,
