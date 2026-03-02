@@ -7633,25 +7633,36 @@ _retention_maintenance_task: Optional[asyncio.Task] = None
 async def _acquire_retention_maintenance_lock(now: datetime) -> bool:
     now_iso = now.isoformat()
     lock_until = (now + timedelta(seconds=max(60, DOCUMENT_RETENTION_CLEANUP_INTERVAL_SECONDS // 2))).isoformat()
-    result = await db.maintenance_locks.find_one_and_update(
-        {
+    query = {
+        "lock_id": RETENTION_MAINTENANCE_LOCK_ID,
+        "$or": [
+            {"locked_until": {"$exists": False}},
+            {"locked_until": {"$lte": now_iso}},
+        ],
+    }
+    update = {
+        "$set": {
             "lock_id": RETENTION_MAINTENANCE_LOCK_ID,
-            "$or": [
-                {"locked_until": {"$exists": False}},
-                {"locked_until": {"$lte": now_iso}},
-            ],
+            "locked_until": lock_until,
+            "updated_at": now_iso,
         },
-        {
-            "$set": {
-                "lock_id": RETENTION_MAINTENANCE_LOCK_ID,
-                "locked_until": lock_until,
-                "updated_at": now_iso,
-            },
-            "$setOnInsert": {"created_at": now_iso},
-        },
-        upsert=True,
-        return_document=ReturnDocument.AFTER,
-    )
+        "$setOnInsert": {"created_at": now_iso},
+    }
+    try:
+        result = await db.maintenance_locks.find_one_and_update(
+            query,
+            update,
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+    except DuplicateKeyError:
+        # Another instance won the upsert race; treat this as lock contention.
+        result = await db.maintenance_locks.find_one_and_update(
+            query,
+            {"$set": {"locked_until": lock_until, "updated_at": now_iso}},
+            upsert=False,
+            return_document=ReturnDocument.AFTER,
+        )
     return bool(result and str(result.get("locked_until") or "") == lock_until)
 
 
