@@ -1,0 +1,39 @@
+# ==========================
+# Security Hardening Additions
+# ==========================
+
+# Per-user auth endpoint rate limit (requests per minute).
+# Used on authenticated auth routes such as /auth/me, /auth/refresh, /auth/logout.
+AUTH_USER_PER_MIN_LIMIT=60
+
+# --------------------------
+# Login Exponential Backoff
+# --------------------------
+# Window (minutes) used to keep/login failure counters before reset.
+LOGIN_BACKOFF_WINDOW_MINUTES=30
+
+# Number of failed attempts allowed before backoff starts.
+LOGIN_BACKOFF_FREE_ATTEMPTS=3
+
+# Base backoff delay in seconds after free attempts are exceeded.
+# Effective delay grows exponentially: base * 2^(penalized_attempts-1)
+LOGIN_BACKOFF_BASE_SECONDS=2
+
+# Maximum backoff delay cap (seconds).
+LOGIN_BACKOFF_MAX_SECONDS=300
+
+# --------------------------
+# M-Pesa Callback Verification
+# --------------------------
+# Optional shared secret for callback verification.
+# Leave empty in sandbox if your current callback URL does not include a secret yet.
+MPESA_CALLBACK_SECRET=
+
+# Query parameter name used to carry callback secret.
+# Example callback URL:
+# https://your-domain/api/payments/mpesa/callback?token=YOUR_SECRET
+MPESA_CALLBACK_SECRET_QUERY_PARAM=token
+
+# Header name accepted for callback secret.
+# If your relay/proxy can add headers, use this as an alternative to query param.
+MPESA_CALLBACK_SECRET_HEADER=x-callback-token

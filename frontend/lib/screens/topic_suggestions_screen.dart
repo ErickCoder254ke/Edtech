@@ -183,7 +183,8 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
         if (paymentStatus == 'paid' || paymentStatus == 'free') {
           _paidClassIds.add(entry.key);
         }
-        if (entry.value.status.toLowerCase() == 'completed') {
+        final ended = !now.isBefore(entry.value.scheduledEndAt.toLocal());
+        if (entry.value.status.toLowerCase() == 'completed' || ended) {
           _completedClassIds.add(entry.key);
         }
       }
@@ -197,12 +198,12 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
     final start = session.scheduledStartAt.toLocal();
     final end = session.scheduledEndAt.toLocal();
     final status = session.status.toLowerCase();
-    if (status == 'completed') return 'Completed';
-    if (status == 'cancelled') return 'Cancelled';
+    if (status == 'completed' || status == 'cancelled') return null;
+    if (!now.isBefore(end)) return null;
     if (now.isAfter(start) && now.isBefore(end)) {
       final minutes = end.difference(now).inMinutes;
-      if (minutes > 0) return 'Ongoing - ends in $minutes min';
-      return 'Ongoing';
+      if (minutes <= 10) return 'ONGOING - ending in ${minutes.clamp(1, 10)} min';
+      return 'ONGOING';
     }
     if (now.isBefore(start)) {
       final minutes = start.difference(now).inMinutes;
@@ -211,7 +212,30 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
       if (hours < 24) return 'Starts in $hours hr';
       return 'Starts ${start.year}-${start.month.toString().padLeft(2, '0')}-${start.day.toString().padLeft(2, '0')}';
     }
-    return 'Ended';
+    return null;
+  }
+
+  String? _buildOngoingAlertLabel(String classId) {
+    final session = _linkedClasses[classId];
+    if (session == null) return null;
+    final now = DateTime.now();
+    final start = session.scheduledStartAt.toLocal();
+    final end = session.scheduledEndAt.toLocal();
+    final status = session.status.toLowerCase();
+    if (status == 'completed' || status == 'cancelled') return null;
+    if (!(now.isAfter(start) && now.isBefore(end))) return null;
+    final startedMins = now.difference(start).inMinutes.clamp(0, 720);
+    final endingMins = end.difference(now).inMinutes.clamp(1, 720);
+    return 'Started $startedMins min ago - Ending in $endingMins min';
+  }
+
+  bool _isTopicClassActive(String classId) {
+    final session = _linkedClasses[classId];
+    if (session == null) return true;
+    final now = DateTime.now();
+    final status = session.status.toLowerCase();
+    if (status == 'completed' || status == 'cancelled') return false;
+    return now.isBefore(session.scheduledEndAt.toLocal());
   }
 
   String? _buildClassFeeLabel(String classId) {
@@ -223,6 +247,7 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
 
   _ChipTone _classMetaTone(String? classMetaLabel) {
     final text = (classMetaLabel ?? '').toLowerCase();
+    if (text.contains('ending in')) return _ChipTone.warning;
     if (text.startsWith('ongoing')) return _ChipTone.success;
     if (text.startsWith('starts in')) return _ChipTone.warning;
     if (text.contains('completed') || text.contains('cancelled') || text == 'ended') {
@@ -720,6 +745,12 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
   @override
   Widget build(BuildContext context) {
     final suggestions = _topicList?.items ?? const <TopicSuggestion>[];
+    final visibleSuggestions = suggestions.where((topic) {
+      final classId = topic.linkedClassId?.trim() ?? '';
+      if (classId.isEmpty) return true;
+      if (topic.status != 'class_created') return true;
+      return _isTopicClassActive(classId);
+    }).toList();
     final demandVotes = _topicList?.totalVotes ?? 0;
     final demandTopics = _topicList?.totalSuggestions ?? 0;
 
@@ -773,10 +804,10 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
                   const SizedBox(height: 10),
                   if (_loading) const _LoadingCard(),
                   if (_error != null) _ErrorCard(message: _error!),
-                  if (!_loading && _error == null && suggestions.isEmpty)
+                  if (!_loading && _error == null && visibleSuggestions.isEmpty)
                     const _EmptyStateCard()
                   else if (!_loading && _error == null)
-                    ...suggestions.map(
+                    ...visibleSuggestions.map(
                       (topic) => _TopicCard(
                         item: topic,
                         canUpvote: _isStudent,
@@ -794,6 +825,9 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
                         classMetaTone: topic.linkedClassId == null
                             ? _ChipTone.neutral
                             : _classMetaTone(_buildClassMetaLabel(topic.linkedClassId!.trim())),
+                        ongoingAlertLabel: topic.linkedClassId == null
+                            ? null
+                            : _buildOngoingAlertLabel(topic.linkedClassId!.trim()),
                         onUpvote: () => _upvoteTopic(topic),
                         onTeacherCreateClass: () => _teacherCreateClass(topic),
                         onStudentJoinClass: () => _studentJoinClassFromTopic(topic),
@@ -1074,6 +1108,7 @@ class _TopicCard extends StatelessWidget {
     required this.classMetaLabel,
     required this.classFeeLabel,
     required this.classMetaTone,
+    required this.ongoingAlertLabel,
     required this.onUpvote,
     required this.onTeacherCreateClass,
     required this.onStudentJoinClass,
@@ -1089,6 +1124,7 @@ class _TopicCard extends StatelessWidget {
   final String? classMetaLabel;
   final String? classFeeLabel;
   final _ChipTone classMetaTone;
+  final String? ongoingAlertLabel;
   final VoidCallback onUpvote;
   final VoidCallback onTeacherCreateClass;
   final VoidCallback onStudentJoinClass;
@@ -1173,6 +1209,40 @@ class _TopicCard extends StatelessWidget {
                       if (alreadyVoted) const _TinyChip(text: 'Voted'),
                     ],
                   ),
+                  if ((ongoingAlertLabel ?? '').isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.greenAccent.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: Colors.greenAccent.withValues(alpha: 0.45),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.bolt_rounded,
+                            size: 16,
+                            color: Colors.greenAccent,
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              ongoingAlertLabel!,
+                              style: const TextStyle(
+                                color: Colors.greenAccent,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   if (!canUpvote) ...[
                     const SizedBox(height: 10),
                     SizedBox(

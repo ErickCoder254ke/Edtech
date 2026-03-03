@@ -909,7 +909,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   const Padding(
                     padding: EdgeInsets.only(bottom: 8),
                     child: Text(
-                      'Used only for old subscriptions created before Credit Shop.',
+                      'Used only for legacy weekly/monthly/annual subscriptions created before Credit Shop migration.',
                       style: TextStyle(
                         color: AppColors.textMuted,
                         fontSize: 11,
@@ -1254,6 +1254,14 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                           fontSize: 12,
                         ),
                       ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Pricing guide: Customer Price = learner charge, Internal Cost = fulfillment baseline, Included Units = exams/tasks granted.',
+                        style: TextStyle(
+                          color: AppColors.textMuted,
+                          fontSize: 11,
+                        ),
+                      ),
                       const SizedBox(height: 14),
                       const Text(
                         'Free Tier',
@@ -1265,7 +1273,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       ),
                       const SizedBox(height: 8),
                       _settingsField(
-                        'Free Plan Max Generations',
+                        'Free Tier Max Generations (per cycle)',
                         _freePlanMaxGenerationsController,
                       ),
                       _legacyCompatibilitySection(),
@@ -1280,15 +1288,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       ),
                       const SizedBox(height: 8),
                       _settingsField(
-                        'Small Exam Pack Price (KES)',
+                        'Small Exam Pack Customer Price (KES)',
                         _examPackSmallPriceKesController,
                       ),
                       _settingsField(
-                        'Small Exam Pack Cost (KES)',
+                        'Small Exam Pack Internal Cost (KES)',
                         _examPackSmallCostKesController,
                       ),
                       _settingsField(
-                        'Small Exam Pack Exams',
+                        'Small Exam Pack Included Exams',
                         _examPackSmallExamsController,
                       ),
                       _offerToggleRow(
@@ -1297,15 +1305,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         (v) => setState(() => _examPackSmallOnOffer = v),
                       ),
                       _settingsField(
-                        'Medium Exam Pack Price (KES)',
+                        'Medium Exam Pack Customer Price (KES)',
                         _examPackMediumPriceKesController,
                       ),
                       _settingsField(
-                        'Medium Exam Pack Cost (KES)',
+                        'Medium Exam Pack Internal Cost (KES)',
                         _examPackMediumCostKesController,
                       ),
                       _settingsField(
-                        'Medium Exam Pack Exams',
+                        'Medium Exam Pack Included Exams',
                         _examPackMediumExamsController,
                       ),
                       _offerToggleRow(
@@ -1314,15 +1322,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         (v) => setState(() => _examPackMediumOnOffer = v),
                       ),
                       _settingsField(
-                        'Large Exam Pack Price (KES)',
+                        'Large Exam Pack Customer Price (KES)',
                         _examPackLargePriceKesController,
                       ),
                       _settingsField(
-                        'Large Exam Pack Cost (KES)',
+                        'Large Exam Pack Internal Cost (KES)',
                         _examPackLargeCostKesController,
                       ),
                       _settingsField(
-                        'Large Exam Pack Exams',
+                        'Large Exam Pack Included Exams',
                         _examPackLargeExamsController,
                       ),
                       _offerToggleRow(
@@ -1341,15 +1349,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       ),
                       const SizedBox(height: 8),
                       _settingsField(
-                        'Starter Task Pack Price (KES)',
+                        'Starter Task Pack Customer Price (KES)',
                         _taskPackStarterPriceKesController,
                       ),
                       _settingsField(
-                        'Starter Task Pack Cost (KES)',
+                        'Starter Task Pack Internal Cost (KES)',
                         _taskPackStarterCostKesController,
                       ),
                       _settingsField(
-                        'Starter Task Pack Tasks',
+                        'Starter Task Pack Included Tasks',
                         _taskPackStarterTasksController,
                       ),
                       _offerToggleRow(
@@ -1358,15 +1366,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         (v) => setState(() => _taskPackStarterOnOffer = v),
                       ),
                       _settingsField(
-                        'Medium Task Pack Price (KES)',
+                        'Medium Task Pack Customer Price (KES)',
                         _taskPackMediumPriceKesController,
                       ),
                       _settingsField(
-                        'Medium Task Pack Cost (KES)',
+                        'Medium Task Pack Internal Cost (KES)',
                         _taskPackMediumCostKesController,
                       ),
                       _settingsField(
-                        'Medium Task Pack Tasks',
+                        'Medium Task Pack Included Tasks',
                         _taskPackMediumTasksController,
                       ),
                       _offerToggleRow(
@@ -1375,15 +1383,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         (v) => setState(() => _taskPackMediumOnOffer = v),
                       ),
                       _settingsField(
-                        'Large Task Pack Price (KES)',
+                        'Large Task Pack Customer Price (KES)',
                         _taskPackLargePriceKesController,
                       ),
                       _settingsField(
-                        'Large Task Pack Cost (KES)',
+                        'Large Task Pack Internal Cost (KES)',
                         _taskPackLargeCostKesController,
                       ),
                       _settingsField(
-                        'Large Task Pack Tasks',
+                        'Large Task Pack Included Tasks',
                         _taskPackLargeTasksController,
                       ),
                       _offerToggleRow(
@@ -1402,15 +1410,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       ),
                       const SizedBox(height: 8),
                       _settingsField(
-                        'Task Booster Price (KES)',
+                        'Task Booster Customer Price (KES)',
                         _topupTaskBoosterPriceKesController,
                       ),
                       _settingsField(
-                        'Task Booster Cost (KES)',
+                        'Task Booster Internal Cost (KES)',
                         _topupTaskBoosterCostKesController,
                       ),
                       _settingsField(
-                        'Task Booster Tasks',
+                        'Task Booster Included Tasks',
                         _topupTaskBoosterTasksController,
                       ),
                       _offerToggleRow(
@@ -1419,15 +1427,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         (v) => setState(() => _topupTaskBoosterOnOffer = v),
                       ),
                       _settingsField(
-                        'Exam Booster Price (KES)',
+                        'Exam Booster Customer Price (KES)',
                         _topupExamBoosterPriceKesController,
                       ),
                       _settingsField(
-                        'Exam Booster Cost (KES)',
+                        'Exam Booster Internal Cost (KES)',
                         _topupExamBoosterCostKesController,
                       ),
                       _settingsField(
-                        'Exam Booster Exams',
+                        'Exam Booster Included Exams',
                         _topupExamBoosterExamsController,
                       ),
                       _offerToggleRow(

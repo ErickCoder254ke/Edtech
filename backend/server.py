@@ -117,6 +117,11 @@ EMBEDDING_CONCURRENCY = int(os.environ.get("EMBEDDING_CONCURRENCY", "8"))
 GEN_PER_MIN_LIMIT = int(os.environ.get("GEN_PER_MIN_LIMIT", "20"))
 UPLOAD_PER_MIN_LIMIT = int(os.environ.get("UPLOAD_PER_MIN_LIMIT", "6"))
 AUTH_PER_MIN_LIMIT = int(os.environ.get("AUTH_PER_MIN_LIMIT", "20"))
+AUTH_USER_PER_MIN_LIMIT = int(os.environ.get("AUTH_USER_PER_MIN_LIMIT", "60"))
+LOGIN_BACKOFF_WINDOW_MINUTES = int(os.environ.get("LOGIN_BACKOFF_WINDOW_MINUTES", "30"))
+LOGIN_BACKOFF_FREE_ATTEMPTS = int(os.environ.get("LOGIN_BACKOFF_FREE_ATTEMPTS", "3"))
+LOGIN_BACKOFF_BASE_SECONDS = int(os.environ.get("LOGIN_BACKOFF_BASE_SECONDS", "2"))
+LOGIN_BACKOFF_MAX_SECONDS = int(os.environ.get("LOGIN_BACKOFF_MAX_SECONDS", "300"))
 JOB_STATUS_PER_MIN_LIMIT = int(os.environ.get("JOB_STATUS_PER_MIN_LIMIT", "120"))
 CLASS_CREATE_PER_MIN_LIMIT = int(os.environ.get("CLASS_CREATE_PER_MIN_LIMIT", "12"))
 CLASS_JOIN_PER_MIN_LIMIT = int(os.environ.get("CLASS_JOIN_PER_MIN_LIMIT", "30"))
@@ -219,6 +224,9 @@ PASSWORD_RESET_SCHEME = os.environ.get("PASSWORD_RESET_SCHEME", "examos")
 PASSWORD_RESET_DEEP_LINK_HOST = os.environ.get("PASSWORD_RESET_DEEP_LINK_HOST", "reset-password")
 PASSWORD_RESET_REQUIRE_HTTPS = os.environ.get("PASSWORD_RESET_REQUIRE_HTTPS", "true").lower() == "true"
 PASSWORD_RESET_TOKEN_PEPPER = os.environ.get("PASSWORD_RESET_TOKEN_PEPPER", JWT_SECRET)
+MPESA_CALLBACK_SECRET = os.environ.get("MPESA_CALLBACK_SECRET", "").strip()
+MPESA_CALLBACK_SECRET_QUERY_PARAM = os.environ.get("MPESA_CALLBACK_SECRET_QUERY_PARAM", "token").strip() or "token"
+MPESA_CALLBACK_SECRET_HEADER = os.environ.get("MPESA_CALLBACK_SECRET_HEADER", "x-callback-token").strip().lower() or "x-callback-token"
 BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "")
 BREVO_API_KEY2 = os.environ.get("BREVO_API_KEY2", "").strip()
 BREVO_SENDER_EMAIL = os.environ.get("BREVO_SENDER_EMAIL", "")
@@ -727,6 +735,7 @@ class ClassCreateRequest(BaseModel):
     scheduled_start_at: datetime
     scheduled_end_at: datetime
     fee_kes: int = Field(ge=0)
+    class_level: Optional[str] = None
 
 
 class TopicClassCreateRequest(BaseModel):
@@ -736,6 +745,7 @@ class TopicClassCreateRequest(BaseModel):
     scheduled_start_at: datetime
     scheduled_end_at: datetime
     fee_kes: int = Field(ge=0)
+    class_level: Optional[str] = None
 
 
 class ClassReviewCreateRequest(BaseModel):
@@ -825,6 +835,7 @@ class ClassSessionResponse(BaseModel):
     scheduled_start_at: datetime
     scheduled_end_at: datetime
     status: str
+    class_level: Optional[str] = None
     created_at: datetime
     fee_kes: int = 0
     platform_fee_percent: float = 0
@@ -834,6 +845,7 @@ class ClassSessionResponse(BaseModel):
     joined: bool = False
     payment_required: bool = False
     payment_status: Optional[str] = None
+    student_reviewed: bool = False
     average_rating: Optional[float] = None
     review_count: int = 0
     topic_suggestion_id: Optional[str] = None
@@ -846,6 +858,7 @@ class ClassReviewResponse(BaseModel):
     teacher_id: str
     rating: int
     comment: Optional[str] = None
+    student_name: Optional[str] = None
     created_at: datetime
 
 
@@ -1923,6 +1936,65 @@ def normalize_topic_category(raw_category: str) -> str:
     )
 
 
+def normalize_class_level(raw_level: Optional[str]) -> Optional[str]:
+    if raw_level is None:
+        return None
+    key = str(raw_level).strip().lower().replace("\u2013", "-")
+    if not key:
+        return None
+    key = re.sub(r"\s+", " ", key).replace("-", "_")
+    key = key.replace(" _ ", "_").replace(" ", "_")
+    normalized = TOPIC_CATEGORY_ALIASES.get(key)
+    if normalized:
+        return normalized
+    fallback_key = str(raw_level).strip().lower().replace("\u2013", "-")
+    fallback_key = re.sub(r"\s+", " ", fallback_key)
+    return TOPIC_CATEGORY_ALIASES.get(fallback_key)
+
+
+def infer_class_level_from_text(title: str, description: Optional[str]) -> Optional[str]:
+    text = f"{title or ''} {description or ''}".lower()
+    grade_match = re.search(r"\bgrade\s*([0-9]{1,2})\b", text)
+    if grade_match:
+        grade = int(grade_match.group(1))
+        if 1 <= grade <= 4:
+            return "grade_1_4"
+        if 5 <= grade <= 6:
+            return "grade_5_6"
+        if 7 <= grade <= 9:
+            return "junior_secondary"
+        if 10 <= grade <= 12:
+            return "senior_secondary"
+    form_match = re.search(r"\bform\s*([1-4])\b", text)
+    if form_match:
+        return "senior_secondary"
+    if "junior secondary" in text:
+        return "junior_secondary"
+    if "senior secondary" in text:
+        return "senior_secondary"
+    if "upper primary" in text:
+        return "grade_5_6"
+    if "lower primary" in text:
+        return "grade_1_4"
+    return None
+
+
+def resolve_class_level(
+    *,
+    explicit_level: Optional[str],
+    title: str,
+    description: Optional[str],
+    topic_category: Optional[str] = None,
+) -> Optional[str]:
+    normalized = normalize_class_level(explicit_level)
+    if normalized:
+        return normalized
+    topic_norm = normalize_class_level(topic_category)
+    if topic_norm:
+        return topic_norm
+    return infer_class_level_from_text(title=title, description=description)
+
+
 def get_topic_sort(sort_value: str) -> List[Tuple[str, int]]:
     sort_key = (sort_value or "top").strip().lower()
     if sort_key not in TOPIC_SORT_OPTIONS:
@@ -1937,6 +2009,92 @@ def extract_request_ip(request: Request) -> str:
     if forwarded:
         return forwarded.split(",")[0].strip() or "unknown"
     return request.client.host if request.client else "unknown"
+
+
+def _masked_identity(identity: str) -> str:
+    text = (identity or "").strip()
+    if len(text) <= 3:
+        return "***"
+    return f"{text[:2]}***{text[-1:]}"
+
+
+async def enforce_login_backoff(email: str, ip_address: str) -> None:
+    now = datetime.now(timezone.utc)
+    keys = [f"email:{email}", f"email_ip:{email}:{ip_address}"]
+    blocked_until: Optional[datetime] = None
+    for key in keys:
+        doc = await db.login_attempts.find_one({"key": key}, {"_id": 0, "blocked_until": 1})
+        raw_until = str((doc or {}).get("blocked_until") or "").strip()
+        if not raw_until:
+            continue
+        try:
+            until = datetime.fromisoformat(raw_until)
+            if until.tzinfo is None:
+                until = until.replace(tzinfo=timezone.utc)
+        except Exception:
+            continue
+        if until > now and (blocked_until is None or until > blocked_until):
+            blocked_until = until
+    if blocked_until is None:
+        return
+    retry_after = max(1, int((blocked_until - now).total_seconds()))
+    raise HTTPException(
+        status_code=429,
+        detail=f"Too many login attempts. Try again in {retry_after} seconds.",
+    )
+
+
+async def record_login_failure(email: str, ip_address: str) -> None:
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+    window_seconds = max(60, LOGIN_BACKOFF_WINDOW_MINUTES * 60)
+    keys = [f"email:{email}", f"email_ip:{email}:{ip_address}"]
+    for key in keys:
+        prev = await db.login_attempts.find_one({"key": key}, {"_id": 0})
+        should_reset = True
+        if prev and prev.get("last_failed_at"):
+            try:
+                last = datetime.fromisoformat(str(prev.get("last_failed_at")))
+                if last.tzinfo is None:
+                    last = last.replace(tzinfo=timezone.utc)
+                should_reset = (now - last).total_seconds() > window_seconds
+            except Exception:
+                should_reset = True
+        fail_count = 1 if should_reset else int(prev.get("fail_count", 0)) + 1 if prev else 1
+        penalized = max(0, fail_count - max(0, LOGIN_BACKOFF_FREE_ATTEMPTS))
+        delay_seconds = 0
+        if penalized > 0:
+            delay_seconds = min(LOGIN_BACKOFF_MAX_SECONDS, LOGIN_BACKOFF_BASE_SECONDS * (2 ** (penalized - 1)))
+        blocked_until = (now + timedelta(seconds=delay_seconds)).isoformat() if delay_seconds > 0 else now_iso
+        await db.login_attempts.update_one(
+            {"key": key},
+            {
+                "$set": {
+                    "key": key,
+                    "email": email,
+                    "ip_address": ip_address if key.startswith("email_ip:") else None,
+                    "last_failed_at": now_iso,
+                    "fail_count": fail_count,
+                    "blocked_until": blocked_until,
+                    "updated_at": now_iso,
+                },
+                "$setOnInsert": {"created_at": now_iso},
+            },
+            upsert=True,
+        )
+
+
+async def clear_login_failures(email: str, ip_address: str) -> None:
+    keys = [f"email:{email}", f"email_ip:{email}:{ip_address}"]
+    await db.login_attempts.delete_many({"key": {"$in": keys}})
+
+
+def verify_mpesa_callback_request(request: Request) -> bool:
+    if not MPESA_CALLBACK_SECRET:
+        return True
+    header_token = (request.headers.get(MPESA_CALLBACK_SECRET_HEADER) or "").strip()
+    query_token = (request.query_params.get(MPESA_CALLBACK_SECRET_QUERY_PARAM) or "").strip()
+    return bool(header_token == MPESA_CALLBACK_SECRET or query_token == MPESA_CALLBACK_SECRET)
 
 
 def compute_vote_device_fingerprint(request: Request) -> str:
@@ -2293,6 +2451,7 @@ async def build_class_response(
     teacher_net_kes, _ = compute_class_escrow_split(fee_kes)
     joined = False
     payment_status: Optional[str] = None
+    student_reviewed = False
     payment_required = False
     meeting_link = norm["meeting_link"]
     if current_user_role == "student":
@@ -2302,6 +2461,12 @@ async def build_class_response(
         )
         payment_status = str((enrollment or {}).get("payment_status") or "not_joined").lower()
         joined = payment_status in {"paid", "free"}
+        if joined:
+            existing_review = await db.class_reviews.find_one(
+                {"class_id": norm["id"], "student_id": current_user_id},
+                {"_id": 0, "id": 1},
+            )
+            student_reviewed = existing_review is not None
         payment_required = fee_kes > 0 and not joined
         # Students should only see the meeting link after successful payment/free enrollment.
         if payment_required:
@@ -2319,6 +2484,10 @@ async def build_class_response(
         scheduled_start_at=norm["scheduled_start_at"],
         scheduled_end_at=norm["scheduled_end_at"],
         status=norm.get("status", "scheduled"),
+        class_level=(
+            normalize_class_level(norm.get("class_level"))
+            or infer_class_level_from_text(norm.get("title", ""), norm.get("description"))
+        ),
         created_at=norm["created_at"],
         fee_kes=fee_kes,
         platform_fee_percent=platform_fee_percent,
@@ -2328,6 +2497,7 @@ async def build_class_response(
         joined=joined,
         payment_required=payment_required,
         payment_status=payment_status,
+        student_reviewed=student_reviewed,
         average_rating=avg_rating,
         review_count=review_count,
         topic_suggestion_id=norm.get("topic_suggestion_id"),
@@ -2411,6 +2581,8 @@ async def create_class_session_record(
     scheduled_end_at: datetime,
     fee_kes: int,
     topic_suggestion_id: Optional[str] = None,
+    class_level: Optional[str] = None,
+    topic_category: Optional[str] = None,
 ) -> Dict[str, Any]:
     normalized_title = (title or "").strip()
     if not normalized_title:
@@ -2449,6 +2621,12 @@ async def create_class_session_record(
         )
 
     duration_minutes = max(int((end_at - start_at).total_seconds() // 60), 1)
+    resolved_class_level = resolve_class_level(
+        explicit_level=class_level,
+        title=normalized_title,
+        description=normalized_description,
+        topic_category=topic_category,
+    )
     now_iso = now.isoformat()
     class_doc = {
         "id": str(uuid.uuid4()),
@@ -2461,6 +2639,7 @@ async def create_class_session_record(
         "scheduled_end_at": end_at.isoformat(),
         "duration_minutes": duration_minutes,
         "fee_kes": normalized_fee_kes,
+        "class_level": resolved_class_level,
         "currency": "KES",
         "status": "scheduled",
         "created_at": now_iso,
@@ -4133,7 +4312,7 @@ async def unhandled_exception_handler(_: Request, exc: Exception):
 
 @api_router.post("/auth/register", response_model=SignupChallengeResponse)
 async def register(user_data: UserRegister, request: Request):
-    ip = request.client.host if request.client else "unknown"
+    ip = extract_request_ip(request)
     await ensure_rate_limit(ip, "auth_register", AUTH_PER_MIN_LIMIT)
     await rate_limiter.check(
         f"auth_signup_otp_request_ip:{ip}",
@@ -4205,7 +4384,7 @@ async def register(user_data: UserRegister, request: Request):
 
 @api_router.post("/auth/register/verify", response_model=TokenResponse)
 async def verify_signup_otp(payload: SignupOtpVerifyRequest, request: Request):
-    ip = request.client.host if request.client else "unknown"
+    ip = extract_request_ip(request)
     await ensure_rate_limit(ip, "auth_register_verify", AUTH_PER_MIN_LIMIT)
     await ensure_rate_limit(payload.signup_id, "auth_signup_otp_verify_signup", SIGNUP_OTP_VERIFY_PER_MIN_LIMIT)
 
@@ -4268,7 +4447,7 @@ async def verify_signup_otp(payload: SignupOtpVerifyRequest, request: Request):
 
 @api_router.post("/auth/register/resend")
 async def resend_signup_otp(payload: SignupOtpResendRequest, request: Request):
-    ip = request.client.host if request.client else "unknown"
+    ip = extract_request_ip(request)
     await ensure_rate_limit(ip, "auth_register_resend", AUTH_PER_MIN_LIMIT)
     await rate_limiter.check(
         f"auth_signup_otp_resend_ip:{ip}",
@@ -4313,13 +4492,21 @@ async def resend_signup_otp(payload: SignupOtpResendRequest, request: Request):
 
 @api_router.post("/auth/login", response_model=TokenResponse)
 async def login(credentials: UserLogin, request: Request):
-    ip = request.client.host if request.client else "unknown"
+    ip = extract_request_ip(request)
     await ensure_rate_limit(ip, "auth_login", AUTH_PER_MIN_LIMIT)
     normalized_email = credentials.email.lower()
+    await enforce_login_backoff(normalized_email, ip)
 
     user_doc = await db.users.find_one({"email": normalized_email}, {"_id": 0})
     if not user_doc or not verify_password(credentials.password, user_doc["password_hash"]):
+        await record_login_failure(normalized_email, ip)
+        logger.warning(
+            "login_failed email=%s ip=%s",
+            _masked_identity(normalized_email),
+            ip,
+        )
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    await clear_login_failures(normalized_email, ip)
 
     user = User(**{k: v for k, v in user_doc.items() if k != "password_hash"})
     access_token, _, _ = create_token(
@@ -4334,7 +4521,7 @@ async def login(credentials: UserLogin, request: Request):
 
 @api_router.post("/auth/password-reset/request")
 async def request_password_reset(payload: PasswordResetRequest, request: Request):
-    ip = request.client.host if request.client else "unknown"
+    ip = extract_request_ip(request)
     await rate_limiter.check(
         f"auth_password_reset_request_ip:{ip}",
         limit=PASSWORD_RESET_REQUEST_PER_HOUR_LIMIT,
@@ -4394,7 +4581,7 @@ async def request_password_reset(payload: PasswordResetRequest, request: Request
 
 @api_router.post("/auth/password-reset/confirm")
 async def confirm_password_reset(payload: PasswordResetConfirmRequest, request: Request):
-    ip = request.client.host if request.client else "unknown"
+    ip = extract_request_ip(request)
     await ensure_rate_limit(ip, "auth_password_reset_confirm_ip", PASSWORD_RESET_CONFIRM_PER_MIN_LIMIT)
 
     if len(payload.new_password) < 8:
@@ -4441,8 +4628,11 @@ async def confirm_password_reset(payload: PasswordResetConfirmRequest, request: 
 
 
 @api_router.post("/auth/refresh", response_model=TokenResponse)
-async def refresh_tokens(payload: RefreshTokenRequest):
+async def refresh_tokens(payload: RefreshTokenRequest, request: Request):
+    ip = extract_request_ip(request)
+    await ensure_rate_limit(ip, "auth_refresh_ip", AUTH_PER_MIN_LIMIT)
     refresh_payload = await decode_token(payload.refresh_token, "refresh", check_revoked=False)
+    await ensure_rate_limit(refresh_payload["user_id"], "auth_refresh_user", AUTH_USER_PER_MIN_LIMIT)
     refresh_doc = await db.refresh_tokens.find_one({"jti": refresh_payload["jti"]}, {"_id": 0})
     if not refresh_doc:
         raise HTTPException(status_code=401, detail="Refresh token invalid or revoked")
@@ -4490,15 +4680,19 @@ async def refresh_tokens(payload: RefreshTokenRequest):
 
 @api_router.post("/auth/logout")
 async def logout(
-    request: LogoutRequest,
+    payload: LogoutRequest,
+    http_request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
+    ip = extract_request_ip(http_request)
+    await ensure_rate_limit(ip, "auth_logout_ip", AUTH_PER_MIN_LIMIT)
     access_payload = await decode_token(credentials.credentials, "access")
+    await ensure_rate_limit(access_payload["user_id"], "auth_logout_user", AUTH_USER_PER_MIN_LIMIT)
     access_exp = datetime.fromtimestamp(access_payload["exp"], tz=timezone.utc)
     await revoke_token(access_payload["jti"], access_exp, "access", reason="logout")
 
-    if request.refresh_token:
-        refresh_payload = await decode_token(request.refresh_token, "refresh")
+    if payload.refresh_token:
+        refresh_payload = await decode_token(payload.refresh_token, "refresh")
         refresh_exp = datetime.fromtimestamp(refresh_payload["exp"], tz=timezone.utc)
         await revoke_token(refresh_payload["jti"], refresh_exp, "refresh", reason="logout")
 
@@ -4507,6 +4701,7 @@ async def logout(
 
 @api_router.get("/auth/me", response_model=User)
 async def get_me(current_user: Dict[str, Any] = Depends(get_current_user)):
+    await ensure_rate_limit(current_user["id"], "auth_me_user", AUTH_USER_PER_MIN_LIMIT)
     return User(**normalize_datetime_fields(current_user, ["created_at"]))
 
 
@@ -4598,7 +4793,10 @@ async def subscription_payment_status(
 
 
 @api_router.post("/payments/mpesa/callback")
-async def mpesa_callback(payload: Dict[str, Any], background_tasks: BackgroundTasks):
+async def mpesa_callback(request: Request, payload: Dict[str, Any], background_tasks: BackgroundTasks):
+    if not verify_mpesa_callback_request(request):
+        logger.warning("mpesa_callback_rejected reason=invalid_callback_secret ip=%s", extract_request_ip(request))
+        return {"ResultCode": 0, "ResultDesc": "Accepted"}
     callback = (
         payload.get("Body", {})
         .get("stkCallback", {})
@@ -4649,6 +4847,21 @@ async def mpesa_callback(payload: Dict[str, Any], background_tasks: BackgroundTa
             {"checkout_request_id": checkout_request_id},
             {"_id": 0},
         )
+    # Additional callback integrity check: callback merchant request must match the one issued at checkout.
+    if subscription_payment and merchant_request_id and subscription_payment.get("merchant_request_id"):
+        if str(subscription_payment.get("merchant_request_id")) != str(merchant_request_id):
+            logger.warning(
+                "mpesa_callback_rejected reason=merchant_request_mismatch type=subscription checkout_request_id=%s",
+                checkout_request_id,
+            )
+            return {"ResultCode": 0, "ResultDesc": "Accepted"}
+    if class_payment and merchant_request_id and class_payment.get("merchant_request_id"):
+        if str(class_payment.get("merchant_request_id")) != str(merchant_request_id):
+            logger.warning(
+                "mpesa_callback_rejected reason=merchant_request_mismatch type=class_join checkout_request_id=%s",
+                checkout_request_id,
+            )
+            return {"ResultCode": 0, "ResultDesc": "Accepted"}
     if not subscription_payment and not class_payment:
         try:
             await db.mpesa_callback_logs.insert_one(
@@ -4948,6 +5161,7 @@ async def update_me(
     payload: UpdateProfileRequest,
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
+    await ensure_rate_limit(current_user["id"], "auth_me_user", AUTH_USER_PER_MIN_LIMIT)
     updates: Dict[str, Any] = {}
 
     if payload.full_name is not None:
@@ -4985,6 +5199,7 @@ async def change_password(
     payload: ChangePasswordRequest,
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
+    await ensure_rate_limit(current_user["id"], "auth_password_change_user", AUTH_USER_PER_MIN_LIMIT)
     if len(payload.new_password) < 8:
         raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
     if payload.new_password == payload.current_password:
@@ -5009,6 +5224,7 @@ async def delete_account(
     payload: DeleteAccountRequest,
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
+    await ensure_rate_limit(current_user["id"], "auth_delete_account_user", AUTH_USER_PER_MIN_LIMIT)
     user_doc = await db.users.find_one({"id": current_user["id"]}, {"_id": 0})
     if not user_doc:
         raise HTTPException(status_code=404, detail="User not found")
@@ -6025,6 +6241,7 @@ async def create_class_session(
         scheduled_start_at=payload.scheduled_start_at,
         scheduled_end_at=payload.scheduled_end_at,
         fee_kes=payload.fee_kes,
+        class_level=payload.class_level,
     )
 
     return await build_class_response(class_doc, current_user["id"], "teacher")
@@ -7237,6 +7454,7 @@ async def create_class_review(
         teacher_id=norm["teacher_id"],
         rating=int(norm["rating"]),
         comment=norm.get("comment"),
+        student_name=current_user.get("full_name"),
         created_at=norm["created_at"],
     )
 
@@ -7255,6 +7473,18 @@ async def list_class_reviews(
     if role == "teacher" and class_doc.get("teacher_id") != current_user["id"]:
         raise HTTPException(status_code=403, detail="Access denied")
     reviews = await db.class_reviews.find({"class_id": class_id}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    student_ids = sorted({str(r.get("student_id") or "").strip() for r in reviews if str(r.get("student_id") or "").strip()})
+    student_name_map: Dict[str, str] = {}
+    if student_ids:
+        users = await db.users.find(
+            {"id": {"$in": student_ids}},
+            {"_id": 0, "id": 1, "full_name": 1},
+        ).to_list(len(student_ids))
+        student_name_map = {
+            str(u.get("id") or ""): str(u.get("full_name") or "").strip()
+            for u in users
+            if str(u.get("id") or "").strip()
+        }
     output: List[ClassReviewResponse] = []
     for review in reviews:
         norm = normalize_datetime_fields(review, ["created_at"])
@@ -7266,6 +7496,7 @@ async def list_class_reviews(
                 teacher_id=norm["teacher_id"],
                 rating=int(norm["rating"]),
                 comment=norm.get("comment"),
+                student_name=student_name_map.get(str(norm.get("student_id") or "")) or None,
                 created_at=norm["created_at"],
             )
         )
@@ -7734,6 +7965,8 @@ async def create_class_from_topic_suggestion(
         scheduled_end_at=payload.scheduled_end_at,
         fee_kes=payload.fee_kes,
         topic_suggestion_id=topic_id,
+        class_level=payload.class_level,
+        topic_category=suggestion.get("category"),
     )
     now_iso = datetime.now(timezone.utc).isoformat()
     await db.topic_suggestions.update_one(
@@ -8735,6 +8968,9 @@ async def startup_checks():
     await db.subscription_payments.create_index("user_id")
     await db.user_usage_counters.create_index("user_id", unique=True)
     await db.user_quotas.create_index([("user_id", 1), ("date", 1)], unique=True)
+    await db.login_attempts.create_index("key", unique=True)
+    await db.login_attempts.create_index([("blocked_until", 1)])
+    await db.login_attempts.create_index([("updated_at", 1)])
     await db.refresh_tokens.create_index("jti", unique=True)
     await db.revoked_tokens.create_index("jti", unique=True)
     await db.password_reset_tokens.create_index("token_hash", unique=True)

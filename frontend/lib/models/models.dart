@@ -313,6 +313,7 @@ class ClassSession {
     required this.scheduledStartAt,
     required this.scheduledEndAt,
     required this.status,
+    this.classLevel,
     required this.createdAt,
     required this.feeKes,
     required this.platformFeePercent,
@@ -322,6 +323,7 @@ class ClassSession {
     required this.joined,
     required this.paymentRequired,
     this.paymentStatus,
+    required this.studentReviewed,
     this.averageRating,
     required this.reviewCount,
     this.topicSuggestionId,
@@ -336,6 +338,7 @@ class ClassSession {
   final DateTime scheduledStartAt;
   final DateTime scheduledEndAt;
   final String status;
+  final String? classLevel;
   final DateTime createdAt;
   final int feeKes;
   final double platformFeePercent;
@@ -345,6 +348,7 @@ class ClassSession {
   final bool joined;
   final bool paymentRequired;
   final String? paymentStatus;
+  final bool studentReviewed;
   final double? averageRating;
   final int reviewCount;
   final String? topicSuggestionId;
@@ -364,6 +368,7 @@ class ClassSession {
           DateTime.tryParse(json['scheduled_end_at'] as String? ?? '') ??
           DateTime.now(),
       status: json['status'] as String? ?? 'scheduled',
+      classLevel: json['class_level'] as String?,
       createdAt:
           DateTime.tryParse(json['created_at'] as String? ?? '') ??
           DateTime.now(),
@@ -376,6 +381,7 @@ class ClassSession {
       joined: json['joined'] as bool? ?? false,
       paymentRequired: json['payment_required'] as bool? ?? false,
       paymentStatus: json['payment_status'] as String?,
+      studentReviewed: json['student_reviewed'] as bool? ?? false,
       averageRating: (json['average_rating'] as num?)?.toDouble(),
       reviewCount: (json['review_count'] as num?)?.toInt() ?? 0,
       topicSuggestionId: json['topic_suggestion_id'] as String?,
@@ -391,6 +397,7 @@ class ClassReview {
     required this.teacherId,
     required this.rating,
     this.comment,
+    this.studentName,
     required this.createdAt,
   });
 
@@ -400,6 +407,7 @@ class ClassReview {
   final String teacherId;
   final int rating;
   final String? comment;
+  final String? studentName;
   final DateTime createdAt;
 
   factory ClassReview.fromJson(Map<String, dynamic> json) {
@@ -410,6 +418,7 @@ class ClassReview {
       teacherId: json['teacher_id'] as String? ?? '',
       rating: (json['rating'] as num?)?.toInt() ?? 0,
       comment: json['comment'] as String?,
+      studentName: json['student_name'] as String?,
       createdAt:
           DateTime.tryParse(json['created_at'] as String? ?? '') ??
           DateTime.now(),

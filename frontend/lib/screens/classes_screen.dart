@@ -26,6 +26,13 @@ class ClassesScreen extends StatefulWidget {
 }
 
 class _ClassesScreenState extends State<ClassesScreen> {
+  static const List<Map<String, String>> _gradeFilters = [
+    {'key': 'all', 'label': 'All'},
+    {'key': 'grade_1_4', 'label': 'Grade 1-4'},
+    {'key': 'grade_5_6', 'label': 'Grade 5-6'},
+    {'key': 'junior_secondary', 'label': 'Junior Secondary'},
+    {'key': 'senior_secondary', 'label': 'Senior Secondary'},
+  ];
   final _titleController = TextEditingController();
   final _descriptionController = TextEditingController();
   final _meetingController = TextEditingController();
@@ -35,16 +42,121 @@ class _ClassesScreenState extends State<ClassesScreen> {
   bool _loading = true;
   bool _saving = false;
   String _statusFilter = 'upcoming';
+  String _gradeFilter = 'all';
   String? _error;
   List<ClassSession> _classes = [];
   int _withdrawableKes = 0;
   final Set<String> _busyClassIds = <String>{};
   final Set<String> _paymentPendingClassIds = <String>{};
+  final Map<String, int> _tabCounts = <String, int>{};
   int _classMinFeeKes = 50;
   int _classMaxFeeKes = 20000;
   double _classPlatformFeePercent = 10;
 
   bool get _isTeacher => widget.session.user.role.toLowerCase() == 'teacher';
+  List<String> get _statusTabs => _isTeacher
+      ? const ['upcoming', 'past', 'reviews']
+      : const ['upcoming', 'to_review', 'past'];
+
+  String _backendStatusForFilter() {
+    if (_isTeacher) {
+      return _statusFilter == 'reviews' ? 'all' : _statusFilter;
+    }
+    if (_statusFilter == 'to_review') return 'past';
+    return _statusFilter;
+  }
+
+  bool _isClassEnded(ClassSession session) {
+    if (session.status.toLowerCase() == 'completed') return true;
+    return !session.scheduledEndAt.isAfter(DateTime.now());
+  }
+
+  String _inferGradeBucket(ClassSession session) {
+    final level = (session.classLevel ?? '').trim().toLowerCase();
+    if (level.isNotEmpty && level != 'all') {
+      return level;
+    }
+    final text = '${session.title} ${session.description ?? ''}'.toLowerCase();
+    final gradeMatch = RegExp(r'\bgrade\s*([0-9]{1,2})\b').firstMatch(text);
+    if (gradeMatch != null) {
+      final grade = int.tryParse(gradeMatch.group(1) ?? '');
+      if (grade != null) {
+        if (grade >= 1 && grade <= 4) return 'grade_1_4';
+        if (grade >= 5 && grade <= 6) return 'grade_5_6';
+        if (grade >= 7 && grade <= 9) return 'junior_secondary';
+        if (grade >= 10 && grade <= 12) return 'senior_secondary';
+      }
+    }
+    final formMatch = RegExp(r'\bform\s*([1-4])\b').firstMatch(text);
+    if (formMatch != null) {
+      return 'senior_secondary';
+    }
+    if (text.contains('junior secondary')) return 'junior_secondary';
+    if (text.contains('senior secondary')) return 'senior_secondary';
+    if (text.contains('upper primary')) return 'grade_5_6';
+    if (text.contains('lower primary')) return 'grade_1_4';
+    return 'all';
+  }
+
+  List<ClassSession> _applyLocalFilter(List<ClassSession> input) {
+    bool gradePass(ClassSession c) {
+      if (_gradeFilter == 'all') return true;
+      return _inferGradeBucket(c) == _gradeFilter;
+    }
+    if (_isTeacher) {
+      if (_statusFilter == 'reviews') {
+        return input.where((c) => c.reviewCount > 0 && gradePass(c)).toList();
+      }
+      return input.where(gradePass).toList();
+    }
+
+    if (_statusFilter == 'to_review') {
+      return input
+          .where((c) => _isClassEnded(c) && c.joined && !c.studentReviewed && gradePass(c))
+          .toList();
+    }
+
+    if (_statusFilter == 'past') {
+      return input
+          .where(
+            (c) =>
+                _isClassEnded(c) &&
+                (!c.joined || c.studentReviewed) &&
+                gradePass(c),
+          )
+          .toList();
+    }
+
+    return input.where(gradePass).toList();
+  }
+
+  int _countForTab(String status, List<ClassSession> allClasses) {
+    if (_isTeacher) {
+      if (status == 'reviews') {
+        return allClasses.where((c) => c.reviewCount > 0).length;
+      }
+      if (status == 'upcoming') {
+        return allClasses.where((c) => !_isClassEnded(c)).length;
+      }
+      if (status == 'past') {
+        return allClasses.where((c) => _isClassEnded(c)).length;
+      }
+      return allClasses.length;
+    }
+
+    if (status == 'upcoming') {
+      return allClasses.where((c) => !_isClassEnded(c)).length;
+    }
+    if (status == 'to_review') {
+      return allClasses.where((c) => _isClassEnded(c) && c.joined && !c.studentReviewed).length;
+    }
+    if (status == 'past') {
+      return allClasses
+          .where((c) => _isClassEnded(c) && (!c.joined || c.studentReviewed))
+          .length;
+    }
+    return allClasses.length;
+  }
 
   @override
   void initState() {
@@ -99,8 +211,15 @@ class _ClassesScreenState extends State<ClassesScreen> {
       final classes = await _runWithAuthRetry(
         (token) => widget.apiClient.listClassSessions(
           accessToken: token,
-          status: _statusFilter,
+          status: _backendStatusForFilter(),
           limit: 100,
+        ),
+      );
+      final allClasses = await _runWithAuthRetry(
+        (token) => widget.apiClient.listClassSessions(
+          accessToken: token,
+          status: 'all',
+          limit: 200,
         ),
       );
       try {
@@ -124,11 +243,14 @@ class _ClassesScreenState extends State<ClassesScreen> {
         } catch (_) {}
       }
       setState(() {
-        _classes = classes;
+        _classes = _applyLocalFilter(classes);
+        for (final tab in _statusTabs) {
+          _tabCounts[tab] = _countForTab(tab, allClasses);
+        }
         _withdrawableKes = withdrawable;
         _paymentPendingClassIds.removeWhere((id) {
           ClassSession? matched;
-          for (final c in classes) {
+          for (final c in _classes) {
             if (c.id == id) {
               matched = c;
               break;
@@ -355,9 +477,8 @@ class _ClassesScreenState extends State<ClassesScreen> {
       }
 
       var result = await joinWithRetry();
-      final requiresPayment = result['requires_payment'] == true;
       final checkoutFromFirst = (result['checkout_request_id']?.toString() ?? '').trim();
-      if (requiresPayment && checkoutFromFirst.isEmpty) {
+      if (result['requires_payment'] == true && checkoutFromFirst.isEmpty) {
         final savedNumbersRaw = (result['saved_phone_numbers'] as List<dynamic>? ?? const []);
         final savedNumbers = savedNumbersRaw.map((e) => e.toString()).where((e) => e.trim().isNotEmpty).toList();
         final phone = await _promptPhoneForPayment(savedNumbers: savedNumbers);
@@ -376,7 +497,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
       if (paymentStatus == 'pending' || result['requires_payment'] == true) {
         if (mounted) setState(() => _paymentPendingClassIds.add(session.id));
       }
-      if (requiresPayment) {
+      if (result['requires_payment'] == true) {
         final checkoutRequestId = result['checkout_request_id']?.toString() ?? '';
         final paid = await _pollPaymentUntilDone(session.id, checkoutRequestId);
         if (!paid) return;
@@ -482,6 +603,65 @@ class _ClassesScreenState extends State<ClassesScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) setState(() => _busyClassIds.remove(session.id));
+    }
+  }
+
+  Future<void> _viewClassReviews(ClassSession session) async {
+    setState(() => _busyClassIds.add(session.id));
+    try {
+      final reviews = await _runWithAuthRetry(
+        (token) => widget.apiClient.listClassReviews(
+          accessToken: token,
+          classId: session.id,
+        ),
+      );
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('Reviews - ${session.title}'),
+          content: SizedBox(
+            width: 420,
+            child: reviews.isEmpty
+                ? const Text('No reviews yet.')
+                : ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: reviews.length,
+                    separatorBuilder: (_, __) => const Divider(height: 16),
+                    itemBuilder: (_, i) {
+                      final r = reviews[i];
+                      final who = (r.studentName ?? '').trim().isNotEmpty
+                          ? r.studentName!.trim()
+                          : 'Student ${r.studentId.substring(0, r.studentId.length >= 6 ? 6 : r.studentId.length)}';
+                      final stars = '★' * r.rating + '☆' * (5 - r.rating);
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('$stars  $who', style: const TextStyle(fontWeight: FontWeight.w700)),
+                          if ((r.comment ?? '').trim().isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(r.comment!.trim(), style: const TextStyle(color: AppColors.textMuted)),
+                          ],
+                          const SizedBox(height: 4),
+                          Text(_fmt(r.createdAt), style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                        ],
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
     } finally {
       if (mounted) setState(() => _busyClassIds.remove(session.id));
     }
@@ -706,10 +886,12 @@ class _ClassesScreenState extends State<ClassesScreen> {
                   const SizedBox(height: 10),
                   Wrap(
                     spacing: 8,
-                    children: ['upcoming', 'past', 'all']
+                    children: _statusTabs
                         .map(
                           (status) => ChoiceChip(
-                            label: Text(status.toUpperCase()),
+                            label: Text(
+                              '${status == 'to_review' ? 'TO BE REVIEWED' : status.toUpperCase()} (${_tabCounts[status] ?? 0})',
+                            ),
                             selected: _statusFilter == status,
                             onSelected: (_) {
                               if (_statusFilter == status) return;
@@ -719,6 +901,52 @@ class _ClassesScreenState extends State<ClassesScreen> {
                           ),
                         )
                         .toList(),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    height: 36,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemBuilder: (_, index) {
+                        final filter = _gradeFilters[index];
+                        final key = filter['key']!;
+                        final label = filter['label']!;
+                        final isActive = _gradeFilter == key;
+                        return GestureDetector(
+                          onTap: () {
+                            if (_gradeFilter == key) return;
+                            setState(() => _gradeFilter = key);
+                            _loadClasses();
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                            decoration: BoxDecoration(
+                              color: isActive
+                                  ? AppColors.primary.withValues(alpha: 0.22)
+                                  : Colors.white10,
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                color: isActive
+                                    ? AppColors.primary.withValues(alpha: 0.55)
+                                    : Colors.white12,
+                              ),
+                            ),
+                            child: Center(
+                              child: Text(
+                                label,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 11,
+                                  color: isActive ? AppColors.primary : Colors.white,
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                      separatorBuilder: (_, __) => const SizedBox(width: 8),
+                      itemCount: _gradeFilters.length,
+                    ),
                   ),
                   const SizedBox(height: 10),
                   if (_loading)
@@ -938,6 +1166,23 @@ class _ClassesScreenState extends State<ClassesScreen> {
                       label: const Text('Mark Completed'),
                     ),
                   ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: busy
+                          ? null
+                          : () async {
+                              if (_statusFilter != 'reviews') {
+                                setState(() => _statusFilter = 'reviews');
+                                await _loadClasses();
+                              }
+                              if (!mounted) return;
+                              await _viewClassReviews(session);
+                            },
+                      icon: const Icon(Icons.reviews_outlined),
+                      label: const Text('View Reviews'),
+                    ),
+                  ),
                 ],
               ),
             ] else ...[
@@ -963,6 +1208,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
                     child: OutlinedButton.icon(
                       onPressed: busy ||
                               !session.joined ||
+                              session.studentReviewed ||
                               (session.status != 'completed' &&
                                   session.scheduledEndAt.isAfter(DateTime.now()))
                           ? null
