@@ -2381,10 +2381,23 @@ async def resolve_student_payment_phone(
     *,
     student_id: str,
     explicit_phone: Optional[str] = None,
+    saved_numbers: Optional[List[str]] = None,
 ) -> Optional[str]:
     raw = (explicit_phone or "").strip()
     if raw:
         return raw
+    # Backward compatibility for older clients that do not submit phone_number.
+    user_doc = await db.users.find_one(
+        {"id": student_id},
+        {"_id": 0, "phone_number": 1, "phone": 1, "mobile": 1, "mobile_number": 1, "mpesa_phone_number": 1},
+    )
+    for key in ("phone_number", "phone", "mobile", "mobile_number", "mpesa_phone_number"):
+        val = str((user_doc or {}).get(key) or "").strip()
+        if val:
+            return val
+    fallback_numbers = [str(n).strip() for n in (saved_numbers or []) if str(n).strip()]
+    if fallback_numbers:
+        return fallback_numbers[0]
     return None
 
 
@@ -6197,6 +6210,21 @@ async def join_class_session(
     if not mpesa_service.enabled:
         raise HTTPException(status_code=500, detail="M-Pesa is not configured for class payments")
 
+    phone_number = await resolve_student_payment_phone(
+        student_id=current_user["id"],
+        explicit_phone=(payload.phone_number if payload else None),
+        saved_numbers=saved_phone_numbers,
+    )
+    if not phone_number:
+        return {
+            "message": "Your payment has not yet reflected. If you already paid, wait and retry. To pay again, select a saved phone number or enter another number.",
+            "class_id": class_id,
+            "requires_payment": True,
+            "payment_status": "awaiting_phone",
+            "amount_kes": fee_kes,
+            "saved_phone_numbers": saved_phone_numbers,
+        }
+
     lock_id = f"{class_id}:{current_user['id']}"
     now_dt = datetime.now(timezone.utc)
     now_iso = now_dt.isoformat()
@@ -6265,101 +6293,88 @@ async def join_class_session(
             detail="Payment is already being initiated for this class. Please retry in a moment.",
         )
 
-    phone_number = await resolve_student_payment_phone(
-        student_id=current_user["id"],
-        explicit_phone=(payload.phone_number if payload else None),
-    )
-    if not phone_number:
-        return {
-            "message": "Your payment has not yet reflected. If you already paid, wait and retry. To pay again, select a saved phone number or enter another number.",
-            "class_id": class_id,
-            "requires_payment": True,
-            "payment_status": "awaiting_phone",
-            "amount_kes": fee_kes,
-            "saved_phone_numbers": saved_phone_numbers,
-        }
-
-    account_reference = f"CLS{class_id[-6:].upper()}"
-    transaction_desc = f"Class {class_doc.get('title', 'Session')}"
-    stk_result: Dict[str, Any] = {}
-    last_stk_error = "Unknown error"
-    for attempt in range(1, 3):
-        try:
-            stk_result = await mpesa_service.stk_push(
-                phone_number=phone_number,
-                amount=fee_kes,
-                account_reference=account_reference,
-                transaction_desc=transaction_desc,
-            )
-        except Exception as exc:
-            logger.exception(
-                "class_join_stk_push_exception class_id=%s student_id=%s attempt=%s error=%s",
-                class_id,
-                current_user["id"],
-                attempt,
-                exc,
-            )
-            stk_result = {"success": False, "error": str(exc) or type(exc).__name__}
-        if stk_result.get("success"):
-            break
-        last_stk_error = str(stk_result.get("error") or "STK push failed")
-        if attempt < 2:
-            await asyncio.sleep(1.2)
-    if not stk_result.get("success"):
-        raise HTTPException(
-            status_code=502,
-            detail=f"STK push failed: {last_stk_error}",
-        )
-
-    payment_doc = {
-        "id": str(uuid.uuid4()),
-        "payment_type": "class_join",
-        "class_id": class_id,
-        "student_id": current_user["id"],
-        "teacher_id": class_doc["teacher_id"],
-        "amount_kes": fee_kes,
-        "platform_fee_percent": current_class_escrow_platform_fee_percent(),
-        "phone_number": mpesa_service.normalize_phone(phone_number),
-        "status": "pending",
-        "merchant_request_id": stk_result.get("merchant_request_id"),
-        "checkout_request_id": stk_result.get("checkout_request_id"),
-        "response_code": stk_result.get("response_code"),
-        "response_description": stk_result.get("response_description"),
-        "created_at": now_iso,
-        "updated_at": now_iso,
-    }
     try:
-        await db.class_payments.insert_one(payment_doc)
-        return {
-            "message": "STK push sent to customer phone",
+        account_reference = f"CLS{class_id[-6:].upper()}"
+        transaction_desc = f"Class {class_doc.get('title', 'Session')}"
+        stk_result: Dict[str, Any] = {}
+        last_stk_error = "Unknown error"
+        for attempt in range(1, 3):
+            try:
+                stk_result = await mpesa_service.stk_push(
+                    phone_number=phone_number,
+                    amount=fee_kes,
+                    account_reference=account_reference,
+                    transaction_desc=transaction_desc,
+                )
+            except Exception as exc:
+                logger.exception(
+                    "class_join_stk_push_exception class_id=%s student_id=%s attempt=%s error=%s",
+                    class_id,
+                    current_user["id"],
+                    attempt,
+                    exc,
+                )
+                stk_result = {"success": False, "error": str(exc) or type(exc).__name__}
+            if stk_result.get("success"):
+                break
+            last_stk_error = str(stk_result.get("error") or "STK push failed")
+            if attempt < 2:
+                await asyncio.sleep(1.2)
+        if not stk_result.get("success"):
+            raise HTTPException(
+                status_code=502,
+                detail=f"STK push failed: {last_stk_error}",
+            )
+
+        payment_doc = {
+            "id": str(uuid.uuid4()),
+            "payment_type": "class_join",
             "class_id": class_id,
-            "requires_payment": True,
-            "payment_status": "pending",
-            "checkout_request_id": payment_doc["checkout_request_id"],
+            "student_id": current_user["id"],
+            "teacher_id": class_doc["teacher_id"],
             "amount_kes": fee_kes,
-            "saved_phone_numbers": saved_phone_numbers,
+            "platform_fee_percent": current_class_escrow_platform_fee_percent(),
+            "phone_number": mpesa_service.normalize_phone(phone_number),
+            "status": "pending",
+            "merchant_request_id": stk_result.get("merchant_request_id"),
+            "checkout_request_id": stk_result.get("checkout_request_id"),
+            "response_code": stk_result.get("response_code"),
+            "response_description": stk_result.get("response_description"),
+            "created_at": now_iso,
+            "updated_at": now_iso,
         }
-    except DuplicateKeyError:
-        pending_duplicate = await db.class_payments.find_one(
-            {
-                "class_id": class_id,
-                "student_id": current_user["id"],
-                "status": "pending",
-            },
-            {"_id": 0, "checkout_request_id": 1, "amount_kes": 1, "created_at": 1},
-            sort=[("created_at", -1)],
-        )
-        if pending_duplicate and pending_duplicate.get("checkout_request_id"):
+        try:
+            await db.class_payments.insert_one(payment_doc)
             return {
-                "message": "Your payment has not yet reflected. If you already paid, wait and retry. Otherwise, pay again.",
+                "message": "STK push sent to customer phone",
                 "class_id": class_id,
                 "requires_payment": True,
                 "payment_status": "pending",
-                "checkout_request_id": pending_duplicate.get("checkout_request_id"),
-                "amount_kes": int(pending_duplicate.get("amount_kes", fee_kes)),
+                "checkout_request_id": payment_doc["checkout_request_id"],
+                "amount_kes": fee_kes,
                 "saved_phone_numbers": saved_phone_numbers,
             }
-        raise HTTPException(status_code=409, detail="A duplicate payment request was blocked.")
+        except DuplicateKeyError:
+            pending_duplicate = await db.class_payments.find_one(
+                {
+                    "class_id": class_id,
+                    "student_id": current_user["id"],
+                    "status": "pending",
+                },
+                {"_id": 0, "checkout_request_id": 1, "amount_kes": 1, "created_at": 1},
+                sort=[("created_at", -1)],
+            )
+            if pending_duplicate and pending_duplicate.get("checkout_request_id"):
+                return {
+                    "message": "Your payment has not yet reflected. If you already paid, wait and retry. Otherwise, pay again.",
+                    "class_id": class_id,
+                    "requires_payment": True,
+                    "payment_status": "pending",
+                    "checkout_request_id": pending_duplicate.get("checkout_request_id"),
+                    "amount_kes": int(pending_duplicate.get("amount_kes", fee_kes)),
+                    "saved_phone_numbers": saved_phone_numbers,
+                }
+            raise HTTPException(status_code=409, detail="A duplicate payment request was blocked.")
     finally:
         if lock_acquired:
             release_iso = datetime.now(timezone.utc).isoformat()
