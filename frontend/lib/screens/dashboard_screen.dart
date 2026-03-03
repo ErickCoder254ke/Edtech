@@ -127,6 +127,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final planName = (_entitlement?['plan_name'] as String?) ?? 'Free';
     final examLimit = (_entitlement?['exam_limit'] as num?)?.toInt();
     final examRemaining = (_entitlement?['exam_remaining'] as num?)?.toInt();
+    final taskLimit = (_entitlement?['task_limit'] as num?)?.toInt();
+    final taskRemaining = (_entitlement?['task_remaining'] as num?)?.toInt();
     final completionPct = generationLimit <= 0
         ? 0
         : ((generationUsed / generationLimit).clamp(0, 1) * 100).round();
@@ -151,6 +153,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     planName: planName,
                     examLimit: examLimit,
                     examRemaining: examRemaining,
+                    taskLimit: taskLimit,
+                    taskRemaining: taskRemaining,
                   ),
                   const SizedBox(height: 14),
                   if (_loading) const LinearProgressIndicator(minHeight: 3),
@@ -220,6 +224,8 @@ class _BrandingTile extends StatelessWidget {
     required this.planName,
     required this.examLimit,
     required this.examRemaining,
+    required this.taskLimit,
+    required this.taskRemaining,
   });
 
   final User user;
@@ -231,6 +237,8 @@ class _BrandingTile extends StatelessWidget {
   final String planName;
   final int? examLimit;
   final int? examRemaining;
+  final int? taskLimit;
+  final int? taskRemaining;
 
   @override
   Widget build(BuildContext context) {
@@ -318,6 +326,11 @@ class _BrandingTile extends StatelessWidget {
                 _BrandTag(
                   icon: Icons.assignment_turned_in_outlined,
                   text: 'Exams: $examRemaining/$examLimit left',
+                ),
+              if (taskLimit != null && taskRemaining != null)
+                _BrandTag(
+                  icon: Icons.edit_note_rounded,
+                  text: 'Tasks: $taskRemaining/$taskLimit left',
                 ),
             ],
           ),

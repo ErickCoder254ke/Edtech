@@ -564,6 +564,28 @@ class ApiClient {
     return ClassSession.fromJson(data as Map<String, dynamic>);
   }
 
+  Future<ClassSession> updateClassMeetingLink({
+    required String accessToken,
+    required String classId,
+    required String meetingLink,
+    bool notifyStudents = true,
+  }) async {
+    final response = await _sendRequest(
+      () => http
+          .post(
+            _uri('/v1/classes/$classId/meeting-link'),
+            headers: _jsonHeaders(accessToken: accessToken),
+            body: jsonEncode({
+              'meeting_link': meetingLink,
+              'notify_students': notifyStudents,
+            }),
+          )
+          .timeout(_requestTimeout),
+    );
+    final data = _parseJson(response);
+    return ClassSession.fromJson(data as Map<String, dynamic>);
+  }
+
   Future<Map<String, dynamic>> joinClassSession({
     required String accessToken,
     required String classId,
@@ -580,6 +602,42 @@ class ApiClient {
     );
     final data = _parseJson(response);
     return data is Map<String, dynamic> ? data : {};
+  }
+
+  Future<ClassAccessIssue> reportClassAccessIssue({
+    required String accessToken,
+    required String classId,
+    required String issue,
+  }) async {
+    final response = await _sendRequest(
+      () => http
+          .post(
+            _uri('/v1/classes/$classId/access-issues'),
+            headers: _jsonHeaders(accessToken: accessToken),
+            body: jsonEncode({'issue': issue}),
+          )
+          .timeout(_requestTimeout),
+    );
+    final data = _parseJson(response);
+    return ClassAccessIssue.fromJson(data as Map<String, dynamic>);
+  }
+
+  Future<List<ClassAccessIssue>> listClassAccessIssues({
+    required String accessToken,
+    required String classId,
+  }) async {
+    final response = await _sendRequest(
+      () => http
+          .get(
+            _uri('/v1/classes/$classId/access-issues'),
+            headers: _jsonHeaders(accessToken: accessToken),
+          )
+          .timeout(_requestTimeout),
+    );
+    final data = _parseJson(response) as List<dynamic>;
+    return data
+        .map((item) => ClassAccessIssue.fromJson(item as Map<String, dynamic>))
+        .toList();
   }
 
   Future<Map<String, dynamic>> classPaymentStatus({

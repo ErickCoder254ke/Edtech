@@ -53,6 +53,13 @@ class _HomeShellState extends State<HomeShell> {
   Timer? _uploadCompleteTimer;
   int _flaggedTopicCount = 0;
   String _teacherVerificationStatus = 'not_submitted';
+  int _adminPrivateTutorsCount = 0;
+  int _adminTeacherVerificationsPendingCount = 0;
+  int _adminTeacherVerificationsRejectedCount = 0;
+  int _adminIntegrationIssueCount = 0;
+  int _unreadNotificationCount = 0;
+  int _studentClassesToReviewCount = 0;
+  int _teacherOpenAccessIssuesCount = 0;
 
   String _titleForIndex(int index) {
     switch (index) {
@@ -108,7 +115,7 @@ class _HomeShellState extends State<HomeShell> {
           onSessionInvalid: widget.onLogout,
         ),
       ),
-    );
+    ).then((_) => _loadRoleMenuBadges());
   }
 
   void _openJobsPage() {
@@ -134,7 +141,7 @@ class _HomeShellState extends State<HomeShell> {
           onSessionInvalid: widget.onLogout,
         ),
       ),
-    );
+    ).then((_) => _loadRoleMenuBadges());
   }
 
   void _openPrivateTutorsPage() {
@@ -147,7 +154,11 @@ class _HomeShellState extends State<HomeShell> {
           onSessionInvalid: widget.onLogout,
         ),
       ),
-    );
+    ).then((_) {
+      if (widget.session.user.role.toLowerCase() == 'admin') {
+        _loadAdminMenuBadges();
+      }
+    });
   }
 
   void _openNotesCatalogPage() {
@@ -186,7 +197,7 @@ class _HomeShellState extends State<HomeShell> {
           onSessionInvalid: widget.onLogout,
         ),
       ),
-    );
+    ).then((_) => _loadAdminMenuBadges());
   }
 
   void _openTeacherVerificationPage() {
@@ -199,7 +210,10 @@ class _HomeShellState extends State<HomeShell> {
           onSessionInvalid: widget.onLogout,
         ),
       ),
-    );
+    ).then((_) async {
+      await _loadTeacherVerificationStatus();
+      await _loadRoleMenuBadges();
+    });
   }
 
   void _openAdminTeacherVerificationPage() {
@@ -212,7 +226,7 @@ class _HomeShellState extends State<HomeShell> {
           onSessionInvalid: widget.onLogout,
         ),
       ),
-    );
+    ).then((_) => _loadAdminMenuBadges());
   }
 
   void _openAdminIntegrationsPage() {
@@ -225,7 +239,7 @@ class _HomeShellState extends State<HomeShell> {
           onSessionInvalid: widget.onLogout,
         ),
       ),
-    );
+    ).then((_) => _loadAdminMenuBadges());
   }
 
   @override
@@ -234,6 +248,8 @@ class _HomeShellState extends State<HomeShell> {
     _loadCoachState();
     _loadTopicModerationBadge();
     _loadTeacherVerificationStatus();
+    _loadRoleMenuBadges();
+    _loadAdminMenuBadges();
   }
 
   @override
@@ -243,6 +259,8 @@ class _HomeShellState extends State<HomeShell> {
       _loadCoachState();
       _loadTopicModerationBadge();
       _loadTeacherVerificationStatus();
+      _loadRoleMenuBadges();
+      _loadAdminMenuBadges();
     }
   }
 
@@ -309,6 +327,153 @@ class _HomeShellState extends State<HomeShell> {
     } catch (_) {
       if (!mounted) return;
       setState(() => _teacherVerificationStatus = 'not_submitted');
+    }
+  }
+
+  bool _isClassEnded(ClassSession session) {
+    if (session.status.toLowerCase() == 'completed') return true;
+    return !session.scheduledEndAt.isAfter(DateTime.now());
+  }
+
+  Future<void> _loadRoleMenuBadges() async {
+    final role = widget.session.user.role.toLowerCase();
+    try {
+      final unread = await _runWithAuthRetry(
+        (token) => widget.apiClient.listNotifications(
+          accessToken: token,
+          unreadOnly: true,
+          limit: 120,
+        ),
+      );
+      var studentToReview = 0;
+      var teacherOpenIssues = 0;
+      if (role == 'student' || role == 'teacher') {
+        final classes = await _runWithAuthRetry(
+          (token) => widget.apiClient.listClassSessions(
+            accessToken: token,
+            status: 'all',
+            limit: 200,
+          ),
+        );
+        if (role == 'student') {
+          studentToReview = classes
+              .where((c) => _isClassEnded(c) && c.joined && !c.studentReviewed)
+              .length;
+        } else if (role == 'teacher') {
+          teacherOpenIssues = classes.fold<int>(
+            0,
+            (sum, c) => sum + c.openAccessIssueCount,
+          );
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _unreadNotificationCount = unread.length;
+        _studentClassesToReviewCount = studentToReview;
+        _teacherOpenAccessIssuesCount = teacherOpenIssues;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _unreadNotificationCount = 0;
+        _studentClassesToReviewCount = 0;
+        _teacherOpenAccessIssuesCount = 0;
+      });
+    }
+  }
+
+  String? _badgeForCount(int count, {int cap = 99}) {
+    if (count <= 0) return null;
+    if (count > cap) return '$cap+';
+    return '$count';
+  }
+
+  int _countAdminIntegrationIssues(Map<String, dynamic> status) {
+    final localpro = (status['localpro'] as Map<String, dynamic>?) ?? const {};
+    final firebase = (status['firebase'] as Map<String, dynamic>?) ?? const {};
+    final brevo = (status['brevo'] as Map<String, dynamic>?) ?? const {};
+    final queue = (status['queue'] as Map<String, dynamic>?) ?? const {};
+    final payments = (status['payments'] as Map<String, dynamic>?) ?? const {};
+
+    var issues = 0;
+    if (localpro['configured'] != true) issues += 1;
+    if ((localpro['last_fetch_error']?.toString().trim().isNotEmpty ?? false)) {
+      issues += 1;
+    }
+    if (firebase['enabled'] == true && firebase['ready'] != true) issues += 1;
+    if (brevo['has_brevo_api_key'] != true) issues += 1;
+    if (queue['redis_ping_ok'] != true) issues += 1;
+
+    final queuedStale = (queue['queued_stale_count'] as num?)?.toInt() ?? 0;
+    if (queuedStale > 0) issues += 1;
+    final callbackFailed = (payments['callbacks_failed_24h'] as num?)?.toInt() ?? 0;
+    final callbackThreshold =
+        (payments['callback_failure_alert_threshold_24h'] as num?)?.toInt() ??
+        0;
+    if (callbackThreshold > 0 && callbackFailed >= callbackThreshold) issues += 1;
+    return issues;
+  }
+
+  Future<void> _loadAdminMenuBadges() async {
+    if (widget.session.user.role.toLowerCase() != 'admin') {
+      if (!mounted) return;
+      setState(() {
+        _adminPrivateTutorsCount = 0;
+        _adminTeacherVerificationsPendingCount = 0;
+        _adminTeacherVerificationsRejectedCount = 0;
+        _adminIntegrationIssueCount = 0;
+      });
+      return;
+    }
+    try {
+      final results = await Future.wait<dynamic>([
+        _runWithAuthRetry(
+          (token) => widget.apiClient.listPrivateTutors(
+            accessToken: token,
+            limit: 60,
+          ),
+        ),
+        _runWithAuthRetry(
+          (token) => widget.apiClient.listTeacherVerifications(
+            accessToken: token,
+            status: 'pending',
+            limit: 200,
+          ),
+        ),
+        _runWithAuthRetry(
+          (token) => widget.apiClient.listTeacherVerifications(
+            accessToken: token,
+            status: 'rejected',
+            limit: 200,
+          ),
+        ),
+        _runWithAuthRetry(
+          (token) => widget.apiClient.getAdminIntegrationStatus(
+            accessToken: token,
+          ),
+        ),
+      ]);
+      if (!mounted) return;
+      final tutors = results[0] as List<PrivateTutorProfile>;
+      final pending = results[1] as List<TeacherVerification>;
+      final rejected = results[2] as List<TeacherVerification>;
+      final integrationStatus = results[3] as Map<String, dynamic>;
+      setState(() {
+        _adminPrivateTutorsCount = tutors.length;
+        _adminTeacherVerificationsPendingCount = pending.length;
+        _adminTeacherVerificationsRejectedCount = rejected.length;
+        _adminIntegrationIssueCount = _countAdminIntegrationIssues(
+          integrationStatus,
+        );
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _adminPrivateTutorsCount = 0;
+        _adminTeacherVerificationsPendingCount = 0;
+        _adminTeacherVerificationsRejectedCount = 0;
+        _adminIntegrationIssueCount = 0;
+      });
     }
   }
 
@@ -512,6 +677,7 @@ class _HomeShellState extends State<HomeShell> {
                     icon: Icons.notifications_active_rounded,
                     title: 'Notifications',
                     subtitle: 'Class and generation alerts',
+                    badge: _badgeForCount(_unreadNotificationCount),
                     onTap: () {
                       Navigator.of(context).pop();
                       _openNotificationsPage();
@@ -521,6 +687,11 @@ class _HomeShellState extends State<HomeShell> {
                     icon: Icons.class_rounded,
                     title: 'Classes',
                     subtitle: 'Schedule or join live classes',
+                    badge: widget.session.user.role.toLowerCase() == 'student'
+                        ? _badgeForCount(_studentClassesToReviewCount)
+                        : (widget.session.user.role.toLowerCase() == 'teacher'
+                              ? _badgeForCount(_teacherOpenAccessIssuesCount)
+                              : null),
                     onTap: () {
                       Navigator.of(context).pop();
                       _openClassesPage();
@@ -530,6 +701,9 @@ class _HomeShellState extends State<HomeShell> {
                     icon: Icons.school_rounded,
                     title: 'Private Tutors',
                     subtitle: 'Browse and book on LocalPro KE',
+                    badge: widget.session.user.role.toLowerCase() == 'admin'
+                        ? _badgeForCount(_adminPrivateTutorsCount)
+                        : null,
                     onTap: () {
                       Navigator.of(context).pop();
                       _openPrivateTutorsPage();
@@ -572,6 +746,9 @@ class _HomeShellState extends State<HomeShell> {
                       icon: Icons.verified_user_rounded,
                       title: 'Teacher Verification',
                       subtitle: 'Submit TSC and ID for approval',
+                      badge: _teacherVerificationStatus == 'pending'
+                          ? 'P'
+                          : (_teacherVerificationStatus == 'rejected' ? '!' : null),
                       onTap: () {
                         Navigator.of(context).pop();
                         _openTeacherVerificationPage();
@@ -582,6 +759,7 @@ class _HomeShellState extends State<HomeShell> {
                       icon: Icons.admin_panel_settings_rounded,
                       title: 'Admin Dashboard',
                       subtitle: 'Platform wallet and user metrics',
+                      badge: _badgeForCount(_adminIntegrationIssueCount),
                       onTap: () {
                         Navigator.of(context).pop();
                         _openAdminDashboardPage();
@@ -592,6 +770,11 @@ class _HomeShellState extends State<HomeShell> {
                       icon: Icons.fact_check_rounded,
                       title: 'Teacher Verifications',
                       subtitle: 'Approve or reject teacher documents',
+                      badge: _adminTeacherVerificationsPendingCount > 0 ||
+                              _adminTeacherVerificationsRejectedCount > 0
+                          ? 'P$_adminTeacherVerificationsPendingCount'
+                              '/R$_adminTeacherVerificationsRejectedCount'
+                          : null,
                       onTap: () {
                         Navigator.of(context).pop();
                         _openAdminTeacherVerificationPage();
@@ -602,6 +785,7 @@ class _HomeShellState extends State<HomeShell> {
                       icon: Icons.hub_rounded,
                       title: 'Integrations',
                       subtitle: 'LocalPro, Firebase, Brevo and queue health',
+                      badge: _badgeForCount(_adminIntegrationIssueCount),
                       onTap: () {
                         Navigator.of(context).pop();
                         _openAdminIntegrationsPage();

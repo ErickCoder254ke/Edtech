@@ -81,6 +81,7 @@ async def _process_generation_job_impl(self, job_id: str) -> dict:
             user_id=user_id,
             request=request_model,
             generation_id=result_reference,
+            consumed_credit_bucket=(processing_job.get("consumed_credit_bucket") or None),
         )
 
         await increment_usage_counter(user_id, "generations_total", 1)

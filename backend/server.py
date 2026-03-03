@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Form, Request, BackgroundTasks
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Form, Request, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
@@ -42,6 +42,7 @@ ROOT_DIR = Path(__file__).parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 from mpesa_service import MPesaService
+from moderation_service import moderation_service
 load_dotenv(ROOT_DIR / ".env")
 
 mongo_url = os.environ["MONGO_URL"]
@@ -88,6 +89,9 @@ NVIDIA_FORCE_JSON_MODE = os.environ.get("NVIDIA_FORCE_JSON_MODE", "false").lower
 NVIDIA_COOLDOWN_SECONDS = float(os.environ.get("NVIDIA_COOLDOWN_SECONDS", "180"))
 GEMINI_RATE_LIMIT_COOLDOWN_SECONDS = float(os.environ.get("GEMINI_RATE_LIMIT_COOLDOWN_SECONDS", "20"))
 GEMINI_RATE_LIMIT_MAX_BACKOFF_SECONDS = float(os.environ.get("GEMINI_RATE_LIMIT_MAX_BACKOFF_SECONDS", "30"))
+GEMINI_EXP_BACKOFF_CAP_SECONDS = float(os.environ.get("GEMINI_EXP_BACKOFF_CAP_SECONDS", "30"))
+GEMINI_EXAM_MAX_ROUNDS = int(os.environ.get("GEMINI_EXAM_MAX_ROUNDS", "4"))
+GEMINI_KEY_FAILURE_COOLDOWN_SECONDS = float(os.environ.get("GEMINI_KEY_FAILURE_COOLDOWN_SECONDS", "8"))
 NVIDIA_TIMEOUT_SECONDS = float(os.environ.get("NVIDIA_TIMEOUT_SECONDS", "45"))
 REFRESH_ROTATION_GRACE_SECONDS = int(os.environ.get("REFRESH_ROTATION_GRACE_SECONDS", "120"))
 
@@ -126,6 +130,7 @@ JOB_STATUS_PER_MIN_LIMIT = int(os.environ.get("JOB_STATUS_PER_MIN_LIMIT", "120")
 CLASS_CREATE_PER_MIN_LIMIT = int(os.environ.get("CLASS_CREATE_PER_MIN_LIMIT", "12"))
 CLASS_JOIN_PER_MIN_LIMIT = int(os.environ.get("CLASS_JOIN_PER_MIN_LIMIT", "30"))
 CLASS_REVIEW_PER_MIN_LIMIT = int(os.environ.get("CLASS_REVIEW_PER_MIN_LIMIT", "20"))
+CLASS_ACCESS_ISSUE_PER_MIN_LIMIT = int(os.environ.get("CLASS_ACCESS_ISSUE_PER_MIN_LIMIT", "20"))
 CLASS_WITHDRAW_PER_MIN_LIMIT = int(os.environ.get("CLASS_WITHDRAW_PER_MIN_LIMIT", "8"))
 ADMIN_READ_PER_MIN_LIMIT = int(os.environ.get("ADMIN_READ_PER_MIN_LIMIT", "120"))
 ADMIN_WITHDRAW_PER_MIN_LIMIT = int(os.environ.get("ADMIN_WITHDRAW_PER_MIN_LIMIT", "20"))
@@ -273,6 +278,8 @@ REDIS_WAKE_INTERVAL_SECONDS = float(os.environ.get("REDIS_WAKE_INTERVAL_SECONDS"
 REDIS_WAKE_TIMEOUT_SECONDS = float(os.environ.get("REDIS_WAKE_TIMEOUT_SECONDS", "2"))
 _raw_redis_url = (os.environ.get("REDIS_BROKER_URL") or os.environ.get("REDIS_URL") or "").strip()
 REDIS_WAKE_URL = _raw_redis_url or "redis://localhost:6379/0"
+RATE_LIMIT_USE_REDIS = os.environ.get("RATE_LIMIT_USE_REDIS", "true").lower() == "true"
+GEMINI_SHARED_STATE_USE_REDIS = os.environ.get("GEMINI_SHARED_STATE_USE_REDIS", "true").lower() == "true"
 SIGNUP_OTP_TTL_MINUTES = int(os.environ.get("SIGNUP_OTP_TTL_MINUTES", "10"))
 SIGNUP_OTP_LENGTH = int(os.environ.get("SIGNUP_OTP_LENGTH", "6"))
 SIGNUP_OTP_MAX_ATTEMPTS = int(os.environ.get("SIGNUP_OTP_MAX_ATTEMPTS", "5"))
@@ -509,6 +516,8 @@ def safe_delete_uploaded_file(path_raw: str) -> bool:
         return False
 
 _GEMINI_KEY_COOLDOWN_UNTIL: Dict[str, float] = {}
+_GEMINI_KEY_ROUTER_LOCK = asyncio.Lock()
+_GEMINI_KEY_ROUTER_NEXT_INDEX = 0
 _LLM_PROVIDER_COOLDOWN_UNTIL: Dict[str, float] = {}
 _LLM_ROUTER_LOCK = asyncio.Lock()
 _LLM_ROUTER_NEXT_INDEX = 0
@@ -516,6 +525,9 @@ _NVIDIA_MODEL_ROUTER_LOCK = asyncio.Lock()
 _NVIDIA_MODEL_ROUTER_NEXT_INDEX = 0
 _REDIS_WAKE_LOCK = asyncio.Lock()
 _REDIS_WAKE_LAST_ATTEMPT_TS = 0.0
+_REDIS_SHARED_CLIENT: Optional[Any] = None
+_REDIS_SHARED_CLIENT_INIT_ATTEMPTED = False
+_REDIS_SHARED_CLIENT_LAST_ERROR: Optional[str] = None
 _LOCALPRO_LAST_FETCH_AT: Optional[str] = None
 _LOCALPRO_LAST_FETCH_ERROR: Optional[str] = None
 
@@ -543,6 +555,31 @@ def _redis_wake_ping_sync() -> None:
         health_check_interval=0,
     )
     client.ping()
+
+
+def _get_redis_shared_client() -> Optional[Any]:
+    global _REDIS_SHARED_CLIENT, _REDIS_SHARED_CLIENT_INIT_ATTEMPTED, _REDIS_SHARED_CLIENT_LAST_ERROR
+    if _REDIS_SHARED_CLIENT is not None:
+        return _REDIS_SHARED_CLIENT
+    if _REDIS_SHARED_CLIENT_INIT_ATTEMPTED:
+        return None
+    _REDIS_SHARED_CLIENT_INIT_ATTEMPTED = True
+    try:
+        client = redis_client_lib.from_url(
+            REDIS_WAKE_URL,
+            socket_connect_timeout=max(0.2, REDIS_WAKE_TIMEOUT_SECONDS),
+            socket_timeout=max(0.2, REDIS_WAKE_TIMEOUT_SECONDS),
+            health_check_interval=30,
+        )
+        client.ping()
+        _REDIS_SHARED_CLIENT = client
+        _REDIS_SHARED_CLIENT_LAST_ERROR = None
+        logger.info("redis_shared_client_ready url=%s", REDIS_WAKE_URL.split("@")[-1])
+        return _REDIS_SHARED_CLIENT
+    except Exception as exc:
+        _REDIS_SHARED_CLIENT_LAST_ERROR = str(exc)
+        logger.warning("redis_shared_client_unavailable error=%s", exc)
+        return None
 
 
 async def maybe_wake_redis_on_activity(force: bool = False) -> None:
@@ -707,6 +744,7 @@ class GenerationResponse(BaseModel):
     user_id: str
     generation_type: str
     content: Dict[str, Any]
+    consumed_credit_bucket: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -722,9 +760,14 @@ class JobStatusResponse(BaseModel):
     type: str
     status: str
     progress: Optional[int] = None
+    queue_position: Optional[int] = None
+    estimated_remaining_seconds: Optional[int] = None
+    eta_confidence: Optional[str] = None
+    eta_updated_at: Optional[datetime] = None
     created_at: datetime
     completed_at: Optional[datetime] = None
     result_reference: Optional[str] = None
+    consumed_credit_bucket: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -751,6 +794,15 @@ class TopicClassCreateRequest(BaseModel):
 class ClassReviewCreateRequest(BaseModel):
     rating: int = Field(ge=1, le=5)
     comment: Optional[str] = None
+
+
+class ClassAccessIssueCreateRequest(BaseModel):
+    issue: str
+
+
+class ClassMeetingLinkUpdateRequest(BaseModel):
+    meeting_link: str
+    notify_students: bool = True
 
 
 class ClassJoinRequest(BaseModel):
@@ -848,6 +900,7 @@ class ClassSessionResponse(BaseModel):
     student_reviewed: bool = False
     average_rating: Optional[float] = None
     review_count: int = 0
+    open_access_issue_count: int = 0
     topic_suggestion_id: Optional[str] = None
 
 
@@ -860,6 +913,21 @@ class ClassReviewResponse(BaseModel):
     comment: Optional[str] = None
     student_name: Optional[str] = None
     created_at: datetime
+
+
+class ClassAccessIssueResponse(BaseModel):
+    id: str
+    class_id: str
+    student_id: str
+    teacher_id: str
+    issue: str
+    status: str
+    report_count: int = 1
+    student_name: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    resolved_at: Optional[datetime] = None
+    resolved_by: Optional[str] = None
 
 
 class NotificationResponse(BaseModel):
@@ -1099,7 +1167,52 @@ class InMemoryRateLimiter:
             self._buckets[key] = events
 
 
-rate_limiter = InMemoryRateLimiter()
+class RedisRateLimiter:
+    def __init__(self, client: Any, *, key_prefix: str = "rl"):
+        self._client = client
+        self._key_prefix = key_prefix
+        self._lua = """
+local k = KEYS[1]
+local now = tonumber(ARGV[1])
+local win = tonumber(ARGV[2])
+local lim = tonumber(ARGV[3])
+local member = ARGV[4]
+redis.call('ZREMRANGEBYSCORE', k, '-inf', now - win)
+local cnt = redis.call('ZCARD', k)
+if cnt >= lim then
+  return cnt
+end
+redis.call('ZADD', k, now, member)
+redis.call('EXPIRE', k, math.ceil(win) + 5)
+return -1
+"""
+
+    def _check_sync(self, key: str, limit: int, window_seconds: int) -> bool:
+        redis_key = f"{self._key_prefix}:{key}"
+        now = time.time()
+        member = f"{now:.6f}:{random.random():.6f}"
+        result = self._client.eval(
+            self._lua,
+            1,
+            redis_key,
+            str(now),
+            str(max(1, int(window_seconds))),
+            str(max(1, int(limit))),
+            member,
+        )
+        return int(result) < 0
+
+    async def check(self, key: str, limit: int, window_seconds: int) -> None:
+        allowed = await asyncio.to_thread(self._check_sync, key, limit, window_seconds)
+        if not allowed:
+            raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+
+_redis_rate_client = _get_redis_shared_client() if RATE_LIMIT_USE_REDIS else None
+if _redis_rate_client is not None:
+    rate_limiter = RedisRateLimiter(_redis_rate_client)
+else:
+    rate_limiter = InMemoryRateLimiter()
 
 
 def hash_password(password: str) -> str:
@@ -2224,7 +2337,102 @@ async def log_topic_abuse_event(
         logger.warning("topic_abuse_event_log_failed event_type=%s error=%s", event_type, exc)
 
 
-def build_job_status_response(job_doc: Dict[str, Any]) -> JobStatusResponse:
+async def load_job_eta_baselines(user_id: str) -> Dict[str, float]:
+    docs = await db.generation_jobs.find(
+        {
+            "user_id": user_id,
+            "status": "completed",
+            "completed_at": {"$ne": None},
+        },
+        {"_id": 0, "type": 1, "created_at": 1, "completed_at": 1},
+    ).sort("completed_at", -1).to_list(300)
+    per_type: Dict[str, List[float]] = {}
+    for doc in docs:
+        created_raw = str(doc.get("created_at") or "").strip()
+        completed_raw = str(doc.get("completed_at") or "").strip()
+        if not created_raw or not completed_raw:
+            continue
+        try:
+            created_dt = datetime.fromisoformat(created_raw)
+            completed_dt = datetime.fromisoformat(completed_raw)
+            if created_dt.tzinfo is None:
+                created_dt = created_dt.replace(tzinfo=timezone.utc)
+            if completed_dt.tzinfo is None:
+                completed_dt = completed_dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            continue
+        seconds = max(5.0, float((completed_dt - created_dt).total_seconds()))
+        job_type = str(doc.get("type") or "default").strip().lower() or "default"
+        per_type.setdefault(job_type, []).append(seconds)
+
+    baselines: Dict[str, float] = {}
+    all_values: List[float] = []
+    for _, values in per_type.items():
+        all_values.extend(values)
+    default_eta = max(20.0, (sum(all_values) / len(all_values))) if all_values else 120.0
+    baselines["default"] = default_eta
+    for job_type, values in per_type.items():
+        baselines[job_type] = max(20.0, (sum(values) / len(values)))
+    return baselines
+
+
+def _compute_job_eta(
+    *,
+    job_doc: Dict[str, Any],
+    eta_baselines: Dict[str, float],
+    queue_position: Optional[int],
+) -> Tuple[Optional[int], Optional[str]]:
+    status = str(job_doc.get("status") or "").strip().lower()
+    if status in {"completed", "failed"}:
+        return 0, "high"
+
+    job_type = str(job_doc.get("type") or "default").strip().lower() or "default"
+    base_eta = float(eta_baselines.get(job_type) or eta_baselines.get("default") or 120.0)
+    progress = int(job_doc.get("progress") or 0)
+    progress = max(0, min(progress, 99))
+
+    if status in {"processing", "retrying"}:
+        remaining = max(5.0, base_eta * (100.0 - float(progress)) / 100.0)
+        if status == "retrying":
+            remaining += 15.0
+        confidence = "high" if job_type in eta_baselines else "medium"
+        return int(round(remaining)), confidence
+
+    if status == "queued":
+        safe_position = max(1, int(queue_position or 1))
+        queue_wait = max(0.0, float(safe_position - 1) * max(15.0, base_eta * 0.6))
+        remaining = queue_wait + base_eta
+        confidence = "medium" if job_type in eta_baselines else "low"
+        return int(round(remaining)), confidence
+
+    return None, None
+
+
+async def build_job_status_response(
+    job_doc: Dict[str, Any],
+    *,
+    eta_baselines: Optional[Dict[str, float]] = None,
+    queue_position: Optional[int] = None,
+) -> JobStatusResponse:
+    baselines = eta_baselines or {"default": 120.0}
+    remaining_seconds, eta_confidence = _compute_job_eta(
+        job_doc=job_doc,
+        eta_baselines=baselines,
+        queue_position=queue_position,
+    )
+    eta_updated_at: datetime
+    eta_source_raw = (
+        str(job_doc.get("updated_at") or "").strip()
+        or str(job_doc.get("completed_at") or "").strip()
+        or str(job_doc.get("started_at") or "").strip()
+        or str(job_doc.get("created_at") or "").strip()
+    )
+    try:
+        eta_updated_at = datetime.fromisoformat(eta_source_raw)
+        if eta_updated_at.tzinfo is None:
+            eta_updated_at = eta_updated_at.replace(tzinfo=timezone.utc)
+    except Exception:
+        eta_updated_at = datetime.now(timezone.utc)
     norm = normalize_datetime_fields(dict(job_doc), ["created_at", "completed_at"])
     return JobStatusResponse(
         job_id=norm["job_id"],
@@ -2232,9 +2440,14 @@ def build_job_status_response(job_doc: Dict[str, Any]) -> JobStatusResponse:
         type=norm["type"],
         status=norm["status"],
         progress=norm.get("progress"),
+        queue_position=queue_position,
+        estimated_remaining_seconds=remaining_seconds,
+        eta_confidence=eta_confidence,
+        eta_updated_at=eta_updated_at,
         created_at=norm["created_at"],
         completed_at=norm.get("completed_at"),
         result_reference=norm.get("result_reference"),
+        consumed_credit_bucket=norm.get("consumed_credit_bucket"),
         error=norm.get("error"),
     )
 
@@ -2283,6 +2496,24 @@ def normalize_meeting_link(raw_link: str) -> str:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise HTTPException(status_code=400, detail="Meeting link must be a valid http(s) URL")
     return link
+
+
+def moderate_user_text(
+    *,
+    text: Optional[str],
+    field_name: str,
+    max_len: int,
+    allow_empty: bool,
+) -> Optional[str]:
+    result = moderation_service.moderate_text(
+        text=text,
+        field_name=field_name,
+        max_len=max_len,
+        allow_empty=allow_empty,
+    )
+    if result.get("is_blocked"):
+        raise HTTPException(status_code=400, detail=result.get("warning_message") or f"Invalid {field_name}")
+    return result.get("clean_text")
 
 
 def _cloudinary_configured() -> bool:
@@ -2433,6 +2664,10 @@ async def compute_class_rating_snapshot(class_id: str) -> Tuple[Optional[float],
     return (round(float(avg), 2) if avg is not None else None), count
 
 
+async def compute_open_access_issue_count(class_id: str) -> int:
+    return int(await db.class_access_issues.count_documents({"class_id": class_id, "status": "open"}))
+
+
 def compute_class_escrow_split(amount_kes: int) -> Tuple[int, int]:
     fee_pct = current_class_escrow_platform_fee_percent()
     platform_fee = int(round(float(amount_kes) * fee_pct / 100.0))
@@ -2474,6 +2709,9 @@ async def build_class_response(
     elif fee_kes <= 0:
         payment_status = "free"
     avg_rating, review_count = await compute_class_rating_snapshot(norm["id"])
+    open_access_issue_count = 0
+    if current_user_role == "teacher":
+        open_access_issue_count = await compute_open_access_issue_count(norm["id"])
     return ClassSessionResponse(
         id=norm["id"],
         teacher_id=norm["teacher_id"],
@@ -2500,6 +2738,7 @@ async def build_class_response(
         student_reviewed=student_reviewed,
         average_rating=avg_rating,
         review_count=review_count,
+        open_access_issue_count=open_access_issue_count,
         topic_suggestion_id=norm.get("topic_suggestion_id"),
     )
 
@@ -2587,11 +2826,30 @@ async def create_class_session_record(
     normalized_title = (title or "").strip()
     if not normalized_title:
         raise HTTPException(status_code=400, detail="Class title is required")
+    normalized_title = str(
+        moderate_user_text(
+            text=normalized_title,
+            field_name="class title",
+            max_len=180,
+            allow_empty=False,
+        )
+        or ""
+    )
     if len(normalized_title) > 180:
         raise HTTPException(status_code=400, detail="Class title must be 180 characters or fewer")
 
     normalized_description = (description or "").strip()
-    if len(normalized_description) > 2400:
+    normalized_description = (
+        moderate_user_text(
+            text=normalized_description,
+            field_name="class description",
+            max_len=2400,
+            allow_empty=True,
+        )
+        if normalized_description
+        else None
+    )
+    if normalized_description and len(normalized_description) > 2400:
         raise HTTPException(status_code=400, detail="Description must be 2400 characters or fewer")
 
     normalized_meeting_link = normalize_meeting_link(meeting_link)
@@ -2703,6 +2961,31 @@ def build_notification_response(notification_doc: Dict[str, Any]) -> Notificatio
         job_id=norm.get("job_id"),
         result_reference=norm.get("result_reference"),
         meeting_link=norm.get("meeting_link"),
+    )
+
+
+def build_class_access_issue_response(
+    issue_doc: Dict[str, Any],
+    *,
+    student_name: Optional[str] = None,
+) -> ClassAccessIssueResponse:
+    norm = normalize_datetime_fields(
+        dict(issue_doc),
+        ["created_at", "updated_at", "resolved_at"],
+    )
+    return ClassAccessIssueResponse(
+        id=norm["id"],
+        class_id=norm["class_id"],
+        student_id=norm["student_id"],
+        teacher_id=norm["teacher_id"],
+        issue=norm.get("issue", ""),
+        status=norm.get("status", "open"),
+        report_count=int(norm.get("report_count", 1)),
+        student_name=student_name,
+        created_at=norm["created_at"],
+        updated_at=norm.get("updated_at", norm["created_at"]),
+        resolved_at=norm.get("resolved_at"),
+        resolved_by=norm.get("resolved_by"),
     )
 
 
@@ -3146,6 +3429,137 @@ async def get_active_subscription(user_id: str) -> Optional[Dict[str, Any]]:
     )
 
 
+def _plan_credit_bucket(plan: SubscriptionPlan) -> str:
+    category = str(plan.category or "").strip().lower()
+    if category in {"exam_packs"}:
+        return "exam"
+    if category in {"task_packs"}:
+        return "task"
+    if category in {"topups"}:
+        if (plan.exam_quota or 0) > 0:
+            return "exam"
+        return "task"
+    return "legacy"
+
+
+def _plan_credit_units(plan: SubscriptionPlan) -> Tuple[int, int]:
+    bucket = _plan_credit_bucket(plan)
+    if bucket == "exam":
+        exam_units = int(plan.exam_quota if plan.exam_quota is not None else plan.generation_quota)
+        return max(0, exam_units), 0
+    if bucket == "task":
+        return 0, max(0, int(plan.generation_quota))
+    return 0, 0
+
+
+async def get_or_create_credit_wallet(user_id: str) -> Dict[str, Any]:
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.user_credit_wallets.update_one(
+        {"user_id": user_id},
+        {
+            "$setOnInsert": {
+                "user_id": user_id,
+                "exam_credits_total": 0,
+                "exam_credits_used": 0,
+                "exam_credits_remaining": 0,
+                "task_credits_total": 0,
+                "task_credits_used": 0,
+                "task_credits_remaining": 0,
+                "purchase_counts": {},
+                "created_at": now_iso,
+                "updated_at": now_iso,
+            }
+        },
+        upsert=True,
+    )
+    wallet = await db.user_credit_wallets.find_one({"user_id": user_id}, {"_id": 0})
+    return wallet or {
+        "user_id": user_id,
+        "exam_credits_total": 0,
+        "exam_credits_used": 0,
+        "exam_credits_remaining": 0,
+        "task_credits_total": 0,
+        "task_credits_used": 0,
+        "task_credits_remaining": 0,
+        "purchase_counts": {},
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    }
+
+
+async def add_credits_to_wallet(
+    *,
+    user_id: str,
+    plan: SubscriptionPlan,
+) -> Dict[str, Any]:
+    exam_units, task_units = _plan_credit_units(plan)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    inc_payload: Dict[str, int] = {}
+    if exam_units > 0:
+        inc_payload["exam_credits_total"] = exam_units
+        inc_payload["exam_credits_remaining"] = exam_units
+    if task_units > 0:
+        inc_payload["task_credits_total"] = task_units
+        inc_payload["task_credits_remaining"] = task_units
+    if not inc_payload:
+        return await get_or_create_credit_wallet(user_id)
+
+    await db.user_credit_wallets.update_one(
+        {"user_id": user_id},
+        {
+            "$setOnInsert": {
+                "user_id": user_id,
+                "exam_credits_total": 0,
+                "exam_credits_used": 0,
+                "exam_credits_remaining": 0,
+                "task_credits_total": 0,
+                "task_credits_used": 0,
+                "task_credits_remaining": 0,
+                "purchase_counts": {},
+                "created_at": now_iso,
+            },
+            "$set": {"updated_at": now_iso},
+            "$inc": inc_payload,
+        },
+        upsert=True,
+    )
+    await db.user_credit_wallets.update_one(
+        {"user_id": user_id},
+        {
+            "$inc": {f"purchase_counts.{plan.plan_id}": 1},
+            "$set": {"updated_at": now_iso},
+        },
+    )
+    return await get_or_create_credit_wallet(user_id)
+
+
+async def consume_wallet_credit(user_id: str, bucket: str) -> bool:
+    now_iso = datetime.now(timezone.utc).isoformat()
+    if bucket == "task":
+        result = await db.user_credit_wallets.update_one(
+            {"user_id": user_id, "task_credits_remaining": {"$gt": 0}},
+            {
+                "$inc": {"task_credits_remaining": -1, "task_credits_used": 1},
+                "$set": {"updated_at": now_iso},
+            },
+        )
+        return bool(result.modified_count > 0)
+    if bucket == "exam":
+        result = await db.user_credit_wallets.update_one(
+            {"user_id": user_id, "exam_credits_remaining": {"$gt": 0}},
+            {
+                "$inc": {"exam_credits_remaining": -1, "exam_credits_used": 1},
+                "$set": {"updated_at": now_iso},
+            },
+        )
+        return bool(result.modified_count > 0)
+    return False
+
+
+def _is_legacy_plan(plan: SubscriptionPlan) -> bool:
+    return _plan_credit_bucket(plan) == "legacy"
+
+
 def retention_days_for_plan_id(plan_id: Optional[str]) -> int:
     del plan_id
     return max(1, _runtime_int("document_retention_days", 3))
@@ -3206,54 +3620,105 @@ async def backfill_document_retention_metadata(
 
 async def get_generation_entitlement(user_id: str) -> Dict[str, Any]:
     active_sub = await get_active_subscription(user_id)
+    wallet = await get_or_create_credit_wallet(user_id)
     counters = await get_usage_counters(user_id)
     current_documents = await db.documents.count_documents({"user_id": user_id})
     current_generations = await db.generations.count_documents({"user_id": user_id})
+
+    wallet_exam_limit = int(wallet.get("exam_credits_total", 0) or 0)
+    wallet_exam_used = int(wallet.get("exam_credits_used", 0) or 0)
+    wallet_exam_remaining = int(wallet.get("exam_credits_remaining", 0) or 0)
+    wallet_task_limit = int(wallet.get("task_credits_total", 0) or 0)
+    wallet_task_used = int(wallet.get("task_credits_used", 0) or 0)
+    wallet_task_remaining = int(wallet.get("task_credits_remaining", 0) or 0)
+
+    legacy_generation_limit = 0
+    legacy_generation_used = 0
+    legacy_generation_remaining = 0
+    legacy_exam_limit = 0
+    legacy_exam_used = 0
+    legacy_exam_remaining = 0
+    legacy_window_end_at: Optional[str] = None
+    legacy_plan_name: Optional[str] = None
+    legacy_plan_id: Optional[str] = None
+    quota_multiplier = 1
+    has_legacy_active = False
+
     if active_sub:
-        plan = get_subscription_plan(active_sub.get("plan_id", ""))
-        quota_multiplier = max(1, int(active_sub.get("quota_multiplier", 1)))
-        generation_limit = int(plan.generation_quota) * quota_multiplier
-        start_at = active_sub.get("start_at") or datetime.now(timezone.utc).isoformat()
-        end_at = active_sub.get("end_at") or datetime.now(timezone.utc).isoformat()
-        # Track in-period usage as monotonic by including deleted count signal.
-        used_current_rows = await db.generations.count_documents(
-            {
-                "user_id": user_id,
-                "created_at": {"$gte": start_at, "$lte": end_at},
-            }
-        )
-        used = max(
-            used_current_rows,
-            used_current_rows + counters["generations_deleted_total"],
-        )
-        exam_used = await get_window_exam_usage(user_id, start_at, end_at)
-        exam_limit = (
-            int(plan.exam_quota) * quota_multiplier
-            if plan.exam_quota is not None
-            else None
-        )
-        exam_remaining = None if exam_limit is None else max(0, exam_limit - exam_used)
-        remaining = max(0, generation_limit - used)
+        try:
+            active_plan = get_subscription_plan(active_sub.get("plan_id", ""))
+        except HTTPException:
+            active_plan = None
+        if active_plan is not None and _plan_credit_bucket(active_plan) == "legacy":
+            has_legacy_active = True
+            quota_multiplier = max(1, int(active_sub.get("quota_multiplier", 1)))
+            legacy_generation_limit = int(active_plan.generation_quota) * quota_multiplier
+            start_at = active_sub.get("start_at") or datetime.now(timezone.utc).isoformat()
+            end_at = active_sub.get("end_at") or datetime.now(timezone.utc).isoformat()
+            legacy_window_end_at = end_at
+            legacy_plan_name = active_plan.name
+            legacy_plan_id = active_plan.plan_id
+            used_current_rows = await db.generations.count_documents(
+                {
+                    "user_id": user_id,
+                    "created_at": {"$gte": start_at, "$lte": end_at},
+                }
+            )
+            legacy_generation_used = max(
+                used_current_rows,
+                used_current_rows + counters["generations_deleted_total"],
+            )
+            legacy_exam_used = await get_window_exam_usage(user_id, start_at, end_at)
+            legacy_exam_limit = (
+                int(active_plan.exam_quota) * quota_multiplier
+                if active_plan.exam_quota is not None
+                else 0
+            )
+            legacy_exam_remaining = max(0, legacy_exam_limit - legacy_exam_used)
+            legacy_generation_remaining = max(0, legacy_generation_limit - legacy_generation_used)
+
+    total_exam_limit = wallet_exam_limit + legacy_exam_limit
+    total_exam_used = wallet_exam_used + legacy_exam_used
+    total_exam_remaining = wallet_exam_remaining + legacy_exam_remaining
+    total_task_limit = wallet_task_limit + (legacy_generation_limit - legacy_exam_limit if has_legacy_active else 0)
+    total_task_used = wallet_task_used + max(0, legacy_generation_used - legacy_exam_used)
+    total_task_remaining = wallet_task_remaining + max(0, legacy_generation_remaining - legacy_exam_remaining)
+    total_generation_limit = wallet_exam_limit + wallet_task_limit + legacy_generation_limit
+    total_generation_used = wallet_exam_used + wallet_task_used + legacy_generation_used
+    # Non-exam generation can use task first, then exam credits.
+    total_generation_remaining = total_task_remaining + total_exam_remaining
+
+    if total_generation_limit > 0:
         return {
-            "plan_id": plan.plan_id,
-            "plan_name": plan.name,
+            "plan_id": legacy_plan_id if has_legacy_active else "credit_wallet",
+            "plan_name": legacy_plan_name if has_legacy_active else "Credit Wallet",
             "is_free": False,
-            "generation_limit": generation_limit,
-            "generation_used": used,
-            "generation_remaining": remaining,
+            "generation_limit": total_generation_limit,
+            "generation_used": total_generation_used,
+            "generation_remaining": max(0, total_generation_remaining),
             "generation_used_lifetime": counters["generations_total"],
             "generation_current_items": current_generations,
-            "window_end_at": end_at,
-            "exam_limit": exam_limit,
-            "exam_used": exam_used,
-            "exam_remaining": exam_remaining,
+            "window_end_at": legacy_window_end_at,
+            "exam_limit": total_exam_limit,
+            "exam_used": total_exam_used,
+            "exam_remaining": max(0, total_exam_remaining),
+            "task_limit": total_task_limit,
+            "task_used": total_task_used,
+            "task_remaining": max(0, total_task_remaining),
             "quota_multiplier": quota_multiplier,
             "document_limit": None,
             "document_used": counters["documents_uploaded_total"],
             "document_remaining": None,
             "document_used_lifetime": counters["documents_uploaded_total"],
             "document_current_items": current_documents,
-            "document_retention_days": retention_days_for_plan_id(plan.plan_id),
+            "document_retention_days": retention_days_for_plan_id(
+                legacy_plan_id if has_legacy_active else "credit_wallet"
+            ),
+            "packs_active": {
+                "exam": max(0, wallet_exam_remaining),
+                "task": max(0, wallet_task_remaining),
+                "legacy": bool(has_legacy_active),
+            },
         }
 
     # Free plan limits are lifetime counters and do not reset on deletion.
@@ -3611,6 +4076,76 @@ async def _provider_order_for_request(providers: List[str]) -> List[str]:
     return ordered
 
 
+async def _ordered_gemini_keys_for_request(gemini_keys: List[str]) -> List[str]:
+    if len(gemini_keys) <= 1:
+        return gemini_keys
+    redis_client = _get_redis_shared_client() if GEMINI_SHARED_STATE_USE_REDIS else None
+    if redis_client is not None:
+        try:
+            index_value = await asyncio.to_thread(redis_client.incr, "llm:gemini:key_router_idx")
+            start_index = (int(index_value) - 1) % len(gemini_keys)
+            return gemini_keys[start_index:] + gemini_keys[:start_index]
+        except Exception as exc:
+            logger.warning("gemini_key_router_redis_failed error=%s", exc)
+    global _GEMINI_KEY_ROUTER_NEXT_INDEX
+    async with _GEMINI_KEY_ROUTER_LOCK:
+        start_index = _GEMINI_KEY_ROUTER_NEXT_INDEX % len(gemini_keys)
+        _GEMINI_KEY_ROUTER_NEXT_INDEX += 1
+    return gemini_keys[start_index:] + gemini_keys[:start_index]
+
+
+def _gemini_backoff_seconds(attempt: int, retry_after: float = 0.0) -> float:
+    cap_seconds = max(
+        1.0,
+        min(
+            30.0,
+            GEMINI_RATE_LIMIT_MAX_BACKOFF_SECONDS,
+            GEMINI_EXP_BACKOFF_CAP_SECONDS,
+        ),
+    )
+    jitter = random.uniform(0.0, 0.6)
+    exp_seconds = 1.5 * (2 ** max(0, attempt - 1)) + jitter
+    return min(cap_seconds, max(float(retry_after or 0.0), exp_seconds))
+
+
+def _gemini_cooldown_redis_key(api_key: str) -> str:
+    digest = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:24]
+    return f"llm:gemini:cooldown:{digest}"
+
+
+async def _get_gemini_key_cooldown_until(api_key: str) -> float:
+    redis_client = _get_redis_shared_client() if GEMINI_SHARED_STATE_USE_REDIS else None
+    now = time.time()
+    if redis_client is not None:
+        try:
+            ttl = await asyncio.to_thread(redis_client.ttl, _gemini_cooldown_redis_key(api_key))
+            if isinstance(ttl, int) and ttl > 0:
+                return now + float(ttl)
+            return 0.0
+        except Exception as exc:
+            logger.warning("gemini_cooldown_read_redis_failed error=%s", exc)
+    return _GEMINI_KEY_COOLDOWN_UNTIL.get(api_key, 0.0)
+
+
+async def _set_gemini_key_cooldown(api_key: str, seconds: float) -> None:
+    if seconds <= 0:
+        return
+    now = time.time()
+    _GEMINI_KEY_COOLDOWN_UNTIL[api_key] = now + seconds
+    redis_client = _get_redis_shared_client() if GEMINI_SHARED_STATE_USE_REDIS else None
+    if redis_client is not None:
+        try:
+            ttl = max(1, int(math.ceil(seconds)))
+            await asyncio.to_thread(
+                redis_client.setex,
+                _gemini_cooldown_redis_key(api_key),
+                ttl,
+                "1",
+            )
+        except Exception as exc:
+            logger.warning("gemini_cooldown_write_redis_failed error=%s", exc)
+
+
 async def _generate_with_openai_style_provider(
     endpoint_url: str,
     api_key: str,
@@ -3715,7 +4250,12 @@ async def _generate_with_openai_style_provider(
     )
 
 
-async def _generate_with_gemini(prompt: str, system_message: str) -> str:
+async def _generate_with_gemini(
+    prompt: str,
+    system_message: str,
+    *,
+    max_rounds: Optional[int] = None,
+) -> str:
     gemini_keys = list(GEMINI_API_KEYS)
     if GEMINI_API_KEY and GEMINI_API_KEY not in gemini_keys:
         gemini_keys.append(GEMINI_API_KEY)
@@ -3733,18 +4273,27 @@ async def _generate_with_gemini(prompt: str, system_message: str) -> str:
     last_error: Optional[Exception] = None
     saw_rate_limit = False
     saw_model_not_found = False
-    max_attempts = max(1, len(gemini_keys) * len(gemini_models)) * 3
+    max_attempts_default = max(1, len(gemini_keys) * len(gemini_models)) * 3
+    max_attempts = max(1, int(max_rounds or max_attempts_default))
+    ordered_keys = await _ordered_gemini_keys_for_request(gemini_keys)
     for attempt in range(1, max_attempts + 1):
         current_api_key: Optional[str] = None
         key_wait: Optional[float] = None
         try:
             now = time.time()
-            available_keys = [
-                key for key in gemini_keys if _GEMINI_KEY_COOLDOWN_UNTIL.get(key, 0.0) <= now
-            ]
+            available_keys: List[str] = []
+            next_ready_ts: Optional[float] = None
+            for key in ordered_keys:
+                cooldown_until = await _get_gemini_key_cooldown_until(key)
+                if cooldown_until <= now:
+                    available_keys.append(key)
+                else:
+                    if next_ready_ts is None:
+                        next_ready_ts = cooldown_until
+                    else:
+                        next_ready_ts = min(next_ready_ts, cooldown_until)
             if not available_keys:
-                next_ready = min(_GEMINI_KEY_COOLDOWN_UNTIL.get(k, now) for k in gemini_keys)
-                key_wait = max(0.5, next_ready - now)
+                key_wait = max(0.5, (next_ready_ts or now) - now)
                 if attempt < max_attempts:
                     await asyncio.sleep(key_wait)
                     continue
@@ -3817,20 +4366,21 @@ async def _generate_with_gemini(prompt: str, system_message: str) -> str:
                             retry_after = 0.0
                 if current_api_key:
                     cooldown = max(retry_after, GEMINI_RATE_LIMIT_COOLDOWN_SECONDS)
-                    _GEMINI_KEY_COOLDOWN_UNTIL[current_api_key] = time.time() + cooldown
+                    await _set_gemini_key_cooldown(current_api_key, cooldown)
                 if attempt < max_attempts:
-                    jitter = random.uniform(0.0, 0.6)
-                    backoff = min(
-                        GEMINI_RATE_LIMIT_MAX_BACKOFF_SECONDS,
-                        max(retry_after, 1.5 * (2 ** (attempt - 1)) + jitter),
-                    )
+                    backoff = _gemini_backoff_seconds(attempt, retry_after=retry_after)
                     await asyncio.sleep(backoff)
             elif status == 404:
                 saw_model_not_found = True
                 if attempt < max_attempts:
                     await asyncio.sleep(0.1)
             elif attempt < max_attempts:
-                await asyncio.sleep(0.75 * attempt)
+                if current_api_key:
+                    await _set_gemini_key_cooldown(
+                        current_api_key,
+                        max(1.0, GEMINI_KEY_FAILURE_COOLDOWN_SECONDS),
+                    )
+                await asyncio.sleep(_gemini_backoff_seconds(attempt))
         except Exception as e:
             last_error = e
             logger.warning("Gemini generation attempt %s/%s failed: %s", attempt, max_attempts, e)
@@ -3838,7 +4388,12 @@ async def _generate_with_gemini(prompt: str, system_message: str) -> str:
                 if key_wait:
                     await asyncio.sleep(key_wait)
                 else:
-                    await asyncio.sleep(0.75 * attempt)
+                    if current_api_key:
+                        await _set_gemini_key_cooldown(
+                            current_api_key,
+                            max(1.0, GEMINI_KEY_FAILURE_COOLDOWN_SECONDS),
+                        )
+                    await asyncio.sleep(_gemini_backoff_seconds(attempt))
 
     if saw_model_not_found:
         raise HTTPException(
@@ -3891,6 +4446,41 @@ def _resolve_nvidia_api_key_for_model(model_name: str) -> str:
     return NVIDIA_API_KEY
 
 
+async def _generate_with_nvidia(
+    prompt: str,
+    system_message: str,
+    generation_type: Optional[str],
+) -> str:
+    last_nvidia_error: Optional[HTTPException] = None
+    for nvidia_model in await _ordered_nvidia_models_for_request():
+        try:
+            logger.info("llm_nvidia_model_try model=%s", nvidia_model)
+            return await _generate_with_openai_style_provider(
+                endpoint_url=f"{NVIDIA_BASE_URL}/chat/completions",
+                api_key=_resolve_nvidia_api_key_for_model(nvidia_model),
+                model_name=nvidia_model,
+                provider_label="NVIDIA",
+                prompt=prompt,
+                system_message=system_message,
+                timeout_seconds=NVIDIA_TIMEOUT_SECONDS,
+                max_attempts=1,
+                max_tokens=_nvidia_max_tokens_for_generation(generation_type),
+                force_json_object=NVIDIA_FORCE_JSON_MODE,
+            )
+        except HTTPException as nvidia_exc:
+            last_nvidia_error = nvidia_exc
+            logger.warning(
+                "llm_nvidia_model_fallback from_model=%s status=%s detail=%s",
+                nvidia_model,
+                nvidia_exc.status_code,
+                nvidia_exc.detail,
+            )
+            continue
+    if last_nvidia_error is not None:
+        raise last_nvidia_error
+    raise HTTPException(status_code=502, detail="NVIDIA generation failed without a model attempt")
+
+
 async def _generate_with_llm_internal(
     prompt: str,
     system_message: str,
@@ -3925,7 +4515,31 @@ async def _generate_with_llm_internal(
         try:
             logger.info("llm_request_try provider=%s", provider)
             if provider == "gemini":
-                return await _generate_with_gemini(prompt, system_message)
+                is_exam_request = (generation_type or "").strip().lower() == "exam"
+                gemini_rounds = GEMINI_EXAM_MAX_ROUNDS if is_exam_request else None
+                try:
+                    return await _generate_with_gemini(
+                        prompt,
+                        system_message,
+                        max_rounds=gemini_rounds,
+                    )
+                except HTTPException as gemini_exc:
+                    should_try_exam_fallback = (
+                        is_exam_request
+                        and gemini_rounds is not None
+                        and gemini_rounds > 0
+                        and _is_llm_provider_configured("nvidia")
+                        and gemini_exc.status_code in {429, 500, 502, 503, 504}
+                    )
+                    if should_try_exam_fallback:
+                        logger.warning(
+                            "llm_exam_fallback gemini_failed_rounds=%s status=%s detail=%s fallback=nvidia",
+                            gemini_rounds,
+                            gemini_exc.status_code,
+                            gemini_exc.detail,
+                        )
+                        return await _generate_with_nvidia(prompt, system_message, generation_type)
+                    raise
             if provider == "openai":
                 return await _generate_with_openai_style_provider(
                     endpoint_url="https://api.openai.com/v1/chat/completions",
@@ -3939,34 +4553,7 @@ async def _generate_with_llm_internal(
                     force_json_object=True,
                 )
             if provider == "nvidia":
-                last_nvidia_error: Optional[HTTPException] = None
-                for nvidia_model in await _ordered_nvidia_models_for_request():
-                    try:
-                        logger.info("llm_nvidia_model_try model=%s", nvidia_model)
-                        return await _generate_with_openai_style_provider(
-                            endpoint_url=f"{NVIDIA_BASE_URL}/chat/completions",
-                            api_key=_resolve_nvidia_api_key_for_model(nvidia_model),
-                            model_name=nvidia_model,
-                            provider_label="NVIDIA",
-                            prompt=prompt,
-                            system_message=system_message,
-                            timeout_seconds=NVIDIA_TIMEOUT_SECONDS,
-                            max_attempts=1,
-                            max_tokens=_nvidia_max_tokens_for_generation(generation_type),
-                            force_json_object=NVIDIA_FORCE_JSON_MODE,
-                        )
-                    except HTTPException as nvidia_exc:
-                        last_nvidia_error = nvidia_exc
-                        logger.warning(
-                            "llm_nvidia_model_fallback from_model=%s status=%s detail=%s",
-                            nvidia_model,
-                            nvidia_exc.status_code,
-                            nvidia_exc.detail,
-                        )
-                        continue
-                if last_nvidia_error is not None:
-                    raise last_nvidia_error
-                raise HTTPException(status_code=502, detail="NVIDIA generation failed without a model attempt")
+                return await _generate_with_nvidia(prompt, system_message, generation_type)
             failure_details.append(f"{provider}: unsupported provider")
         except HTTPException as exc:
             failure_details.append(f"{provider}: {exc.status_code} {exc.detail}")
@@ -4094,9 +4681,10 @@ def enqueue_quota_exhausted_nudge(user_id: str, quota_type: str) -> None:
         )
 
 
-async def consume_generation_quota(user_id: str, generation_type: str) -> None:
+async def consume_generation_quota(user_id: str, generation_type: str) -> str:
     entitlement = await get_generation_entitlement(user_id)
-    if entitlement["generation_remaining"] <= 0:
+    generation_type_norm = (generation_type or "").strip().lower()
+    if int(entitlement.get("generation_remaining", 0) or 0) <= 0:
         enqueue_quota_exhausted_nudge(user_id=user_id, quota_type="generation")
         if entitlement["is_free"]:
             raise HTTPException(
@@ -4114,25 +4702,50 @@ async def consume_generation_quota(user_id: str, generation_type: str) -> None:
             ),
         )
 
-    if (
-        generation_type == "exam"
-        and not entitlement["is_free"]
-        and entitlement.get("exam_limit") is not None
-        and int(entitlement.get("exam_remaining", 0)) <= 0
-    ):
-        enqueue_quota_exhausted_nudge(user_id=user_id, quota_type="exam")
-        raise HTTPException(
-            status_code=402,
-            detail=(
-                f"{entitlement['plan_name']} plan exam quota reached "
-                f"({entitlement.get('exam_limit')} per billing cycle). "
-                "Upgrade or renew to continue generating exams."
-            ),
-        )
+    if generation_type_norm == "exam":
+        if not entitlement["is_free"] and int(entitlement.get("exam_remaining", 0) or 0) <= 0:
+            enqueue_quota_exhausted_nudge(user_id=user_id, quota_type="exam")
+            raise HTTPException(
+                status_code=402,
+                detail=(
+                    "Exam credits are exhausted. Buy an exam pack or exam booster to continue exams."
+                ),
+            )
+        if not entitlement["is_free"]:
+            consumed_exam = await consume_wallet_credit(user_id, "exam")
+            if not consumed_exam:
+                # Legacy active plan fallback (usage is enforced by in-window counts).
+                if not bool((entitlement.get("packs_active") or {}).get("legacy")):
+                    raise HTTPException(
+                        status_code=402,
+                        detail="Exam credits are exhausted. Buy an exam pack to continue.",
+                    )
+                consumed_bucket = "legacy"
+            else:
+                consumed_bucket = "exam"
+        else:
+            consumed_bucket = "free"
+    else:
+        if not entitlement["is_free"]:
+            consumed_task = await consume_wallet_credit(user_id, "task")
+            if not consumed_task:
+                consumed_exam = await consume_wallet_credit(user_id, "exam")
+                if not consumed_exam and not bool((entitlement.get("packs_active") or {}).get("legacy")):
+                    raise HTTPException(
+                        status_code=402,
+                        detail=(
+                            "Task credits are exhausted. Buy a task pack, or use available exam credits."
+                        ),
+                    )
+                consumed_bucket = "legacy" if not consumed_exam else "exam"
+            else:
+                consumed_bucket = "task"
+        else:
+            consumed_bucket = "free"
 
     today = datetime.now(timezone.utc).date().isoformat()
     inc: Dict[str, int] = {"generation_count": 1}
-    if generation_type == "exam":
+    if generation_type_norm == "exam":
         inc["exam_generation_count"] = 1
     quota_doc = await db.user_quotas.find_one_and_update(
         {
@@ -4153,14 +4766,19 @@ async def consume_generation_quota(user_id: str, generation_type: str) -> None:
     )
     if not quota_doc:
         raise HTTPException(status_code=429, detail="Daily generation quota exceeded")
+    return consumed_bucket
 
 
 async def ensure_topic_access(user_id: str) -> None:
     if not SUBSCRIPTIONS_ENABLED:
         return
     if TOPIC_REQUIRE_ACTIVE_SUBSCRIPTION:
-        active_sub = await get_active_subscription(user_id)
-        if not active_sub:
+        entitlement = await get_generation_entitlement(user_id)
+        has_paid_quota = (
+            not bool(entitlement.get("is_free", True))
+            and int(entitlement.get("generation_remaining", 0) or 0) > 0
+        )
+        if not has_paid_quota:
             raise HTTPException(
                 status_code=402,
                 detail="An active credit pack is required to use topic suggestions.",
@@ -4255,6 +4873,18 @@ async def decode_token(token: str, expected_type: str, check_revoked: bool = Tru
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Dict[str, Any]:
     payload = await decode_token(credentials.credentials, "access")
+    await maybe_wake_redis_on_activity()
+    user = await db.users.find_one({"id": payload["user_id"]}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
+
+
+async def get_current_user_from_access_token(access_token: str) -> Dict[str, Any]:
+    token = (access_token or "").strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing access token")
+    payload = await decode_token(token, "access")
     await maybe_wake_redis_on_activity()
     user = await db.users.find_one({"id": payload["user_id"]}, {"_id": 0})
     if not user:
@@ -4715,14 +5345,31 @@ async def subscription_plans(include_legacy: bool = False):
 
 @api_router.get("/subscriptions/me")
 async def my_subscription(current_user: Dict[str, Any] = Depends(get_current_user)):
+    entitlement = await get_generation_entitlement(current_user["id"])
     now_iso = datetime.now(timezone.utc).isoformat()
-    sub = await db.subscriptions.find_one(
+    active_sub = await db.subscriptions.find_one(
         {"user_id": current_user["id"], **active_subscription_filter(now_iso)},
         {"_id": 0},
     )
-    if not sub:
-        return {"active": False, "plan_id": None, "end_at": None}
-    return {"active": True, **sub}
+    has_paid_quota = (
+        not bool(entitlement.get("is_free", True))
+        and int(entitlement.get("generation_remaining", 0) or 0) > 0
+    )
+    response: Dict[str, Any] = {
+        "active": has_paid_quota,
+        "plan_id": entitlement.get("plan_id"),
+        "plan_name": entitlement.get("plan_name"),
+        "end_at": entitlement.get("window_end_at"),
+        "generation_remaining": int(entitlement.get("generation_remaining", 0) or 0),
+        "exam_remaining": int(entitlement.get("exam_remaining", 0) or 0),
+        "task_remaining": int(entitlement.get("task_remaining", 0) or 0),
+        "packs_active": entitlement.get("packs_active", {}),
+    }
+    if active_sub:
+        response["subscription_record"] = active_sub
+        if response.get("end_at") is None:
+            response["end_at"] = active_sub.get("end_at")
+    return response
 
 
 @api_router.get("/subscriptions/entitlement")
@@ -4902,53 +5549,59 @@ async def mpesa_callback(request: Request, payload: Dict[str, Any], background_t
 
         plan = get_subscription_plan(subscription_payment["plan_id"])
         now_utc = datetime.now(timezone.utc)
-        existing_sub = await db.subscriptions.find_one({"user_id": subscription_payment["user_id"]}, {"_id": 0})
-        should_stack = False
-        start_at = now_utc
-        end_at = now_utc + timedelta(days=plan.cycle_days)
-        quota_multiplier = 1
+        if _is_legacy_plan(plan):
+            existing_sub = await db.subscriptions.find_one({"user_id": subscription_payment["user_id"]}, {"_id": 0})
+            should_stack = False
+            start_at = now_utc
+            end_at = now_utc + timedelta(days=plan.cycle_days)
+            quota_multiplier = 1
 
-        if existing_sub and existing_sub.get("status") == "active" and existing_sub.get("plan_id") == plan.plan_id:
-            existing_end_raw = existing_sub.get("end_at")
-            existing_start_raw = existing_sub.get("start_at")
-            try:
-                existing_end = datetime.fromisoformat(str(existing_end_raw))
-            except Exception:
-                existing_end = now_utc
-            if existing_end.tzinfo is None:
-                existing_end = existing_end.replace(tzinfo=timezone.utc)
-
-            if existing_end >= now_utc:
-                should_stack = True
+            if existing_sub and existing_sub.get("status") == "active" and existing_sub.get("plan_id") == plan.plan_id:
+                existing_end_raw = existing_sub.get("end_at")
+                existing_start_raw = existing_sub.get("start_at")
                 try:
-                    existing_start = datetime.fromisoformat(str(existing_start_raw))
-                    if existing_start.tzinfo is None:
-                        existing_start = existing_start.replace(tzinfo=timezone.utc)
+                    existing_end = datetime.fromisoformat(str(existing_end_raw))
                 except Exception:
-                    existing_start = now_utc
-                start_at = existing_start
-                end_at = existing_end + timedelta(days=plan.cycle_days)
-                quota_multiplier = max(1, int(existing_sub.get("quota_multiplier", 1))) + 1
+                    existing_end = now_utc
+                if existing_end.tzinfo is None:
+                    existing_end = existing_end.replace(tzinfo=timezone.utc)
 
-        await db.subscriptions.update_one(
-            {"user_id": subscription_payment["user_id"]},
-            {
-                "$set": {
-                    "user_id": subscription_payment["user_id"],
-                    "plan_id": plan.plan_id,
-                    "plan_name": plan.name,
-                    "status": "active",
-                    "amount_kes": subscription_payment.get("amount_kes", plan.amount_kes),
-                    "mpesa_receipt_number": receipt,
-                    "start_at": start_at.isoformat(),
-                    "end_at": end_at.isoformat(),
-                    "quota_multiplier": quota_multiplier,
-                    "renewal_mode": "stacked" if should_stack else "reset",
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }
-            },
-            upsert=True,
-        )
+                if existing_end >= now_utc:
+                    should_stack = True
+                    try:
+                        existing_start = datetime.fromisoformat(str(existing_start_raw))
+                        if existing_start.tzinfo is None:
+                            existing_start = existing_start.replace(tzinfo=timezone.utc)
+                    except Exception:
+                        existing_start = now_utc
+                    start_at = existing_start
+                    end_at = existing_end + timedelta(days=plan.cycle_days)
+                    quota_multiplier = max(1, int(existing_sub.get("quota_multiplier", 1))) + 1
+
+            await db.subscriptions.update_one(
+                {"user_id": subscription_payment["user_id"]},
+                {
+                    "$set": {
+                        "user_id": subscription_payment["user_id"],
+                        "plan_id": plan.plan_id,
+                        "plan_name": plan.name,
+                        "status": "active",
+                        "amount_kes": subscription_payment.get("amount_kes", plan.amount_kes),
+                        "mpesa_receipt_number": receipt,
+                        "start_at": start_at.isoformat(),
+                        "end_at": end_at.isoformat(),
+                        "quota_multiplier": quota_multiplier,
+                        "renewal_mode": "stacked" if should_stack else "reset",
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                },
+                upsert=True,
+            )
+        elif not was_already_paid:
+            await add_credits_to_wallet(
+                user_id=subscription_payment["user_id"],
+                plan=plan,
+            )
         if not was_already_paid:
             user_doc = await db.users.find_one(
                 {"id": subscription_payment["user_id"]},
@@ -5126,6 +5779,7 @@ async def delete_user_data(user_id: str):
     await db.generations.delete_many({"user_id": user_id})
     await db.subscription_payments.delete_many({"user_id": user_id})
     await db.subscriptions.delete_many({"user_id": user_id})
+    await db.user_credit_wallets.delete_many({"user_id": user_id})
     await db.generation_jobs.delete_many({"user_id": user_id})
     await db.notifications.delete_many({"user_id": user_id})
     await db.analytics_runs.delete_many({"user_id": user_id})
@@ -5859,6 +6513,7 @@ async def run_generation_pipeline(
     user_id: str,
     request: GenerationRequest,
     generation_id: Optional[str] = None,
+    consumed_credit_bucket: Optional[str] = None,
 ) -> GenerationResponse:
     selected_doc_ids = list(dict.fromkeys(request.document_ids or []))
     selected_note_ids = list(dict.fromkeys(request.cbc_note_ids or []))
@@ -5996,6 +6651,7 @@ async def run_generation_pipeline(
         user_id=user_id,
         generation_type=request.generation_type,
         content=content,
+        consumed_credit_bucket=(consumed_credit_bucket or "").strip().lower() or None,
     )
     gen_dict = generation.model_dump()
     gen_dict["created_at"] = gen_dict["created_at"].isoformat()
@@ -6040,7 +6696,7 @@ async def queue_generation_content(
         len(selected_note_ids),
     )
     await ensure_rate_limit(current_user["id"], "generate_user", GEN_PER_MIN_LIMIT)
-    await consume_generation_quota(current_user["id"], request.generation_type)
+    consumed_credit_bucket = await consume_generation_quota(current_user["id"], request.generation_type)
 
     if not selected_doc_ids and not selected_note_ids:
         raise HTTPException(status_code=400, detail="Select at least one document or shared note")
@@ -6065,6 +6721,7 @@ async def queue_generation_content(
         "job_id": job_id,
         "user_id": current_user["id"],
         "type": request.generation_type,
+        "consumed_credit_bucket": consumed_credit_bucket,
         "status": "queued",
         "progress": 0,
         "created_at": now_iso,
@@ -6143,13 +6800,31 @@ async def get_generation_job_status(
 ):
     await ensure_rate_limit(current_user["id"], "jobs_status_user", JOB_STATUS_PER_MIN_LIMIT)
     await mark_stale_generation_jobs(user_id=current_user["id"])
+    eta_baselines = await load_job_eta_baselines(current_user["id"])
     job_doc = await db.generation_jobs.find_one(
         {"job_id": job_id, "user_id": current_user["id"]},
         {"_id": 0},
     )
     if not job_doc:
         raise HTTPException(status_code=404, detail="Job not found")
-    return build_job_status_response(job_doc)
+    queue_position: Optional[int] = None
+    status_norm = str(job_doc.get("status") or "").strip().lower()
+    if status_norm == "queued":
+        queue_position = (
+            await db.generation_jobs.count_documents(
+                {
+                    "user_id": current_user["id"],
+                    "status": "queued",
+                    "created_at": {"$lte": str(job_doc.get("created_at") or "")},
+                }
+            )
+            or 1
+        )
+    return await build_job_status_response(
+        job_doc,
+        eta_baselines=eta_baselines,
+        queue_position=int(queue_position) if queue_position else None,
+    )
 
 
 @api_router.get("/v1/jobs", response_model=List[JobStatusResponse])
@@ -6160,6 +6835,7 @@ async def list_generation_jobs(
 ):
     await ensure_rate_limit(current_user["id"], "jobs_status_user", JOB_STATUS_PER_MIN_LIMIT)
     await mark_stale_generation_jobs(user_id=current_user["id"])
+    eta_baselines = await load_job_eta_baselines(current_user["id"])
     safe_limit = max(1, min(limit, 200))
     query: Dict[str, Any] = {"user_id": current_user["id"]}
     if status:
@@ -6168,7 +6844,28 @@ async def list_generation_jobs(
             raise HTTPException(status_code=400, detail="Invalid status filter")
         query["status"] = normalized
     docs = await db.generation_jobs.find(query, {"_id": 0}).sort("created_at", -1).to_list(safe_limit)
-    return [build_job_status_response(doc) for doc in docs]
+    queued_docs_sorted = sorted(
+        [
+            d
+            for d in docs
+            if str(d.get("status") or "").strip().lower() == "queued"
+        ],
+        key=lambda d: str(d.get("created_at") or ""),
+    )
+    queue_pos_map: Dict[str, int] = {}
+    for idx, doc in enumerate(queued_docs_sorted, start=1):
+        queue_pos_map[str(doc.get("job_id") or "")] = idx
+    output: List[JobStatusResponse] = []
+    for doc in docs:
+        job_id_val = str(doc.get("job_id") or "")
+        output.append(
+            await build_job_status_response(
+                doc,
+                eta_baselines=eta_baselines,
+                queue_position=queue_pos_map.get(job_id_val),
+            )
+        )
+    return output
 
 
 @api_router.get("/v1/jobs/", response_model=List[JobStatusResponse], include_in_schema=False)
@@ -6178,6 +6875,85 @@ async def list_generation_jobs_trailing_slash(
     current_user: Dict[str, Any] = Depends(get_current_user),
 ):
     return await list_generation_jobs(limit=limit, status=status, current_user=current_user)
+
+
+@api_router.websocket("/v1/jobs/stream")
+async def stream_generation_jobs(websocket: WebSocket):
+    await websocket.accept()
+    access_token = (websocket.query_params.get("access_token") or "").strip()
+    status_filter = (websocket.query_params.get("status") or "").strip().lower()
+    limit_raw = (websocket.query_params.get("limit") or "").strip()
+    try:
+        current_user = await get_current_user_from_access_token(access_token)
+    except HTTPException:
+        await websocket.close(code=1008, reason="Unauthorized")
+        return
+
+    safe_limit = 100
+    if limit_raw:
+        try:
+            safe_limit = max(1, min(int(limit_raw), 200))
+        except Exception:
+            safe_limit = 100
+
+    query: Dict[str, Any] = {"user_id": current_user["id"]}
+    if status_filter and status_filter != "all":
+        if status_filter not in {"queued", "processing", "retrying", "completed", "failed"}:
+            await websocket.close(code=1008, reason="Invalid status")
+            return
+        query["status"] = status_filter
+
+    last_payload_hash = ""
+    try:
+        while True:
+            await mark_stale_generation_jobs(user_id=current_user["id"])
+            docs = await db.generation_jobs.find(query, {"_id": 0}).sort("created_at", -1).to_list(safe_limit)
+            eta_baselines = await load_job_eta_baselines(current_user["id"])
+            queued_docs_sorted = sorted(
+                [
+                    d
+                    for d in docs
+                    if str(d.get("status") or "").strip().lower() == "queued"
+                ],
+                key=lambda d: str(d.get("created_at") or ""),
+            )
+            queue_pos_map: Dict[str, int] = {}
+            for idx, doc in enumerate(queued_docs_sorted, start=1):
+                queue_pos_map[str(doc.get("job_id") or "")] = idx
+
+            response_items: List[Dict[str, Any]] = []
+            for doc in docs:
+                model = await build_job_status_response(
+                    doc,
+                    eta_baselines=eta_baselines,
+                    queue_position=queue_pos_map.get(str(doc.get("job_id") or "")),
+                )
+                response_items.append(model.model_dump(mode="json"))
+
+            payload = {
+                "type": "jobs_snapshot",
+                "jobs": response_items,
+                "server_time": datetime.now(timezone.utc).isoformat(),
+            }
+            payload_fingerprint = {
+                "type": payload["type"],
+                "jobs": response_items,
+            }
+            payload_hash = hashlib.sha1(
+                json.dumps(payload_fingerprint, sort_keys=True, default=str).encode("utf-8")
+            ).hexdigest()
+            if payload_hash != last_payload_hash:
+                await websocket.send_json(payload)
+                last_payload_hash = payload_hash
+            await asyncio.sleep(2.0)
+    except WebSocketDisconnect:
+        return
+    except Exception as exc:
+        logger.warning("jobs_stream_closed user_id=%s error=%s", current_user.get("id"), exc)
+        try:
+            await websocket.close(code=1011)
+        except Exception:
+            pass
 
 
 @api_router.get("/generations", response_model=List[GenerationResponse])
@@ -6677,6 +7453,221 @@ async def complete_class_session(
             {"$set": {"escrow_released_at": now_iso}},
         )
     return await build_class_response(updated, current_user["id"], "teacher")
+
+
+@api_router.post("/v1/classes/{class_id}/meeting-link", response_model=ClassSessionResponse)
+async def update_class_meeting_link(
+    class_id: str,
+    payload: ClassMeetingLinkUpdateRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    if current_user.get("role", "").lower() != "teacher":
+        raise HTTPException(status_code=403, detail="Only teachers can update class links")
+    await ensure_rate_limit(current_user["id"], "class_create_user", CLASS_CREATE_PER_MIN_LIMIT)
+    await ensure_topic_access(current_user["id"])
+
+    class_doc = await db.class_sessions.find_one({"id": class_id}, {"_id": 0})
+    if not class_doc:
+        raise HTTPException(status_code=404, detail="Class not found")
+    if class_doc.get("teacher_id") != current_user["id"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    normalized_meeting_link = normalize_meeting_link(payload.meeting_link)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    updated = await db.class_sessions.find_one_and_update(
+        {"id": class_id},
+        {
+            "$set": {
+                "meeting_link": normalized_meeting_link,
+                "updated_at": now_iso,
+            }
+        },
+        return_document=ReturnDocument.AFTER,
+        projection={"_id": 0},
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Class not found")
+
+    await db.class_access_issues.update_many(
+        {"class_id": class_id, "status": "open"},
+        {
+            "$set": {
+                "status": "addressed",
+                "resolved_at": now_iso,
+                "resolved_by": current_user["id"],
+                "updated_at": now_iso,
+            }
+        },
+    )
+
+    if payload.notify_students:
+        enrollments = await db.class_enrollments.find(
+            {"class_id": class_id, "payment_status": {"$in": ["paid", "free"]}},
+            {"_id": 0, "student_id": 1},
+        ).to_list(5000)
+        if enrollments:
+            notification_docs = [
+                {
+                    "id": str(uuid.uuid4()),
+                    "user_id": str(enrollment.get("student_id") or ""),
+                    "status": "class_meeting_link_updated",
+                    "message": (
+                        f"Class link updated: {updated.get('title', 'Class')}. "
+                        "Open your class and join with the latest link."
+                    ),
+                    "class_id": class_id,
+                    "meeting_link": normalized_meeting_link,
+                    "read": False,
+                    "created_at": now_iso,
+                }
+                for enrollment in enrollments
+                if str(enrollment.get("student_id") or "").strip()
+            ]
+            if notification_docs:
+                await db.notifications.insert_many(notification_docs)
+
+    return await build_class_response(updated, current_user["id"], "teacher")
+
+
+@api_router.post("/v1/classes/{class_id}/access-issues", response_model=ClassAccessIssueResponse)
+async def report_class_access_issue(
+    class_id: str,
+    payload: ClassAccessIssueCreateRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    if current_user.get("role", "").lower() != "student":
+        raise HTTPException(status_code=403, detail="Only students can report class access issues")
+    await ensure_rate_limit(current_user["id"], "class_access_issue_user", CLASS_ACCESS_ISSUE_PER_MIN_LIMIT)
+    await ensure_topic_access(current_user["id"])
+
+    class_doc = await db.class_sessions.find_one({"id": class_id}, {"_id": 0})
+    if not class_doc:
+        raise HTTPException(status_code=404, detail="Class not found")
+    enrollment = await db.class_enrollments.find_one(
+        {"class_id": class_id, "student_id": current_user["id"]},
+        {"_id": 0, "payment_status": 1},
+    )
+    payment_status = str((enrollment or {}).get("payment_status") or "").lower()
+    if payment_status not in {"paid", "free"}:
+        raise HTTPException(
+            status_code=403,
+            detail="Only students who joined this class can report an access issue",
+        )
+
+    moderated_issue = moderate_user_text(
+        text=(payload.issue or "").strip(),
+        field_name="issue details",
+        max_len=1000,
+        allow_empty=False,
+    )
+    if moderated_issue is None:
+        raise HTTPException(status_code=400, detail="Issue details are required")
+    if len(moderated_issue) < 8:
+        raise HTTPException(status_code=400, detail="Issue details must be at least 8 characters")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    existing_open = await db.class_access_issues.find_one(
+        {"class_id": class_id, "student_id": current_user["id"], "status": "open"},
+        {"_id": 0},
+        sort=[("updated_at", -1)],
+    )
+    issue_doc: Dict[str, Any]
+    if existing_open:
+        await db.class_access_issues.update_one(
+            {"id": existing_open["id"]},
+            {
+                "$set": {
+                    "issue": moderated_issue,
+                    "updated_at": now_iso,
+                },
+                "$inc": {"report_count": 1},
+            },
+        )
+        issue_doc = await db.class_access_issues.find_one({"id": existing_open["id"]}, {"_id": 0}) or existing_open
+    else:
+        issue_doc = {
+            "id": str(uuid.uuid4()),
+            "class_id": class_id,
+            "student_id": current_user["id"],
+            "teacher_id": class_doc["teacher_id"],
+            "issue": moderated_issue,
+            "status": "open",
+            "report_count": 1,
+            "created_at": now_iso,
+            "updated_at": now_iso,
+            "resolved_at": None,
+            "resolved_by": None,
+        }
+        await db.class_access_issues.insert_one(issue_doc)
+
+    await db.notifications.insert_one(
+        {
+            "id": str(uuid.uuid4()),
+            "user_id": class_doc["teacher_id"],
+            "status": "class_access_issue_reported",
+            "message": (
+                f"Access issue reported for '{class_doc.get('title', 'Class')}' by "
+                f"{current_user.get('full_name', 'a student')}: {moderated_issue}"
+            ),
+            "class_id": class_id,
+            "meeting_link": class_doc.get("meeting_link"),
+            "read": False,
+            "created_at": now_iso,
+        }
+    )
+
+    return build_class_access_issue_response(issue_doc, student_name=current_user.get("full_name"))
+
+
+@api_router.get("/v1/classes/{class_id}/access-issues", response_model=List[ClassAccessIssueResponse])
+async def list_class_access_issues(
+    class_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    if current_user.get("role", "").lower() != "teacher":
+        raise HTTPException(status_code=403, detail="Only teachers can view class access issues")
+    await ensure_rate_limit(current_user["id"], "class_read_user", JOB_STATUS_PER_MIN_LIMIT)
+    await ensure_topic_access(current_user["id"])
+
+    class_doc = await db.class_sessions.find_one(
+        {"id": class_id},
+        {"_id": 0, "id": 1, "teacher_id": 1},
+    )
+    if not class_doc:
+        raise HTTPException(status_code=404, detail="Class not found")
+    if class_doc.get("teacher_id") != current_user["id"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    docs = await db.class_access_issues.find(
+        {"class_id": class_id},
+        {"_id": 0},
+    ).sort([("status", 1), ("updated_at", -1)]).to_list(500)
+    if not docs:
+        return []
+
+    student_ids = sorted(
+        {
+            str(doc.get("student_id") or "").strip()
+            for doc in docs
+            if str(doc.get("student_id") or "").strip()
+        }
+    )
+    users = await db.users.find(
+        {"id": {"$in": student_ids}},
+        {"_id": 0, "id": 1, "full_name": 1},
+    ).to_list(len(student_ids))
+    name_map = {
+        str(user.get("id") or ""): str(user.get("full_name") or "").strip()
+        for user in users
+        if str(user.get("id") or "").strip()
+    }
+    return [
+        build_class_access_issue_response(
+            doc,
+            student_name=name_map.get(str(doc.get("student_id") or "")) or None,
+        )
+        for doc in docs
+    ]
 
 
 @api_router.get("/v1/classes/{class_id}/payment/{checkout_request_id}")
@@ -7427,13 +8418,19 @@ async def create_class_review(
     if not enrollment:
         raise HTTPException(status_code=403, detail="Only students who joined the class can review")
 
+    moderated_comment = moderate_user_text(
+        text=(payload.comment or "").strip(),
+        field_name="review comment",
+        max_len=800,
+        allow_empty=True,
+    )
     review_doc = {
         "id": str(uuid.uuid4()),
         "class_id": class_id,
         "student_id": current_user["id"],
         "teacher_id": class_doc["teacher_id"],
         "rating": payload.rating,
-        "comment": (payload.comment or "").strip() or None,
+        "comment": (moderated_comment or "").strip() or None,
         "created_at": now_iso,
         "updated_at": now_iso,
     }
@@ -8933,6 +9930,9 @@ async def startup_checks():
     await db.class_reviews.create_index("id", unique=True)
     await db.class_reviews.create_index([("class_id", 1), ("student_id", 1)], unique=True)
     await db.class_reviews.create_index([("teacher_id", 1), ("created_at", -1)])
+    await db.class_access_issues.create_index("id", unique=True)
+    await db.class_access_issues.create_index([("class_id", 1), ("student_id", 1), ("status", 1)])
+    await db.class_access_issues.create_index([("teacher_id", 1), ("status", 1), ("updated_at", -1)])
     await db.teacher_verifications.create_index("teacher_id", unique=True)
     await db.teacher_verifications.create_index([("status", 1), ("submitted_at", -1)])
     await db.teacher_verifications.create_index([("reviewed_by", 1), ("reviewed_at", -1)])
@@ -8966,6 +9966,7 @@ async def startup_checks():
     await db.subscriptions.create_index("user_id", unique=True)
     await db.subscription_payments.create_index("checkout_request_id", unique=True, sparse=True)
     await db.subscription_payments.create_index("user_id")
+    await db.user_credit_wallets.create_index("user_id", unique=True)
     await db.user_usage_counters.create_index("user_id", unique=True)
     await db.user_quotas.create_index([("user_id", 1), ("date", 1)], unique=True)
     await db.login_attempts.create_index("key", unique=True)

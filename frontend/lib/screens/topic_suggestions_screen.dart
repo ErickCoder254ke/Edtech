@@ -36,6 +36,7 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
   bool _loading = true;
+  bool _resolvingLinkedClasses = false;
   bool _submitting = false;
   String? _error;
   String _category = _categories.first['key']!;
@@ -114,6 +115,7 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
   Future<void> _loadTopics() async {
     setState(() {
       _loading = true;
+      _resolvingLinkedClasses = true;
       _error = null;
     });
     try {
@@ -124,9 +126,9 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
           sort: _sort,
         ),
       );
+      await _loadLinkedClassesForTopics(result.items);
       if (!mounted) return;
       setState(() => _topicList = result);
-      _loadLinkedClassesForTopics(result.items);
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() => _error = e.message);
@@ -134,7 +136,12 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
       if (!mounted) return;
       setState(() => _error = 'Unable to load topic suggestions right now.');
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _resolvingLinkedClasses = false;
+        });
+      }
     }
   }
 
@@ -157,7 +164,7 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
               !_linkedClasses.containsKey(id) ||
               (_linkedClassFetchedAt[id]?.isBefore(staleBefore) ?? true),
         )
-        .take(12)
+        .take(40)
         .toList();
     if (fetchIds.isEmpty) return;
     final Map<String, ClassSession> next = <String, ClassSession>{};
@@ -651,7 +658,14 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
       }
       final uri = Uri.tryParse(link);
       if (uri != null) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
+        final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+        if (!launched && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Unable to open class link. Use Report Issue so teacher can update it.'),
+            ),
+          );
+        }
       }
       await _loadTopics();
     } on ApiException catch (e) {
@@ -661,6 +675,103 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
           setState(() => _completedClassIds.add(classId));
         }
       }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) setState(() => _joiningClassIds.remove(classId));
+    }
+  }
+
+  Future<void> _reportAccessIssueFromTopic(TopicSuggestion item) async {
+    if (!_isStudent) return;
+    final classId = item.linkedClassId?.trim() ?? '';
+    if (classId.isEmpty) return;
+    final hasPaid = _paidClassIds.contains(classId);
+    final isCompleted = _completedClassIds.contains(classId);
+    if (!hasPaid || isCompleted) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Report Issue is available only for active classes you joined.'),
+        ),
+      );
+      return;
+    }
+
+    bool cannotAccessNow = true;
+    final issueController = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocalState) => AlertDialog(
+          title: const Text('Report Access Issue'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: cannotAccessNow,
+                title: const Text('I cannot access this class now'),
+                onChanged: (v) => setLocalState(() => cannotAccessNow = v),
+              ),
+              TextField(
+                controller: issueController,
+                minLines: 2,
+                maxLines: 4,
+                maxLength: 1000,
+                decoration: const InputDecoration(
+                  hintText: 'Describe the problem briefly (invalid link, not opening, denied access, etc.)',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Send'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+    if (!cannotAccessNow) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enable the toggle to confirm the access issue report.')),
+      );
+      return;
+    }
+    final issue = issueController.text.trim();
+    if (issue.length < 8) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please provide at least 8 characters.')),
+      );
+      return;
+    }
+
+    setState(() => _joiningClassIds.add(classId));
+    try {
+      await _runWithAuthRetry(
+        (token) => widget.apiClient.reportClassAccessIssue(
+          accessToken: token,
+          classId: classId,
+          issue: issue,
+        ),
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Issue sent to teacher. They can update the class link.'),
+        ),
+      );
+      await _loadTopics();
+    } on ApiException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
     } finally {
@@ -802,11 +913,14 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
                   else
                     const _TeacherHintCard(),
                   const SizedBox(height: 10),
-                  if (_loading) const _LoadingCard(),
+                  if (_loading || _resolvingLinkedClasses) const _LoadingCard(),
                   if (_error != null) _ErrorCard(message: _error!),
-                  if (!_loading && _error == null && visibleSuggestions.isEmpty)
+                  if (!_loading &&
+                      !_resolvingLinkedClasses &&
+                      _error == null &&
+                      visibleSuggestions.isEmpty)
                     const _EmptyStateCard()
-                  else if (!_loading && _error == null)
+                  else if (!_loading && !_resolvingLinkedClasses && _error == null)
                     ...visibleSuggestions.map(
                       (topic) => _TopicCard(
                         item: topic,
@@ -816,6 +930,10 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
                         isJoiningClass: _joiningClassIds.contains(topic.linkedClassId ?? ''),
                         hasPaidClassAccess: _paidClassIds.contains(topic.linkedClassId ?? ''),
                         isClassCompleted: _completedClassIds.contains(topic.linkedClassId ?? ''),
+                        canReportIssue:
+                            _isStudent &&
+                            _paidClassIds.contains(topic.linkedClassId ?? '') &&
+                            !_completedClassIds.contains(topic.linkedClassId ?? ''),
                         classMetaLabel: topic.linkedClassId == null
                             ? null
                             : _buildClassMetaLabel(topic.linkedClassId!.trim()),
@@ -831,6 +949,7 @@ class _TopicSuggestionsScreenState extends State<TopicSuggestionsScreen> {
                         onUpvote: () => _upvoteTopic(topic),
                         onTeacherCreateClass: () => _teacherCreateClass(topic),
                         onStudentJoinClass: () => _studentJoinClassFromTopic(topic),
+                        onReportIssue: () => _reportAccessIssueFromTopic(topic),
                       ),
                     ),
                 ],
@@ -1105,6 +1224,7 @@ class _TopicCard extends StatelessWidget {
     required this.isJoiningClass,
     required this.hasPaidClassAccess,
     required this.isClassCompleted,
+    required this.canReportIssue,
     required this.classMetaLabel,
     required this.classFeeLabel,
     required this.classMetaTone,
@@ -1112,6 +1232,7 @@ class _TopicCard extends StatelessWidget {
     required this.onUpvote,
     required this.onTeacherCreateClass,
     required this.onStudentJoinClass,
+    required this.onReportIssue,
   });
 
   final TopicSuggestion item;
@@ -1121,6 +1242,7 @@ class _TopicCard extends StatelessWidget {
   final bool isJoiningClass;
   final bool hasPaidClassAccess;
   final bool isClassCompleted;
+  final bool canReportIssue;
   final String? classMetaLabel;
   final String? classFeeLabel;
   final _ChipTone classMetaTone;
@@ -1128,6 +1250,7 @@ class _TopicCard extends StatelessWidget {
   final VoidCallback onUpvote;
   final VoidCallback onTeacherCreateClass;
   final VoidCallback onStudentJoinClass;
+  final VoidCallback onReportIssue;
 
   String _dateLabel(DateTime dt) {
     final local = dt.toLocal();
@@ -1273,35 +1396,49 @@ class _TopicCard extends StatelessWidget {
                       item.status == 'class_created' &&
                       (item.linkedClassId?.trim().isNotEmpty == true)) ...[
                     const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton.icon(
-                        key: ValueKey('student-join-class-${item.id}'),
-                        onPressed: (isJoiningClass || isClassCompleted)
-                            ? null
-                            : onStudentJoinClass,
-                        icon: isJoiningClass
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : Icon(
-                                isClassCompleted
-                                    ? Icons.event_busy_rounded
-                                    : (hasPaidClassAccess
-                                          ? Icons.login_rounded
-                                          : Icons.lock_open_rounded),
-                                size: 18,
-                              ),
-                        label: Text(
-                          isClassCompleted
-                              ? 'Class Completed'
-                              : (isJoiningClass
-                                    ? 'Processing...'
-                                    : (hasPaidClassAccess ? 'Join' : 'Pay & Join')),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.icon(
+                            key: ValueKey('student-join-class-${item.id}'),
+                            onPressed: (isJoiningClass || isClassCompleted)
+                                ? null
+                                : onStudentJoinClass,
+                            icon: isJoiningClass
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : Icon(
+                                    isClassCompleted
+                                        ? Icons.event_busy_rounded
+                                        : (hasPaidClassAccess
+                                              ? Icons.login_rounded
+                                              : Icons.lock_open_rounded),
+                                    size: 18,
+                                  ),
+                            label: Text(
+                              isClassCompleted
+                                  ? 'Class Completed'
+                                  : (isJoiningClass
+                                        ? 'Processing...'
+                                        : (hasPaidClassAccess ? 'Join' : 'Pay & Join')),
+                            ),
+                          ),
                         ),
-                      ),
+                        if (canReportIssue) ...[
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              key: ValueKey('student-report-issue-${item.id}'),
+                              onPressed: isJoiningClass ? null : onReportIssue,
+                              icon: const Icon(Icons.report_problem_outlined, size: 18),
+                              label: const Text('Report Issue'),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ],
                 ],

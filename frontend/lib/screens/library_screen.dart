@@ -406,6 +406,22 @@ class _GenerationTile extends StatelessWidget {
     }
   }
 
+  String? _creditBucketLabel(String? bucket) {
+    final norm = (bucket ?? '').trim().toLowerCase();
+    switch (norm) {
+      case 'task':
+        return 'Task';
+      case 'exam':
+        return 'Exam';
+      case 'legacy':
+        return 'Legacy';
+      case 'free':
+        return 'Free';
+      default:
+        return null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -441,6 +457,21 @@ class _GenerationTile extends StatelessWidget {
                       'Generated ${_formatDate(gen.createdAt)}',
                       style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
                     ),
+                    if (_creditBucketLabel(gen.consumedCreditBucket) != null) ...[
+                      const SizedBox(height: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(color: AppColors.primary.withValues(alpha: 0.35)),
+                        ),
+                        child: Text(
+                          '${_creditBucketLabel(gen.consumedCreditBucket)} credit',
+                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),

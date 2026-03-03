@@ -31,6 +31,7 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
   bool _loading = true;
   bool _processing = false;
   Map<String, dynamic>? _currentSubscription;
+  Map<String, dynamic>? _entitlement;
   String? _checkoutRequestId;
   String? _message;
   DateTime? _lastSyncedAt;
@@ -69,13 +70,19 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
     try {
       final plans = await widget.apiClient.listSubscriptionPlans();
       final visiblePlans = plans.where((p) => p.visible).toList();
-      final sub = await _runWithAuthRetry(
-        (token) => widget.apiClient.mySubscription(accessToken: token),
-      );
+      final responses = await Future.wait<Map<String, dynamic>>([
+        _runWithAuthRetry(
+          (token) => widget.apiClient.mySubscription(accessToken: token),
+        ),
+        _runWithAuthRetry(
+          (token) => widget.apiClient.subscriptionEntitlement(accessToken: token),
+        ),
+      ]);
       if (!mounted) return;
       setState(() {
         _plans = visiblePlans;
-        _currentSubscription = sub;
+        _currentSubscription = responses[0];
+        _entitlement = responses[1];
         _lastSyncedAt = DateTime.now();
         if (_plans.isNotEmpty) {
           final hasSelection = _selectedPlanId != null &&
@@ -184,7 +191,15 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final active = _currentSubscription?['active'] == true;
+    final active = (_currentSubscription?['active'] == true) ||
+        (((_entitlement?['generation_remaining'] as num?)?.toInt() ?? 0) > 0 &&
+            (_entitlement?['is_free'] != true));
+    final examRemaining = (_entitlement?['exam_remaining'] as num?)?.toInt() ?? 0;
+    final taskRemaining = (_entitlement?['task_remaining'] as num?)?.toInt() ?? 0;
+    final generationRemaining = (_entitlement?['generation_remaining'] as num?)?.toInt() ?? 0;
+    final activePlanName =
+        (_entitlement?['plan_name'] ?? _currentSubscription?['plan_name'] ?? _currentSubscription?['plan_id'] ?? '')
+            .toString();
     final categories = const ['exam_packs', 'task_packs', 'topups'];
     SubscriptionPlan? selectedPlan;
     for (final p in _plans) {
@@ -233,11 +248,42 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
                           const SizedBox(height: 6),
                           Text(
                             active
-                                ? 'Active pack: ${(_currentSubscription?['plan_name'] ?? _currentSubscription?['plan_id'] ?? '').toString()}'
+                                ? 'Active pack: $activePlanName'
                                 : 'No active pack. Choose a pack below to continue generating.',
                             style: TextStyle(
                               color: active ? Colors.greenAccent : AppColors.textMuted,
                               fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              _BalancePill(
+                                label: 'Total',
+                                value: '$generationRemaining',
+                                icon: Icons.bolt_rounded,
+                              ),
+                              _BalancePill(
+                                label: 'Task',
+                                value: '$taskRemaining',
+                                icon: Icons.edit_note_rounded,
+                              ),
+                              _BalancePill(
+                                label: 'Exam',
+                                value: '$examRemaining',
+                                icon: Icons.menu_book_rounded,
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Exams use Exam credits only. Other outputs use Task credits first, then Exam credits if Task is empty.',
+                            style: TextStyle(
+                              color: AppColors.textMuted,
+                              fontSize: 12,
+                              height: 1.35,
                             ),
                           ),
                           if ((_currentSubscription?['end_at'] ?? '').toString().isNotEmpty)
@@ -287,6 +333,11 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
                             style: const TextStyle(fontWeight: FontWeight.w800),
                           ),
                           const SizedBox(height: 10),
+                          const Text(
+                            'Each successful payment adds credits to your current balance, including repeat purchases of the same pack.',
+                            style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+                          ),
+                          const SizedBox(height: 8),
                           TextField(
                             controller: _phoneController,
                             keyboardType: TextInputType.phone,
@@ -503,6 +554,41 @@ class _OfferBadge extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _BalancePill extends StatelessWidget {
+  const _BalancePill({
+    required this.label,
+    required this.value,
+    required this.icon,
+  });
+
+  final String label;
+  final String value;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: AppColors.accent),
+          const SizedBox(width: 6),
+          Text(
+            '$label: $value',
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+        ],
       ),
     );
   }

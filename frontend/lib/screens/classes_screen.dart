@@ -41,10 +41,12 @@ class _ClassesScreenState extends State<ClassesScreen> {
   DateTime? _endAt;
   bool _loading = true;
   bool _saving = false;
+  bool _createClassExpanded = false;
   String _statusFilter = 'upcoming';
   String _gradeFilter = 'all';
   String? _error;
   List<ClassSession> _classes = [];
+  List<ClassSession> _allClasses = [];
   int _withdrawableKes = 0;
   final Set<String> _busyClassIds = <String>{};
   final Set<String> _paymentPendingClassIds = <String>{};
@@ -57,14 +59,6 @@ class _ClassesScreenState extends State<ClassesScreen> {
   List<String> get _statusTabs => _isTeacher
       ? const ['upcoming', 'past', 'reviews']
       : const ['upcoming', 'to_review', 'past'];
-
-  String _backendStatusForFilter() {
-    if (_isTeacher) {
-      return _statusFilter == 'reviews' ? 'all' : _statusFilter;
-    }
-    if (_statusFilter == 'to_review') return 'past';
-    return _statusFilter;
-  }
 
   bool _isClassEnded(ClassSession session) {
     if (session.status.toLowerCase() == 'completed') return true;
@@ -121,10 +115,15 @@ class _ClassesScreenState extends State<ClassesScreen> {
           .where(
             (c) =>
                 _isClassEnded(c) &&
-                (!c.joined || c.studentReviewed) &&
+                c.joined &&
+                c.studentReviewed &&
                 gradePass(c),
           )
           .toList();
+    }
+
+    if (_statusFilter == 'upcoming') {
+      return input.where((c) => !_isClassEnded(c) && gradePass(c)).toList();
     }
 
     return input.where(gradePass).toList();
@@ -152,10 +151,32 @@ class _ClassesScreenState extends State<ClassesScreen> {
     }
     if (status == 'past') {
       return allClasses
-          .where((c) => _isClassEnded(c) && (!c.joined || c.studentReviewed))
+          .where((c) => _isClassEnded(c) && c.joined && c.studentReviewed)
           .length;
     }
     return allClasses.length;
+  }
+
+  void _applyFiltersFromCache() {
+    final filtered = _applyLocalFilter(_allClasses);
+    setState(() {
+      _classes = filtered;
+      for (final tab in _statusTabs) {
+        _tabCounts[tab] = _countForTab(tab, _allClasses);
+      }
+      _paymentPendingClassIds.removeWhere((id) {
+        ClassSession? matched;
+        for (final c in _allClasses) {
+          if (c.id == id) {
+            matched = c;
+            break;
+          }
+        }
+        if (matched == null) return true;
+        final status = (matched.paymentStatus ?? '').toLowerCase();
+        return status == 'paid' || status == 'free' || matched.joined;
+      });
+    });
   }
 
   @override
@@ -208,13 +229,6 @@ class _ClassesScreenState extends State<ClassesScreen> {
       _error = null;
     });
     try {
-      final classes = await _runWithAuthRetry(
-        (token) => widget.apiClient.listClassSessions(
-          accessToken: token,
-          status: _backendStatusForFilter(),
-          limit: 100,
-        ),
-      );
       final allClasses = await _runWithAuthRetry(
         (token) => widget.apiClient.listClassSessions(
           accessToken: token,
@@ -243,24 +257,10 @@ class _ClassesScreenState extends State<ClassesScreen> {
         } catch (_) {}
       }
       setState(() {
-        _classes = _applyLocalFilter(classes);
-        for (final tab in _statusTabs) {
-          _tabCounts[tab] = _countForTab(tab, allClasses);
-        }
+        _allClasses = allClasses;
         _withdrawableKes = withdrawable;
-        _paymentPendingClassIds.removeWhere((id) {
-          ClassSession? matched;
-          for (final c in _classes) {
-            if (c.id == id) {
-              matched = c;
-              break;
-            }
-          }
-          if (matched == null) return true;
-          final status = (matched.paymentStatus ?? '').toLowerCase();
-          return status == 'paid' || status == 'free' || matched.joined;
-        });
       });
+      _applyFiltersFromCache();
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() => _error = e.message);
@@ -440,10 +440,10 @@ class _ClassesScreenState extends State<ClassesScreen> {
     }
   }
 
-  Future<void> _openClassMeeting(String link) async {
+  Future<bool> _openClassMeeting(String link) async {
     final uri = Uri.tryParse(link);
-    if (uri == null) return;
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (uri == null) return false;
+    return launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
   Future<void> _joinClass(ClassSession session) async {
@@ -517,7 +517,14 @@ class _ClassesScreenState extends State<ClassesScreen> {
         }
         return;
       }
-      await _openClassMeeting(link);
+      final launched = await _openClassMeeting(link);
+      if (!launched && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to open the class link. Use Report Issue so teacher can update it.'),
+          ),
+        );
+      }
       if (!mounted) return;
       await _loadClasses();
     } on ApiException catch (e) {
@@ -603,6 +610,221 @@ class _ClassesScreenState extends State<ClassesScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) setState(() => _busyClassIds.remove(session.id));
+    }
+  }
+
+  Future<void> _reportAccessIssue(ClassSession session) async {
+    bool cannotAccessNow = true;
+    final issueController = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocalState) => AlertDialog(
+          title: const Text('Report Access Issue'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: cannotAccessNow,
+                title: const Text('I cannot access this class now'),
+                onChanged: (v) => setLocalState(() => cannotAccessNow = v),
+              ),
+              TextField(
+                controller: issueController,
+                minLines: 2,
+                maxLines: 4,
+                maxLength: 1000,
+                decoration: const InputDecoration(
+                  hintText: 'Describe what happened (error, invalid link, page not opening, etc.)',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Send'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+    if (!cannotAccessNow) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enable the toggle to confirm this access issue report.')),
+      );
+      return;
+    }
+    final issue = issueController.text.trim();
+    if (issue.length < 8) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please provide a bit more detail (at least 8 characters).')),
+      );
+      return;
+    }
+
+    setState(() => _busyClassIds.add(session.id));
+    try {
+      await _runWithAuthRetry(
+        (token) => widget.apiClient.reportClassAccessIssue(
+          accessToken: token,
+          classId: session.id,
+          issue: issue,
+        ),
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Issue sent to teacher. They can update the meeting link.')),
+      );
+      await _loadClasses();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) setState(() => _busyClassIds.remove(session.id));
+    }
+  }
+
+  Future<void> _updateClassMeetingLink(ClassSession session) async {
+    final linkController = TextEditingController(text: session.meetingLink);
+    bool notifyStudents = true;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocalState) => AlertDialog(
+          title: const Text('Update Meeting Link'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: linkController,
+                maxLines: 2,
+                decoration: const InputDecoration(
+                  hintText: 'https://...',
+                ),
+              ),
+              const SizedBox(height: 8),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: notifyStudents,
+                title: const Text('Notify joined students'),
+                onChanged: (v) => setLocalState(() => notifyStudents = v),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+
+    final newLink = linkController.text.trim();
+    if (newLink.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Meeting link is required.')));
+      return;
+    }
+    setState(() => _busyClassIds.add(session.id));
+    try {
+      await _runWithAuthRetry(
+        (token) => widget.apiClient.updateClassMeetingLink(
+          accessToken: token,
+          classId: session.id,
+          meetingLink: newLink,
+          notifyStudents: notifyStudents,
+        ),
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Meeting link updated.')),
+      );
+      await _loadClasses();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) setState(() => _busyClassIds.remove(session.id));
+    }
+  }
+
+  Future<void> _viewAccessIssues(ClassSession session) async {
+    setState(() => _busyClassIds.add(session.id));
+    try {
+      final issues = await _runWithAuthRetry(
+        (token) => widget.apiClient.listClassAccessIssues(
+          accessToken: token,
+          classId: session.id,
+        ),
+      );
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('Access Issues - ${session.title}'),
+          content: SizedBox(
+            width: 460,
+            child: issues.isEmpty
+                ? const Text('No access issues reported.')
+                : ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: issues.length,
+                    separatorBuilder: (_, __) => const Divider(height: 16),
+                    itemBuilder: (_, i) {
+                      final issue = issues[i];
+                      final who = (issue.studentName ?? '').trim().isNotEmpty
+                          ? issue.studentName!.trim()
+                          : 'Student';
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${issue.status.toUpperCase()}  $who',
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(issue.issue, style: const TextStyle(color: AppColors.textMuted)),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Reports: ${issue.reportCount}   Updated: ${_fmt(issue.updatedAt)}',
+                            style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
     } finally {
       if (mounted) setState(() => _busyClassIds.remove(session.id));
     }
@@ -896,7 +1118,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
                             onSelected: (_) {
                               if (_statusFilter == status) return;
                               setState(() => _statusFilter = status);
-                              _loadClasses();
+                              _applyFiltersFromCache();
                             },
                           ),
                         )
@@ -916,7 +1138,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
                           onTap: () {
                             if (_gradeFilter == key) return;
                             setState(() => _gradeFilter = key);
-                            _loadClasses();
+                            _applyFiltersFromCache();
                           },
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
@@ -954,7 +1176,15 @@ class _ClassesScreenState extends State<ClassesScreen> {
                   else if (_error != null)
                     _ErrorTile(message: _error!)
                   else if (_classes.isEmpty)
-                    const _EmptyTile()
+                    _EmptyTile(
+                      message: _isTeacher
+                          ? 'Scheduled classes will appear here.'
+                          : (_statusFilter == 'past'
+                                ? 'Reviewed classes you attended will appear here.'
+                                : _statusFilter == 'to_review'
+                                ? 'Classes you attended and still need to review will appear here.'
+                                : 'Upcoming classes will appear here.'),
+                    )
                   else
                     ..._classes.map((session) => _buildClassTile(session)),
                 ],
@@ -973,43 +1203,77 @@ class _ClassesScreenState extends State<ClassesScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Schedule New Class',
-            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _titleController,
-            decoration: const InputDecoration(hintText: 'Class title'),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _descriptionController,
-            maxLines: 2,
-            decoration: const InputDecoration(hintText: 'Class details'),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _meetingController,
-            decoration: const InputDecoration(
-              hintText: 'Meeting link (Google Meet / Zoom)',
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => setState(() => _createClassExpanded = !_createClassExpanded),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Schedule New Class',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+                  ),
+                ),
+                Icon(
+                  _createClassExpanded
+                      ? Icons.keyboard_arrow_up_rounded
+                      : Icons.keyboard_arrow_down_rounded,
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _feeController,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              hintText: 'Class fee in KES (0 for free class)',
+          if (_createClassExpanded) ...[
+            const SizedBox(height: 8),
+            TextField(
+              controller: _titleController,
+              decoration: const InputDecoration(hintText: 'Class title'),
             ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Allowed fee range (admin synced): KES $_classMinFeeKes - $_classMaxFeeKes, or 0 for free class.',
-            style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
-          ),
-          const SizedBox(height: 8),
-          Row(
+            const SizedBox(height: 8),
+            TextField(
+              controller: _descriptionController,
+              maxLines: 2,
+              decoration: const InputDecoration(hintText: 'Class details'),
+            ),
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.amber.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.amber.withValues(alpha: 0.35)),
+              ),
+              child: const Text(
+                'Before saving, test the meeting link in a browser to confirm students can open it.',
+                style: TextStyle(
+                  color: Colors.amberAccent,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _meetingController,
+              decoration: const InputDecoration(
+                hintText: 'Meeting link (Google Meet / Zoom)',
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _feeController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                hintText: 'Class fee in KES (0 for free class)',
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Allowed fee range (admin synced): KES $_classMinFeeKes - $_classMaxFeeKes, or 0 for free class.',
+              style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+            ),
+            const SizedBox(height: 8),
+            Row(
             children: [
               Expanded(
                 child: Text(
@@ -1029,21 +1293,22 @@ class _ClassesScreenState extends State<ClassesScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: _saving ? null : _createClass,
-              icon: _saving
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.add_circle_outline_rounded),
-              label: const Text('Create Class'),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: _saving ? null : _createClass,
+                icon: _saving
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.add_circle_outline_rounded),
+                label: const Text('Create Class'),
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -1051,6 +1316,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
 
   Widget _buildClassTile(ClassSession session) {
     final busy = _busyClassIds.contains(session.id);
+    final ended = _isClassEnded(session);
     final localPending = _paymentPendingClassIds.contains(session.id);
     final paymentStatusLower = (session.paymentStatus ?? '').toLowerCase();
     final hasPaidAccess =
@@ -1136,6 +1402,10 @@ class _ClassesScreenState extends State<ClassesScreen> {
                       ? 'No rating'
                       : 'Rating ${session.averageRating} (${session.reviewCount})',
                 ),
+                if (_isTeacher) ...[
+                  const SizedBox(width: 8),
+                  _MiniMeta(text: 'Open issues ${session.openAccessIssueCount}'),
+                ],
                 const SizedBox(width: 8),
                 if (!_isTeacher)
                   _MiniMeta(
@@ -1185,38 +1455,100 @@ class _ClassesScreenState extends State<ClassesScreen> {
                   ),
                 ],
               ),
-            ] else ...[
+              const SizedBox(height: 8),
               Row(
                 children: [
                   Expanded(
-                    child: FilledButton.icon(
-                      onPressed: busy ? null : () => _joinClass(session),
-                      icon: busy
-                          ? const SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.video_call_rounded),
+                    child: OutlinedButton.icon(
+                      onPressed: busy ? null : () => _viewAccessIssues(session),
+                      icon: const Icon(Icons.report_problem_outlined),
                       label: Text(
-                        ctaLabel,
+                        session.openAccessIssueCount > 0
+                            ? 'Access Issues (${session.openAccessIssueCount})'
+                            : 'Access Issues',
                       ),
                     ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: busy ||
-                              !session.joined ||
-                              session.studentReviewed ||
-                              (session.status != 'completed' &&
-                                  session.scheduledEndAt.isAfter(DateTime.now()))
-                          ? null
-                          : () => _reviewClass(session),
-                      icon: const Icon(Icons.rate_review_outlined),
-                      label: const Text('Review'),
+                      onPressed: busy ? null : () => _updateClassMeetingLink(session),
+                      icon: const Icon(Icons.link_rounded),
+                      label: const Text('Update Link'),
                     ),
                   ),
+                ],
+              ),
+            ] else ...[
+              if (ended)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  margin: const EdgeInsets.only(bottom: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.amber.withValues(alpha: 0.4)),
+                  ),
+                  child: Text(
+                    session.joined
+                        ? (session.studentReviewed
+                              ? 'Class ended. Review submitted.'
+                              : 'Class ended. Leave a review to move this to Past.')
+                        : 'Class ended.',
+                    style: const TextStyle(
+                      color: Colors.amberAccent,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: (busy || ended) ? null : () => _joinClass(session),
+                      icon: busy
+                          ? const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : Icon(ended ? Icons.event_busy_rounded : Icons.video_call_rounded),
+                      label: Text(
+                        ended ? 'Class Ended' : ctaLabel,
+                      ),
+                    ),
+                  ),
+                  if (!ended && hasPaidAccess) ...[
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: busy ? null : () => _reportAccessIssue(session),
+                        icon: const Icon(Icons.report_problem_outlined),
+                        label: const Text('Report Issue'),
+                      ),
+                    ),
+                  ],
+                  if (ended && session.joined && !session.studentReviewed) ...[
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: busy ? null : () => _reviewClass(session),
+                        icon: const Icon(Icons.rate_review_outlined),
+                        label: const Text('Review'),
+                      ),
+                    ),
+                  ] else if (ended && session.joined && session.studentReviewed) ...[
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: null,
+                        icon: const Icon(Icons.verified_rounded),
+                        label: const Text('Reviewed'),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ],
@@ -1348,11 +1680,13 @@ class _ErrorTile extends StatelessWidget {
 }
 
 class _EmptyTile extends StatelessWidget {
-  const _EmptyTile();
+  const _EmptyTile({this.message = 'Scheduled classes will appear here.'});
+
+  final String message;
 
   @override
   Widget build(BuildContext context) {
-    return const GlassContainer(
+    return GlassContainer(
       borderRadius: 16,
       padding: EdgeInsets.all(14),
       child: Column(
@@ -1361,7 +1695,7 @@ class _EmptyTile extends StatelessWidget {
           Text('No classes yet', style: TextStyle(fontWeight: FontWeight.w700)),
           SizedBox(height: 4),
           Text(
-            'Scheduled classes will appear here.',
+            message,
             style: TextStyle(color: AppColors.textMuted),
           ),
         ],

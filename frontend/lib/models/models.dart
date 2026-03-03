@@ -219,6 +219,7 @@ class GenerationResponse {
     required this.generationType,
     required this.content,
     required this.createdAt,
+    this.consumedCreditBucket,
   });
 
   final String id;
@@ -226,6 +227,7 @@ class GenerationResponse {
   final String generationType;
   final Map<String, dynamic> content;
   final DateTime createdAt;
+  final String? consumedCreditBucket;
 
   factory GenerationResponse.fromJson(Map<String, dynamic> json) {
     return GenerationResponse(
@@ -236,6 +238,7 @@ class GenerationResponse {
       createdAt:
           DateTime.tryParse(json['created_at'] as String? ?? '') ??
           DateTime.now(),
+      consumedCreditBucket: json['consumed_credit_bucket'] as String?,
     );
   }
 }
@@ -267,9 +270,14 @@ class JobStatusResponse {
     required this.type,
     required this.status,
     this.progress,
+    this.queuePosition,
+    this.estimatedRemainingSeconds,
+    this.etaConfidence,
+    this.etaUpdatedAt,
     required this.createdAt,
     this.completedAt,
     this.resultReference,
+    this.consumedCreditBucket,
     this.error,
   });
 
@@ -278,9 +286,14 @@ class JobStatusResponse {
   final String type;
   final String status;
   final int? progress;
+  final int? queuePosition;
+  final int? estimatedRemainingSeconds;
+  final String? etaConfidence;
+  final DateTime? etaUpdatedAt;
   final DateTime createdAt;
   final DateTime? completedAt;
   final String? resultReference;
+  final String? consumedCreditBucket;
   final String? error;
 
   bool get isTerminal => status == 'completed' || status == 'failed';
@@ -292,11 +305,16 @@ class JobStatusResponse {
       type: json['type'] as String? ?? '',
       status: json['status'] as String? ?? 'queued',
       progress: (json['progress'] as num?)?.toInt(),
+      queuePosition: (json['queue_position'] as num?)?.toInt(),
+      estimatedRemainingSeconds: (json['estimated_remaining_seconds'] as num?)?.toInt(),
+      etaConfidence: json['eta_confidence'] as String?,
+      etaUpdatedAt: DateTime.tryParse(json['eta_updated_at'] as String? ?? ''),
       createdAt:
           DateTime.tryParse(json['created_at'] as String? ?? '') ??
           DateTime.now(),
       completedAt: DateTime.tryParse(json['completed_at'] as String? ?? ''),
       resultReference: json['result_reference'] as String?,
+      consumedCreditBucket: json['consumed_credit_bucket'] as String?,
       error: json['error'] as String?,
     );
   }
@@ -326,6 +344,7 @@ class ClassSession {
     required this.studentReviewed,
     this.averageRating,
     required this.reviewCount,
+    required this.openAccessIssueCount,
     this.topicSuggestionId,
   });
 
@@ -351,6 +370,7 @@ class ClassSession {
   final bool studentReviewed;
   final double? averageRating;
   final int reviewCount;
+  final int openAccessIssueCount;
   final String? topicSuggestionId;
 
   factory ClassSession.fromJson(Map<String, dynamic> json) {
@@ -384,6 +404,7 @@ class ClassSession {
       studentReviewed: json['student_reviewed'] as bool? ?? false,
       averageRating: (json['average_rating'] as num?)?.toDouble(),
       reviewCount: (json['review_count'] as num?)?.toInt() ?? 0,
+      openAccessIssueCount: (json['open_access_issue_count'] as num?)?.toInt() ?? 0,
       topicSuggestionId: json['topic_suggestion_id'] as String?,
     );
   }
@@ -422,6 +443,57 @@ class ClassReview {
       createdAt:
           DateTime.tryParse(json['created_at'] as String? ?? '') ??
           DateTime.now(),
+    );
+  }
+}
+
+class ClassAccessIssue {
+  ClassAccessIssue({
+    required this.id,
+    required this.classId,
+    required this.studentId,
+    required this.teacherId,
+    required this.issue,
+    required this.status,
+    required this.reportCount,
+    this.studentName,
+    required this.createdAt,
+    required this.updatedAt,
+    this.resolvedAt,
+    this.resolvedBy,
+  });
+
+  final String id;
+  final String classId;
+  final String studentId;
+  final String teacherId;
+  final String issue;
+  final String status;
+  final int reportCount;
+  final String? studentName;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final DateTime? resolvedAt;
+  final String? resolvedBy;
+
+  factory ClassAccessIssue.fromJson(Map<String, dynamic> json) {
+    return ClassAccessIssue(
+      id: json['id'] as String? ?? '',
+      classId: json['class_id'] as String? ?? '',
+      studentId: json['student_id'] as String? ?? '',
+      teacherId: json['teacher_id'] as String? ?? '',
+      issue: json['issue'] as String? ?? '',
+      status: json['status'] as String? ?? 'open',
+      reportCount: (json['report_count'] as num?)?.toInt() ?? 1,
+      studentName: json['student_name'] as String?,
+      createdAt:
+          DateTime.tryParse(json['created_at'] as String? ?? '') ??
+          DateTime.now(),
+      updatedAt:
+          DateTime.tryParse(json['updated_at'] as String? ?? '') ??
+          DateTime.now(),
+      resolvedAt: DateTime.tryParse(json['resolved_at'] as String? ?? ''),
+      resolvedBy: json['resolved_by'] as String?,
     );
   }
 }

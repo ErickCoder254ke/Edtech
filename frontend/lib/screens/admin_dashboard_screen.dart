@@ -6,6 +6,7 @@ import '../theme/app_colors.dart';
 import '../widgets/glass_container.dart';
 import 'admin_integrations_status_screen.dart';
 import 'admin_teacher_verification_screen.dart';
+import 'private_tutors_screen.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({
@@ -34,6 +35,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   AdminRuntimeSettings? _runtimeSettings;
   Map<String, dynamic> _integrationStatus = const {};
   Map<String, Map<String, dynamic>> _acknowledgedAlerts = const <String, Map<String, dynamic>>{};
+  int _privateTutorsCount = 0;
+  int _teacherVerificationPendingCount = 0;
+  int _teacherVerificationRejectedCount = 0;
 
   final TextEditingController _subscriptionWeeklyKesController =
       TextEditingController();
@@ -173,17 +177,43 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           (token) =>
               widget.apiClient.getAdminAlertAcknowledgements(accessToken: token),
         ),
+        _runWithAuthRetry(
+          (token) => widget.apiClient.listPrivateTutors(
+            accessToken: token,
+            limit: 60,
+          ),
+        ),
+        _runWithAuthRetry(
+          (token) => widget.apiClient.listTeacherVerifications(
+            accessToken: token,
+            status: 'pending',
+            limit: 200,
+          ),
+        ),
+        _runWithAuthRetry(
+          (token) => widget.apiClient.listTeacherVerifications(
+            accessToken: token,
+            status: 'rejected',
+            limit: 200,
+          ),
+        ),
       ]);
       final summary = results[0] as AdminDashboardSummary;
       final runtimeSettings = results[1] as AdminRuntimeSettings;
       final integrationStatus = results[2] as Map<String, dynamic>;
       final acknowledged = results[3] as Map<String, Map<String, dynamic>>;
+      final privateTutors = results[4] as List<PrivateTutorProfile>;
+      final pendingVerifications = results[5] as List<TeacherVerification>;
+      final rejectedVerifications = results[6] as List<TeacherVerification>;
       if (!mounted) return;
       setState(() {
         _summary = summary;
         _runtimeSettings = runtimeSettings;
         _integrationStatus = integrationStatus;
         _acknowledgedAlerts = acknowledged;
+        _privateTutorsCount = privateTutors.length;
+        _teacherVerificationPendingCount = pendingVerifications.length;
+        _teacherVerificationRejectedCount = rejectedVerifications.length;
       });
       _hydrateSettingsControllers(runtimeSettings);
     } on ApiException catch (e) {
@@ -207,7 +237,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           onSessionInvalid: widget.onSessionInvalid,
         ),
       ),
-    );
+    ).then((_) => _load());
   }
 
   void _openAdminTeacherVerificationsPage() {
@@ -220,7 +250,20 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           onSessionInvalid: widget.onSessionInvalid,
         ),
       ),
-    );
+    ).then((_) => _load());
+  }
+
+  void _openPrivateTutorsPage() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PrivateTutorsScreen(
+          apiClient: widget.apiClient,
+          session: widget.session,
+          onSessionUpdated: widget.onSessionUpdated,
+          onSessionInvalid: widget.onSessionInvalid,
+        ),
+      ),
+    ).then((_) => _load());
   }
 
   List<_SystemAlert> _buildSystemAlerts() {
@@ -473,6 +516,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     _classMaxFeeKesController.text = settings.classMaxFeeKes.toString();
     _accountReuseGraceDaysController.text = settings.accountReuseGraceDays
         .toString();
+  }
+
+  String? _badgeForCount(int value, {int cap = 99}) {
+    if (value <= 0) return null;
+    if (value > cap) return '$cap+';
+    return '$value';
   }
 
   Future<void> _saveRuntimeSettings() async {
@@ -1009,10 +1058,52 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     final summary = _summary;
     final runtimeSettings = _runtimeSettings;
     final alerts = _buildSystemAlerts();
+    final actionableIssues = alerts
+        .where((a) => a.level != _AlertLevel.ok && !a.acknowledged)
+        .length;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Admin Dashboard'),
         actions: [
+          Builder(
+            builder: (_) {
+              final alerts = _buildSystemAlerts();
+              final actionableIssues = alerts
+                  .where((a) => a.level != _AlertLevel.ok && !a.acknowledged)
+                  .length;
+              if (actionableIssues <= 0) {
+                return const SizedBox.shrink();
+              }
+              final urgent = actionableIssues >= 3;
+              return Padding(
+                padding: const EdgeInsets.only(right: 8, top: 10, bottom: 10),
+                child: Tooltip(
+                  message: '$actionableIssues active system issue(s)',
+                  child: Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color: (urgent ? Colors.red : Colors.orange).withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: (urgent ? Colors.redAccent : Colors.orangeAccent).withValues(alpha: 0.5),
+                      ),
+                    ),
+                    child: Center(
+                      child: Text(
+                        actionableIssues > 9 ? '9+' : '$actionableIssues',
+                        style: TextStyle(
+                          color: urgent ? Colors.redAccent : Colors.orangeAccent,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
           IconButton(onPressed: _load, icon: const Icon(Icons.refresh_rounded)),
         ],
       ),
@@ -1106,6 +1197,89 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   ],
                 ),
                 const SizedBox(height: 16),
+                GlassContainer(
+                  borderRadius: 16,
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Admin Work Queue',
+                        style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          _DashboardBadgeChip(
+                            icon: Icons.school_rounded,
+                            label: 'Private Tutors',
+                            badge: _badgeForCount(_privateTutorsCount),
+                          ),
+                          _DashboardBadgeChip(
+                            icon: Icons.fact_check_rounded,
+                            label: 'Pending Verifications',
+                            badge: _badgeForCount(_teacherVerificationPendingCount),
+                            tone: _teacherVerificationPendingCount > 0
+                                ? _BadgeTone.warning
+                                : _BadgeTone.neutral,
+                          ),
+                          _DashboardBadgeChip(
+                            icon: Icons.block_rounded,
+                            label: 'Rejected Verifications',
+                            badge: _badgeForCount(_teacherVerificationRejectedCount),
+                            tone: _teacherVerificationRejectedCount > 0
+                                ? _BadgeTone.warning
+                                : _BadgeTone.neutral,
+                          ),
+                          _DashboardBadgeChip(
+                            icon: Icons.hub_rounded,
+                            label: 'Integration Issues',
+                            badge: _badgeForCount(actionableIssues),
+                            tone: actionableIssues > 0
+                                ? _BadgeTone.danger
+                                : _BadgeTone.neutral,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: _openPrivateTutorsPage,
+                            icon: const Icon(Icons.school_rounded, size: 16),
+                            label: Text(
+                              _privateTutorsCount > 0
+                                  ? 'Private Tutors (${_badgeForCount(_privateTutorsCount)})'
+                                  : 'Private Tutors',
+                            ),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: _openAdminTeacherVerificationsPage,
+                            icon: const Icon(Icons.fact_check_rounded, size: 16),
+                            label: Text(
+                              'Verifications (P$_teacherVerificationPendingCount/'
+                              'R$_teacherVerificationRejectedCount)',
+                            ),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: _openAdminIntegrationsPage,
+                            icon: const Icon(Icons.hub_rounded, size: 16),
+                            label: Text(
+                              actionableIssues > 0
+                                  ? 'Integrations (${_badgeForCount(actionableIssues)})'
+                                  : 'Integrations',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
                 GlassContainer(
                   borderRadius: 16,
                   padding: const EdgeInsets.all(14),
@@ -1534,6 +1708,85 @@ class _SystemAlert {
       acknowledged: acknowledged ?? this.acknowledged,
       acknowledgedBy: acknowledgedBy ?? this.acknowledgedBy,
       acknowledgedAt: acknowledgedAt ?? this.acknowledgedAt,
+    );
+  }
+}
+
+enum _BadgeTone { neutral, warning, danger }
+
+class _DashboardBadgeChip extends StatelessWidget {
+  const _DashboardBadgeChip({
+    required this.icon,
+    required this.label,
+    this.badge,
+    this.tone = _BadgeTone.neutral,
+  });
+
+  final IconData icon;
+  final String label;
+  final String? badge;
+  final _BadgeTone tone;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasBadge = (badge ?? '').trim().isNotEmpty;
+    final Color borderColor;
+    final Color bgColor;
+    final Color iconColor;
+    switch (tone) {
+      case _BadgeTone.warning:
+        borderColor = Colors.orangeAccent.withValues(alpha: 0.36);
+        bgColor = Colors.orange.withValues(alpha: 0.12);
+        iconColor = Colors.orangeAccent;
+        break;
+      case _BadgeTone.danger:
+        borderColor = Colors.redAccent.withValues(alpha: 0.38);
+        bgColor = Colors.red.withValues(alpha: 0.12);
+        iconColor = Colors.redAccent;
+        break;
+      case _BadgeTone.neutral:
+        borderColor = Colors.white12;
+        bgColor = Colors.white.withValues(alpha: 0.04);
+        iconColor = AppColors.accent;
+        break;
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: borderColor),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: iconColor),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+          ),
+          if (hasBadge) ...[
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: AppColors.primary.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: AppColors.primary.withValues(alpha: 0.4)),
+              ),
+              child: Text(
+                badge!,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.primary,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }

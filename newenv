@@ -37,3 +37,35 @@ MPESA_CALLBACK_SECRET_QUERY_PARAM=token
 # Header name accepted for callback secret.
 # If your relay/proxy can add headers, use this as an alternative to query param.
 MPESA_CALLBACK_SECRET_HEADER=x-callback-token
+
+# --------------------------
+# Class Access Issue Reporting
+# --------------------------
+# Per-student rate limit for reporting class access issues.
+CLASS_ACCESS_ISSUE_PER_MIN_LIMIT=20
+
+# --------------------------
+# Gemini Retry + Exam Fallback
+# --------------------------
+# Exponential backoff cap for Gemini retries (seconds).
+# Effective sleep is min(this cap, computed exponential delay, provider-specific cap).
+GEMINI_EXP_BACKOFF_CAP_SECONDS=30
+
+# Exam-specific Gemini rounds before automatic fallback to NVIDIA.
+# A "round" is one Gemini attempt with rotated key/model selection.
+GEMINI_EXAM_MAX_ROUNDS=4
+
+# Short cooldown (seconds) applied to a Gemini key after non-429 failures,
+# to rotate traffic away from recently failing keys.
+GEMINI_KEY_FAILURE_COOLDOWN_SECONDS=8
+
+# --------------------------
+# Shared Redis State (API + Workers)
+# --------------------------
+# Use Redis for API rate limiting windows so throttles are shared
+# across multiple API instances/processes.
+RATE_LIMIT_USE_REDIS=true
+
+# Use Redis for Gemini key cooldown + key-router state so cooldowns
+# and key rotation are shared across instances/workers.
+GEMINI_SHARED_STATE_USE_REDIS=true

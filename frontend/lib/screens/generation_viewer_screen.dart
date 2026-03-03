@@ -27,6 +27,22 @@ class _GenerationViewerScreenState extends State<GenerationViewerScreen> {
       widget.generation.generationType == 'quiz' ||
       widget.generation.generationType == 'exam';
 
+  String? _creditBucketLabel(String? bucket) {
+    final norm = (bucket ?? '').trim().toLowerCase();
+    switch (norm) {
+      case 'task':
+        return 'Task Credit';
+      case 'exam':
+        return 'Exam Credit';
+      case 'legacy':
+        return 'Legacy Pack';
+      case 'free':
+        return 'Free Tier';
+      default:
+        return null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final type = widget.generation.generationType;
@@ -76,6 +92,33 @@ class _GenerationViewerScreenState extends State<GenerationViewerScreen> {
                           _title(type),
                           style: const TextStyle(fontWeight: FontWeight.w700),
                         ),
+                        const SizedBox(width: 8),
+                        if (_creditBucketLabel(
+                              widget.generation.consumedCreditBucket,
+                            ) !=
+                            null)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.accent.withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                color: AppColors.accent.withValues(alpha: 0.35),
+                              ),
+                            ),
+                            child: Text(
+                              _creditBucketLabel(
+                                widget.generation.consumedCreditBucket,
+                              )!,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
                         const Spacer(),
                         Text(
                           widget.generation.createdAt
