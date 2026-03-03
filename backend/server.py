@@ -3504,6 +3504,7 @@ async def add_credits_to_wallet(
     if not inc_payload:
         return await get_or_create_credit_wallet(user_id)
 
+    # Step 1: ensure wallet base document exists.
     await db.user_credit_wallets.update_one(
         {"user_id": user_id},
         {
@@ -3518,10 +3519,17 @@ async def add_credits_to_wallet(
                 "purchase_counts": {},
                 "created_at": now_iso,
             },
+        },
+        upsert=True,
+    )
+    # Step 2: apply credit increments separately to avoid Mongo path conflicts
+    # between $setOnInsert and $inc on the same keys.
+    await db.user_credit_wallets.update_one(
+        {"user_id": user_id},
+        {
             "$set": {"updated_at": now_iso},
             "$inc": inc_payload,
         },
-        upsert=True,
     )
     await db.user_credit_wallets.update_one(
         {"user_id": user_id},
