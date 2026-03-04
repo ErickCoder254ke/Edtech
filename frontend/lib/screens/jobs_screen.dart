@@ -611,6 +611,24 @@ class _JobCard extends StatelessWidget {
     return '${id.substring(0, 8)}...${id.substring(id.length - 4)}';
   }
 
+  String _dateTimeLabel(DateTime dt) =>
+      dt.toLocal().toString().split('.').first;
+
+  Widget _metaChip(String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: AppColors.glassBorder),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final progress = (job.progress ?? 0).clamp(0, 100) / 100.0;
@@ -623,13 +641,35 @@ class _JobCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Icon(Icons.tune_rounded, size: 18, color: statusColor),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    '${job.type.toUpperCase()} - ${_statusLabel(job.status).toUpperCase()}',
+                    job.type.toUpperCase(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: statusColor.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: statusColor.withValues(alpha: 0.35),
+                    ),
+                  ),
+                  child: Text(
+                    _statusLabel(job.status).toUpperCase(),
                     style: TextStyle(
+                      fontSize: 10,
                       fontWeight: FontWeight.w800,
                       color: statusColor,
                     ),
@@ -638,28 +678,19 @@ class _JobCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 6),
-            Text(
-              'Job ID: ${_shortId(job.jobId)}',
-              style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                _metaChip('ID ${_shortId(job.jobId)}'),
+                _metaChip('Created ${_dateTimeLabel(job.createdAt)}'),
+                if (job.completedAt != null)
+                  _metaChip('Completed ${_dateTimeLabel(job.completedAt!)}'),
+              ],
             ),
-            const SizedBox(height: 3),
-            Text(
-              'Created: ${job.createdAt.toLocal().toString().split('.').first}',
-              style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
-            ),
-            if (job.completedAt != null) ...[
-              const SizedBox(height: 2),
-              Text(
-                'Completed: ${job.completedAt!.toLocal().toString().split('.').first}',
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: AppColors.textMuted,
-                ),
-              ),
-            ],
             if (job.status == 'completed' &&
                 _creditBucketLabel(job.consumedCreditBucket) != null) ...[
-              const SizedBox(height: 4),
+              const SizedBox(height: 6),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
@@ -682,22 +713,55 @@ class _JobCard extends StatelessWidget {
                 (job.status == 'queued' ||
                     job.status == 'processing' ||
                     job.status == 'retrying')) ...[
-              const SizedBox(height: 4),
-              Text(
-                'ETA: ~${_formatEta(liveRemainingSeconds!)}'
-                '${job.queuePosition != null && job.status == 'queued' ? ' | Queue #${job.queuePosition}' : ''}'
-                '${(job.etaConfidence ?? '').isNotEmpty ? ' | ${job.etaConfidence} confidence' : ''}',
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: AppColors.textMuted,
+              const SizedBox(height: 6),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.accent.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: AppColors.accent.withValues(alpha: 0.25),
+                  ),
+                ),
+                child: Text(
+                  'ETA ~${_formatEta(liveRemainingSeconds!)}'
+                  '${job.queuePosition != null && job.status == 'queued' ? ' • Queue #${job.queuePosition}' : ''}'
+                  '${(job.etaConfidence ?? '').isNotEmpty ? ' • ${job.etaConfidence} confidence' : ''}',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textMuted,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ],
             if (job.error != null && job.error!.trim().isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text(
-                'Error: ${job.error}',
-                style: const TextStyle(fontSize: 12, color: Colors.redAccent),
+              const SizedBox(height: 6),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.redAccent.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: Colors.redAccent.withValues(alpha: 0.35),
+                  ),
+                ),
+                child: Text(
+                  'Error: ${job.error}',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Colors.redAccent,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
             ],
             const SizedBox(height: 8),
