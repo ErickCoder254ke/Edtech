@@ -93,6 +93,10 @@ GEMINI_EXP_BACKOFF_CAP_SECONDS = float(os.environ.get("GEMINI_EXP_BACKOFF_CAP_SE
 GEMINI_EXAM_MAX_ROUNDS = int(os.environ.get("GEMINI_EXAM_MAX_ROUNDS", "4"))
 GEMINI_KEY_FAILURE_COOLDOWN_SECONDS = float(os.environ.get("GEMINI_KEY_FAILURE_COOLDOWN_SECONDS", "8"))
 NVIDIA_TIMEOUT_SECONDS = float(os.environ.get("NVIDIA_TIMEOUT_SECONDS", "45"))
+OPENAI_EXAM_MAX_TOKENS = int(os.environ.get("OPENAI_EXAM_MAX_TOKENS", "3200"))
+OPENAI_QUIZ_MAX_TOKENS = int(os.environ.get("OPENAI_QUIZ_MAX_TOKENS", "2000"))
+GEMINI_EXAM_MAX_OUTPUT_TOKENS = int(os.environ.get("GEMINI_EXAM_MAX_OUTPUT_TOKENS", "3200"))
+GEMINI_QUIZ_MAX_OUTPUT_TOKENS = int(os.environ.get("GEMINI_QUIZ_MAX_OUTPUT_TOKENS", "2000"))
 REFRESH_ROTATION_GRACE_SECONDS = int(os.environ.get("REFRESH_ROTATION_GRACE_SECONDS", "120"))
 
 NVIDIA_MODEL_KEYS: Dict[str, str] = {}
@@ -4003,10 +4007,83 @@ def _infer_exam_paper_variant(additional_instructions: Optional[str], topic: Opt
     ).strip()
     if not text:
         return None
+    if re.search(r"\b(paper\s*3|paper\s*iii|pp3|p3)\b", text, flags=re.IGNORECASE):
+        return "paper_3"
     if re.search(r"\b(paper\s*2|paper\s*ii|pp2|p2|practical)\b", text, flags=re.IGNORECASE):
         return "paper_2"
     if re.search(r"\b(paper\s*1|paper\s*i|pp1|p1|theory)\b", text, flags=re.IGNORECASE):
         return "paper_1"
+    return None
+
+
+_PRACTICAL_SUBJECT_TOKENS = {
+    "biology",
+    "bio",
+    "chemistry",
+    "chem",
+    "physics",
+    "phy",
+    "agriculture",
+    "agri",
+    "computer",
+    "computer studies",
+    "ict",
+    "home science",
+}
+
+
+def _infer_exam_subject_hint(topic: Optional[str], additional_instructions: Optional[str]) -> str:
+    merged = " ".join(
+        [
+            str(topic or "").strip().lower(),
+            str(additional_instructions or "").strip().lower(),
+        ]
+    ).strip()
+    return merged
+
+
+def _is_practical_subject_hint(subject_hint: str) -> bool:
+    lowered = str(subject_hint or "").strip().lower()
+    if not lowered:
+        return False
+    if re.search(r"\bpractical\b", lowered):
+        return True
+    return any(token in lowered for token in _PRACTICAL_SUBJECT_TOKENS)
+
+
+_SUBJECT_CODE_ALIASES: Dict[str, str] = {
+    "biology": "BIO",
+    "bio": "BIO",
+    "chemistry": "CHE",
+    "chem": "CHE",
+    "physics": "PHY",
+    "phy": "PHY",
+    "english": "ENG",
+    "eng": "ENG",
+    "history": "HIS",
+    "government": "HIS",
+    "his": "HIS",
+    "geography": "GEO",
+    "geo": "GEO",
+    "business": "BUS",
+    "business studies": "BUS",
+    "bus": "BUS",
+    "agriculture": "AGRI",
+    "agri": "AGRI",
+    "cre": "CRE",
+    "computer": "COMP",
+    "computer studies": "COMP",
+    "ict": "COMP",
+}
+
+
+def _infer_exam_subject_code(subject_hint: str) -> Optional[str]:
+    lowered = str(subject_hint or "").strip().lower()
+    if not lowered:
+        return None
+    for token, code in _SUBJECT_CODE_ALIASES.items():
+        if token in lowered:
+            return code
     return None
 
 
@@ -4051,6 +4128,12 @@ def enforce_assessment_output_quality(
         if not isinstance(sections, list) or not sections:
             raise HTTPException(status_code=502, detail="Exam output must contain at least one section.")
         target_total_marks = int(payload.get("total_marks") or (request.marks if request else 0) or 0)
+        subject_hint = _infer_exam_subject_hint(
+            (request.topic if request else None),
+            (request.additional_instructions if request else None),
+        )
+        subject_code = _infer_exam_subject_code(subject_hint)
+        practical_subject = _is_practical_subject_hint(subject_hint)
         inferred_variant = _infer_exam_paper_variant(
             (request.additional_instructions if request else None),
             (request.topic if request else None),
@@ -4079,7 +4162,10 @@ def enforce_assessment_output_quality(
                 q_type = str(normalized_question.get("type") or "").strip().lower()
                 if q_type not in {"mcq", "structured", "essay", "practical"}:
                     q_type = "structured"
-                if inferred_variant == "paper_2":
+                if inferred_variant == "paper_3":
+                    q_type = "practical"
+                    normalized_question.pop("options", None)
+                elif inferred_variant == "paper_2" and practical_subject:
                     q_type = "practical"
                     normalized_question.pop("options", None)
                 normalized_question["type"] = q_type
@@ -4118,6 +4204,8 @@ def enforce_assessment_output_quality(
             minimum_questions = 8
         elif target_total_marks >= 50:
             minimum_questions = 6
+        if inferred_variant == "paper_3":
+            minimum_questions = max(3, min(minimum_questions, 6))
         if inferred_variant == "paper_2":
             minimum_questions = max(4, minimum_questions - 2)
         if request is not None and int(request.num_questions or 0) > 0:
@@ -4137,7 +4225,16 @@ def enforce_assessment_output_quality(
                 section["section_name"] = "SECTION A"
             elif inferred_variant == "paper_1" and sec_idx == 2:
                 section["section_name"] = "SECTION B"
+            elif inferred_variant == "paper_2" and subject_code in {"HIS", "GEO", "ENG", "BUS", "CRE", "AGRI"}:
+                if sec_idx == 1:
+                    section["section_name"] = "SECTION A"
+                elif sec_idx == 2:
+                    section["section_name"] = "SECTION B"
+                elif sec_idx == 3:
+                    section["section_name"] = "SECTION C"
             elif inferred_variant == "paper_2" and not str(section.get("section_name") or "").strip():
+                section["section_name"] = f"TASK {sec_idx}"
+            elif inferred_variant == "paper_3":
                 section["section_name"] = f"TASK {sec_idx}"
             for q_idx, question in enumerate(section.get("questions", []), start=1):
                 question["question_number"] = str(q_idx)
@@ -4218,6 +4315,30 @@ def parse_llm_json_output(text: str) -> Any:
                 return repaired
 
     raise ValueError("LLM returned non-JSON output")
+
+
+def sanitize_generation_error_message(error_text: Optional[str], status_code: Optional[int] = None) -> str:
+    raw = str(error_text or "").strip()
+    lowered = raw.lower()
+    if status_code == 429:
+        return "Generation service is busy right now. Please retry in a moment."
+    if status_code in {500, 502, 503, 504}:
+        return "Generation service is temporarily unavailable. Please retry."
+    if (
+        "json" in lowered
+        or "parse" in lowered
+        or "malformed" in lowered
+        or "schema" in lowered
+        or "validation" in lowered
+    ):
+        return "Generated content format validation failed. Please retry."
+    if "rate limit" in lowered or "quota" in lowered:
+        return "Generation service is busy right now. Please retry in a moment."
+    if "timeout" in lowered or "timed out" in lowered:
+        return "Generation timed out. Please retry."
+    if not raw:
+        return "Generation failed. Please retry."
+    return "Generation failed. Please retry."
 
 
 def _repair_llm_json(candidate: str) -> Optional[Any]:
@@ -4536,6 +4657,7 @@ async def _generate_with_gemini(
     system_message: str,
     *,
     max_rounds: Optional[int] = None,
+    generation_type: Optional[str] = None,
 ) -> str:
     gemini_keys = list(GEMINI_API_KEYS)
     if GEMINI_API_KEY and GEMINI_API_KEY not in gemini_keys:
@@ -4593,6 +4715,18 @@ async def _generate_with_gemini(
             )
 
             async with httpx.AsyncClient(timeout=60.0) as client:
+                max_output_tokens = None
+                gtype = (generation_type or "").strip().lower()
+                if gtype == "exam":
+                    max_output_tokens = max(1200, GEMINI_EXAM_MAX_OUTPUT_TOKENS)
+                elif gtype == "quiz":
+                    max_output_tokens = max(800, GEMINI_QUIZ_MAX_OUTPUT_TOKENS)
+                generation_config: Dict[str, Any] = {
+                    "temperature": 0.2,
+                    "responseMimeType": "application/json",
+                }
+                if max_output_tokens is not None:
+                    generation_config["maxOutputTokens"] = int(max_output_tokens)
                 response = await client.post(
                     f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent",
                     params={"key": current_api_key},
@@ -4607,10 +4741,7 @@ async def _generate_with_gemini(
                                 "parts": [{"text": prompt}],
                             }
                         ],
-                        "generationConfig": {
-                            "temperature": 0.2,
-                            "responseMimeType": "application/json",
-                        },
+                        "generationConfig": generation_config,
                     },
                 )
                 response.raise_for_status()
@@ -4696,6 +4827,15 @@ def _nvidia_max_tokens_for_generation(generation_type: Optional[str]) -> int:
     if gtype == "quiz":
         return max(NVIDIA_MAX_TOKENS, 2000)
     return max(NVIDIA_MAX_TOKENS, 1200)
+
+
+def _openai_max_tokens_for_generation(generation_type: Optional[str]) -> Optional[int]:
+    gtype = (generation_type or "").strip().lower()
+    if gtype == "exam":
+        return max(1200, OPENAI_EXAM_MAX_TOKENS)
+    if gtype == "quiz":
+        return max(800, OPENAI_QUIZ_MAX_TOKENS)
+    return None
 
 
 def _resolve_nvidia_models() -> List[str]:
@@ -4803,6 +4943,7 @@ async def _generate_with_llm_internal(
                         prompt,
                         system_message,
                         max_rounds=gemini_rounds,
+                        generation_type=generation_type,
                     )
                 except HTTPException as gemini_exc:
                     should_try_exam_fallback = (
@@ -4831,6 +4972,7 @@ async def _generate_with_llm_internal(
                     system_message=system_message,
                     timeout_seconds=60.0,
                     max_attempts=3,
+                    max_tokens=_openai_max_tokens_for_generation(generation_type),
                     force_json_object=True,
                 )
             if provider == "nvidia":
@@ -6623,6 +6765,9 @@ Rules:
         total_marks = request.marks or 100
         instruction_text = (request.additional_instructions or "").strip()
         normalized_instructions = instruction_text.lower()
+        subject_hint = _infer_exam_subject_hint(request.topic, request.additional_instructions)
+        subject_code = _infer_exam_subject_code(subject_hint)
+        practical_subject = _is_practical_subject_hint(subject_hint)
         paper_variant = _infer_exam_paper_variant(request.additional_instructions, request.topic)
         q_types = list(request.question_types or ["mcq", "structured", "essay"])
         if paper_variant == "paper_1":
@@ -6630,7 +6775,9 @@ Rules:
             if not q_types:
                 q_types = ["structured", "essay"]
         elif paper_variant == "paper_2":
-            q_types = ["practical", "structured"]
+            q_types = ["practical", "structured"] if practical_subject else ["structured", "essay"]
+        elif paper_variant == "paper_3":
+            q_types = ["practical"]
         if ("do not include" in normalized_instructions or "without" in normalized_instructions) and (
             "multiple choice" in normalized_instructions or "mcq" in normalized_instructions
         ):
@@ -6651,6 +6798,8 @@ Rules:
                 target_questions = 6
             else:
                 target_questions = 4
+        if paper_variant == "paper_3":
+            target_questions = max(3, min(target_questions, 6))
         paper_blueprint = (
             "Paper variant: general."
             if not paper_variant
@@ -6658,9 +6807,22 @@ Rules:
                 "Paper variant: Paper 1 (theory). Use SECTION A and SECTION B. "
                 "SECTION A should contain short structured questions; SECTION B should contain longer structured/essay questions with full marking points."
                 if paper_variant == "paper_1"
-                else "Paper variant: Paper 2 (practical). Use task-oriented practical questions only, with step-based marking scheme and expected outputs for each task."
+                else (
+                    "Paper variant: Paper 2 (practical). Use task-oriented practical questions only, with step-based marking scheme and expected outputs for each task."
+                    if practical_subject
+                    else "Paper variant: Paper 2 (theory/application). Use structured and essay-style application questions with detailed marking points."
+                )
             )
         )
+        if paper_variant == "paper_2" and subject_code in {"HIS", "GEO", "ENG", "BUS", "CRE", "AGRI"}:
+            paper_blueprint += " Prefer sectioned format (A/B/C) with some compulsory and some choice questions where appropriate."
+        if paper_variant == "paper_2" and subject_code in {"BIO", "CHE", "PHY"}:
+            paper_blueprint += " Prefer sectioned format (A/B) with compulsory short items and longer application/data questions."
+        if paper_variant == "paper_3":
+            paper_blueprint = (
+                "Paper variant: Paper 3 (practical). Use practical tasks/experiments, observations, calculations, "
+                "and explicit step-by-step mark allocation. Do not produce generic theory-only prompts."
+            )
         return f"""Based STRICTLY on the coursework material, generate an exam paper.
 {f'Focus on topic: {request.topic}' if request.topic else ''}
 Difficulty: {request.difficulty}
@@ -6766,6 +6928,9 @@ def apply_exam_constraints(
     additional_instructions: Optional[str],
 ) -> Dict[str, Any]:
     constraints = _extract_exam_constraints(additional_instructions)
+    subject_hint = _infer_exam_subject_hint(None, additional_instructions)
+    subject_code = _infer_exam_subject_code(subject_hint)
+    practical_subject = _is_practical_subject_hint(subject_hint)
     if not any(constraints.values()):
         return content
 
@@ -6811,8 +6976,17 @@ def apply_exam_constraints(
             elif sec_idx == 2:
                 section_copy["section_name"] = "SECTION B"
         elif constraints.get("paper_variant") == "paper_2":
-            if not str(section_copy.get("section_name") or "").strip():
+            if subject_code in {"HIS", "GEO", "ENG", "BUS", "CRE", "AGRI"}:
+                if sec_idx == 1:
+                    section_copy["section_name"] = "SECTION A"
+                elif sec_idx == 2:
+                    section_copy["section_name"] = "SECTION B"
+                elif sec_idx == 3:
+                    section_copy["section_name"] = "SECTION C"
+            elif not str(section_copy.get("section_name") or "").strip():
                 section_copy["section_name"] = f"TASK {sec_idx}"
+        elif constraints.get("paper_variant") == "paper_3":
+            section_copy["section_name"] = f"TASK {sec_idx}"
         questions = section_copy.get("questions", [])
         normalized_questions: List[Dict[str, Any]] = []
         for question in questions if isinstance(questions, list) else []:
@@ -6820,7 +6994,10 @@ def apply_exam_constraints(
                 continue
             q = dict(question)
             q_type = str(q.get("type", "")).lower()
-            if constraints.get("paper_variant") == "paper_2":
+            if constraints.get("paper_variant") == "paper_3":
+                q_type = "practical"
+                q.pop("options", None)
+            elif constraints.get("paper_variant") == "paper_2" and practical_subject:
                 q_type = "practical"
                 q.pop("options", None)
             if (constraints["disallow_mcq"] and q_type == "mcq") or (
@@ -7137,7 +7314,10 @@ async def queue_generation_content(
                 {
                     "$set": {
                         "status": "failed",
-                        "error": f"Queue enqueue failed: {str(retry_exc)}",
+                        "error": sanitize_generation_error_message(
+                            f"Queue enqueue failed: {str(retry_exc)}",
+                            503,
+                        ),
                         "completed_at": datetime.now(timezone.utc).isoformat(),
                     }
                 },

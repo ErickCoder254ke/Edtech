@@ -174,6 +174,39 @@ class TestServerGuards(unittest.TestCase):
         self.assertEqual(first["type"], "practical")
         self.assertTrue(str(first["mark_scheme"]).strip())
 
+    def test_build_prompt_mentions_paper_three_when_requested(self):
+        req = server.GenerationRequest(
+            document_ids=["d1"],
+            generation_type="exam",
+            marks=40,
+            additional_instructions="Generate Paper 3 for Chemistry practical",
+        )
+        prompt = server.build_prompt(req, context="sample context")
+        self.assertIn("Paper variant: Paper 3 (practical)", prompt)
+
+    def test_apply_exam_constraints_section_pattern_for_history_paper_two(self):
+        payload = {
+            "school_name": "Sample School",
+            "exam_title": "History Mock",
+            "subject": "History",
+            "class_level": "Form 4",
+            "total_marks": 40,
+            "time_allowed": "2h",
+            "instructions": ["Answer questions"],
+            "sections": [
+                {"section_name": "", "questions": [{"question_number": "1", "question_text": "Q1", "marks": 10, "type": "essay", "mark_scheme": "points"}]},
+                {"section_name": "", "questions": [{"question_number": "2", "question_text": "Q2", "marks": 10, "type": "essay", "mark_scheme": "points"}]},
+                {"section_name": "", "questions": [{"question_number": "3", "question_text": "Q3", "marks": 10, "type": "essay", "mark_scheme": "points"}]},
+            ],
+        }
+        normalized = server.apply_exam_constraints(
+            payload,
+            additional_instructions="History Paper 2",
+        )
+        self.assertEqual(normalized["sections"][0]["section_name"], "SECTION A")
+        self.assertEqual(normalized["sections"][1]["section_name"], "SECTION B")
+        self.assertEqual(normalized["sections"][2]["section_name"], "SECTION C")
+
     def test_normalize_topic_category_accepts_aliases(self):
         self.assertEqual(server.normalize_topic_category("Grade 1-4"), "grade_1_4")
         self.assertEqual(server.normalize_topic_category("junior_secondary"), "junior_secondary")

@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
@@ -1047,12 +1049,68 @@ class _OptionChoiceTile extends StatelessWidget {
 class _RawJson extends StatelessWidget {
   const _RawJson({required this.content});
   final Map<String, dynamic> content;
+
+  String _prettyJson() {
+    try {
+      return const JsonEncoder.withIndent('  ').convert(content);
+    } catch (_) {
+      return content.toString();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final rawText = _prettyJson();
     return GlassContainer(
       borderRadius: 18,
       padding: const EdgeInsets.all(14),
-      child: SelectableText(content.toString()),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.data_object_rounded,
+                size: 16,
+                color: AppColors.textMuted,
+              ),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Raw Response',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textMuted,
+                  ),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: rawText));
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Raw response copied.'),
+                      duration: Duration(milliseconds: 1200),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.copy_rounded, size: 16),
+                label: const Text('Copy'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          SelectableText(
+            rawText,
+            style: const TextStyle(
+              height: 1.35,
+              fontFamily: 'monospace',
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

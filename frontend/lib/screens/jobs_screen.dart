@@ -117,7 +117,9 @@ class _JobsScreenState extends State<JobsScreen> with WidgetsBindingObserver {
   bool _hasActiveJobs(List<JobStatusResponse> jobs) {
     return jobs.any((job) {
       final status = job.status.toLowerCase();
-      return status == 'queued' || status == 'processing' || status == 'retrying';
+      return status == 'queued' ||
+          status == 'processing' ||
+          status == 'retrying';
     });
   }
 
@@ -277,7 +279,7 @@ class _JobsScreenState extends State<JobsScreen> with WidgetsBindingObserver {
       );
       if (!mounted) return;
       setState(() {
-        _jobs = jobs;
+        _jobs = _sortJobs(jobs);
         if (!silent) _error = null;
         _lastJobsSyncAt = DateTime.now();
       });
@@ -305,12 +307,43 @@ class _JobsScreenState extends State<JobsScreen> with WidgetsBindingObserver {
     return (base - elapsed).clamp(0, 24 * 3600);
   }
 
+  List<JobStatusResponse> _sortJobs(List<JobStatusResponse> jobs) {
+    final sorted = [...jobs];
+    sorted.sort((a, b) {
+      final aActive = !a.isTerminal;
+      final bActive = !b.isTerminal;
+      if (aActive != bActive) return aActive ? -1 : 1;
+      return b.createdAt.compareTo(a.createdAt);
+    });
+    return sorted;
+  }
+
+  Map<String, int> _statusCounts() {
+    final counts = <String, int>{
+      'all': _jobs.length,
+      'queued': 0,
+      'processing': 0,
+      'retrying': 0,
+      'completed': 0,
+      'failed': 0,
+    };
+    for (final job in _jobs) {
+      final key = job.status.toLowerCase();
+      if (counts.containsKey(key)) {
+        counts[key] = (counts[key] ?? 0) + 1;
+      }
+    }
+    return counts;
+  }
+
   String _syncLabel() {
     final last = _lastJobsSyncAt;
     if (last == null) return _wsConnected ? 'Live connected' : 'Syncing...';
     final seconds = DateTime.now().difference(last).inSeconds.clamp(0, 3600);
     if (seconds < 2) return _wsConnected ? 'Live now' : 'Updated just now';
-    return _wsConnected ? 'Live - ${seconds}s ago' : 'Polling - ${seconds}s ago';
+    return _wsConnected
+        ? 'Live - ${seconds}s ago'
+        : 'Polling - ${seconds}s ago';
   }
 
   Color _statusColor(String status) {
@@ -354,6 +387,11 @@ class _JobsScreenState extends State<JobsScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    final counts = _statusCounts();
+    final activeCount =
+        (counts['queued'] ?? 0) +
+        (counts['processing'] ?? 0) +
+        (counts['retrying'] ?? 0);
     return Scaffold(
       appBar: AppBar(
         title: const Text('My Jobs'),
@@ -375,7 +413,10 @@ class _JobsScreenState extends State<JobsScreen> with WidgetsBindingObserver {
                 children: [
                   Container(
                     margin: const EdgeInsets.only(bottom: 10),
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
                       color: _wsConnected
                           ? Colors.greenAccent.withValues(alpha: 0.12)
@@ -390,9 +431,13 @@ class _JobsScreenState extends State<JobsScreen> with WidgetsBindingObserver {
                     child: Row(
                       children: [
                         Icon(
-                          _wsConnected ? Icons.wifi_tethering_rounded : Icons.sync_rounded,
+                          _wsConnected
+                              ? Icons.wifi_tethering_rounded
+                              : Icons.sync_rounded,
                           size: 16,
-                          color: _wsConnected ? Colors.greenAccent : Colors.amberAccent,
+                          color: _wsConnected
+                              ? Colors.greenAccent
+                              : Colors.amberAccent,
                         ),
                         const SizedBox(width: 6),
                         Text(
@@ -400,7 +445,9 @@ class _JobsScreenState extends State<JobsScreen> with WidgetsBindingObserver {
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w700,
-                            color: _wsConnected ? Colors.greenAccent : Colors.amberAccent,
+                            color: _wsConnected
+                                ? Colors.greenAccent
+                                : Colors.amberAccent,
                           ),
                         ),
                       ],
@@ -410,10 +457,19 @@ class _JobsScreenState extends State<JobsScreen> with WidgetsBindingObserver {
                     spacing: 8,
                     runSpacing: 8,
                     children:
-                        ['all', 'queued', 'processing', 'completed', 'failed']
+                        [
+                              'all',
+                              'queued',
+                              'processing',
+                              'retrying',
+                              'completed',
+                              'failed',
+                            ]
                             .map(
                               (status) => ChoiceChip(
-                                label: Text(status.toUpperCase()),
+                                label: Text(
+                                  '${status.toUpperCase()} (${counts[status] ?? 0})',
+                                ),
                                 selected: _statusFilter == status,
                                 onSelected: (_) {
                                   if (_statusFilter == status) return;
@@ -426,6 +482,43 @@ class _JobsScreenState extends State<JobsScreen> with WidgetsBindingObserver {
                             )
                             .toList(),
                   ),
+                  if (activeCount > 0) ...[
+                    const SizedBox(height: 10),
+                    GlassContainer(
+                      borderRadius: 14,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.bolt_rounded,
+                            size: 16,
+                            color: AppColors.accent,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            '$activeCount active ${activeCount == 1 ? 'job' : 'jobs'}',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.accent,
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            'Completed: ${counts['completed'] ?? 0}',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textMuted,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   if (_loading)
                     const _LoadingCard()
@@ -474,7 +567,9 @@ class _JobCard extends StatelessWidget {
       final m = minutes % 60;
       return '${h}h ${m}m';
     }
-    if (minutes > 0) return '${minutes}m ${seconds.toString().padLeft(2, '0')}s';
+    if (minutes > 0) {
+      return '${minutes}m ${seconds.toString().padLeft(2, '0')}s';
+    }
     return '${seconds}s';
   }
 
@@ -494,6 +589,28 @@ class _JobCard extends StatelessWidget {
     }
   }
 
+  String _statusLabel(String status) {
+    switch (status.toLowerCase()) {
+      case 'queued':
+        return 'Queued';
+      case 'processing':
+        return 'Processing';
+      case 'retrying':
+        return 'Retrying';
+      case 'completed':
+        return 'Completed';
+      case 'failed':
+        return 'Failed';
+      default:
+        return status.toUpperCase();
+    }
+  }
+
+  String _shortId(String id) {
+    if (id.length <= 12) return id;
+    return '${id.substring(0, 8)}...${id.substring(id.length - 4)}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final progress = (job.progress ?? 0).clamp(0, 100) / 100.0;
@@ -511,7 +628,7 @@ class _JobCard extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    '${job.type.toUpperCase()} - ${job.status.toUpperCase()}',
+                    '${job.type.toUpperCase()} - ${_statusLabel(job.status).toUpperCase()}',
                     style: TextStyle(
                       fontWeight: FontWeight.w800,
                       color: statusColor,
@@ -522,9 +639,24 @@ class _JobCard extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              'Job ID: ${job.jobId}',
+              'Job ID: ${_shortId(job.jobId)}',
               style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
             ),
+            const SizedBox(height: 3),
+            Text(
+              'Created: ${job.createdAt.toLocal().toString().split('.').first}',
+              style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+            ),
+            if (job.completedAt != null) ...[
+              const SizedBox(height: 2),
+              Text(
+                'Completed: ${job.completedAt!.toLocal().toString().split('.').first}',
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.textMuted,
+                ),
+              ),
+            ],
             if (job.status == 'completed' &&
                 _creditBucketLabel(job.consumedCreditBucket) != null) ...[
               const SizedBox(height: 4),
@@ -539,7 +671,10 @@ class _JobCard extends StatelessWidget {
                 ),
                 child: Text(
                   _creditBucketLabel(job.consumedCreditBucket)!,
-                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ],
@@ -552,7 +687,10 @@ class _JobCard extends StatelessWidget {
                 'ETA: ~${_formatEta(liveRemainingSeconds!)}'
                 '${job.queuePosition != null && job.status == 'queued' ? ' | Queue #${job.queuePosition}' : ''}'
                 '${(job.etaConfidence ?? '').isNotEmpty ? ' | ${job.etaConfidence} confidence' : ''}',
-                style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textMuted,
+                ),
               ),
             ],
             if (job.error != null && job.error!.trim().isNotEmpty) ...[
@@ -563,6 +701,18 @@ class _JobCard extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: Text(
+                '${(progress * 100).round()}%',
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.textMuted,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            const SizedBox(height: 4),
             LinearProgressIndicator(
               value: progress,
               minHeight: 6,

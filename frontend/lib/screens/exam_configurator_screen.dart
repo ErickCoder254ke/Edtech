@@ -60,6 +60,10 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
   String _generationType = 'exam';
   String _difficulty = 'medium';
   String _examSectionMode = 'mixed';
+  String _selectedLevel = 'F4';
+  String _selectedPaper = 'PP1';
+  String _selectedSubject = 'Biology';
+  bool _useBlueprint = true;
   bool _isLoadingDocuments = true;
   bool _isGenerating = false;
   bool _isPollingJob = false;
@@ -71,49 +75,36 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
   bool _templatesExpanded = false;
   final Set<String> _selectedTemplateIds = <String>{};
   final Map<String, String> _templateInsertedBlocks = <String, String>{};
-  static const List<_TemplatePreset> _templatePresets = [
-    _TemplatePreset(
-      id: 'kcse_end_term_80',
-      title: 'KCSE End-Term 80',
-      subtitle: 'Structured-only, senior-school exam quality',
-      generationType: 'exam',
-      examSectionMode: 'structured_only',
-      marks: 80,
-      templateIds: [
-        'single_section_no_mcq_essay',
-        'senior_school_exam_tone',
-        'marking_realism',
-        'directive_verbs',
-        'question_numbering_layout',
-        'strict_curriculum_anchor',
-      ],
-    ),
-    _TemplatePreset(
-      id: 'mid_term_40_structured',
-      title: 'Mid-Term 40',
-      subtitle: 'Compact structured assessment',
-      generationType: 'exam',
-      examSectionMode: 'structured_only',
-      marks: 40,
-      templateIds: [
-        'single_section_no_mcq_essay',
-        'marking_realism',
-        'directive_verbs',
-        'question_numbering_layout',
-      ],
-    ),
-    _TemplatePreset(
-      id: 'quick_revision_quiz',
-      title: 'Revision Quiz',
-      subtitle: 'Fast competency check',
-      generationType: 'quiz',
-      questions: 12,
-      templateIds: [
-        'cbc_competency_focus',
-        'directive_verbs',
-        'strict_curriculum_anchor',
-      ],
-    ),
+  static const List<String> _levelOptions = [
+    'F1',
+    'F2',
+    'F3',
+    'F4',
+    'G7',
+    'G8',
+    'G9',
+  ];
+  static const List<String> _paperOptions = ['PP1', 'PP2', 'PP3'];
+  static const List<String> _formSubjects = [
+    'Biology',
+    'Chemistry',
+    'Physics',
+    'English',
+    'History',
+    'Geography',
+    'Business Studies',
+    'CRE',
+    'Agriculture',
+    'Computer Studies',
+  ];
+  static const List<String> _cbcSubjects = [
+    'Integrated Science',
+    'Mathematics',
+    'Business Studies',
+    'Agriculture',
+    'Computer Science',
+    'Life Skills',
+    'Performing Arts',
   ];
   static const List<_PromptTemplate> _promptTemplates = [
     _PromptTemplate(
@@ -321,14 +312,20 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
     });
 
     try {
+      if (_generationType == 'exam') {
+        final examValidation = _validateExamBlueprintInputs();
+        if (examValidation != null) {
+          setState(() => _error = examValidation);
+          return;
+        }
+      }
       final mergedInstructions = _buildRequestInstructions();
+      final computedTopic = _effectiveTopic();
       final request = GenerationRequest(
         documentIds: _selectedDocumentIds.toList(),
         cbcNoteIds: _selectedCbcNoteIds.toList(),
         generationType: _generationType,
-        topic: _topicController.text.trim().isEmpty
-            ? null
-            : _topicController.text.trim(),
+        topic: computedTopic.trim().isEmpty ? null : computedTopic.trim(),
         difficulty: _difficulty,
         marks: _generationType == 'exam'
             ? int.tryParse(_marksController.text.trim())
@@ -374,6 +371,30 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
   String? _buildRequestInstructions() {
     final base = _instructionsController.text.trim();
     final autoHints = <String>[];
+    if (_generationType == 'exam' && _useBlueprint) {
+      autoHints.add(
+        'Exam blueprint target: ${_levelLabel(_selectedLevel)} $_selectedSubject $_selectedPaper.',
+      );
+      if (_selectedPaper == 'PP1') {
+        autoHints.add(
+          'Generate a theory paper (Paper 1) with clear, answerable exam questions and realistic mark allocation.',
+        );
+      } else if (_selectedPaper == 'PP2') {
+        if (_isPracticalSubject(_selectedSubject)) {
+          autoHints.add(
+            'Generate Paper 2 in application/practical-leaning style: structured tasks, data interpretation, and stepwise marking points.',
+          );
+        } else {
+          autoHints.add(
+            'Generate Paper 2 in theory/application style with sections and choice where appropriate.',
+          );
+        }
+      } else if (_selectedPaper == 'PP3') {
+        autoHints.add(
+          'Generate Paper 3 practical: task-based items, procedure/observation/calculation prompts, and explicit step-by-step mark scheme.',
+        );
+      }
+    }
     if (_generationType == 'exam' && _examSectionMode == 'structured_only') {
       autoHints.add(
         'Question and marks only. Output one numbered section. '
@@ -551,7 +572,11 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
 
   List<_PromptTemplate> _visibleTemplates() {
     final visible = _promptTemplates
-        .where((t) => t.recommendedFor.contains(_generationType))
+        .where(
+          (t) =>
+              t.id == 'institution_header_custom' &&
+              t.recommendedFor.contains(_generationType),
+        )
         .toList();
     visible.sort((a, b) => a.title.compareTo(b.title));
     return visible;
@@ -653,6 +678,12 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
   }
 
   List<String> _questionTypesForExam() {
+    if (_selectedPaper == 'PP3') {
+      return const ['practical'];
+    }
+    if (_selectedPaper == 'PP2' && _isPracticalSubject(_selectedSubject)) {
+      return const ['practical', 'structured'];
+    }
     switch (_examSectionMode) {
       case 'structured_only':
         return const ['structured'];
@@ -663,6 +694,106 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
       default:
         return const ['mcq', 'structured', 'essay'];
     }
+  }
+
+  bool _isCbcLevel(String level) => level.startsWith('G');
+
+  bool _isPracticalSubject(String subject) {
+    final s = subject.toLowerCase();
+    return s.contains('biology') ||
+        s.contains('chemistry') ||
+        s.contains('physics') ||
+        s.contains('agriculture') ||
+        s.contains('computer') ||
+        s.contains('integrated science') ||
+        s.contains('performing arts');
+  }
+
+  List<String> _subjectsForLevel(String level) {
+    return _isCbcLevel(level) ? _cbcSubjects : _formSubjects;
+  }
+
+  String _levelLabel(String level) {
+    if (level.startsWith('F')) {
+      return 'Form ${level.substring(1)}';
+    }
+    if (level.startsWith('G')) {
+      return 'Grade ${level.substring(1)}';
+    }
+    return level;
+  }
+
+  String _effectiveTopic() {
+    final manual = _topicController.text.trim();
+    if (manual.isNotEmpty) return manual;
+    return '${_levelLabel(_selectedLevel)} $_selectedSubject $_selectedPaper';
+  }
+
+  String? _validateExamBlueprintInputs() {
+    final marks = int.tryParse(_marksController.text.trim());
+    if (marks == null || marks <= 0) {
+      return 'Enter a valid total marks value for exam generation.';
+    }
+    if (_useBlueprint &&
+        _selectedPaper == 'PP3' &&
+        !_isPracticalSubject(_selectedSubject)) {
+      return 'PP3 is practical. Select a practical subject or switch to PP1/PP2.';
+    }
+    return null;
+  }
+
+  void _onBlueprintLevelSelected(String level) {
+    final subjects = _subjectsForLevel(level);
+    var nextSubject = _selectedSubject;
+    var nextPaper = _selectedPaper;
+    if (!subjects.contains(nextSubject)) {
+      nextSubject = subjects.first;
+    }
+    if (_isCbcLevel(level) && nextPaper == 'PP3') {
+      nextPaper = 'PP2';
+    }
+    setState(() {
+      _selectedLevel = level;
+      _selectedSubject = nextSubject;
+      _selectedPaper = nextPaper;
+    });
+  }
+
+  void _onBlueprintSubjectSelected(String subject) {
+    setState(() {
+      _selectedSubject = subject;
+      if (_selectedPaper == 'PP3' && !_isPracticalSubject(subject)) {
+        _selectedPaper = 'PP2';
+      }
+    });
+  }
+
+  void _onBlueprintPaperSelected(String paper) {
+    var nextPaper = paper;
+    if (paper == 'PP3' && !_isPracticalSubject(_selectedSubject)) {
+      nextPaper = 'PP2';
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'PP3 is for practical subjects. Switched to PP2 for this subject.',
+          ),
+          duration: Duration(milliseconds: 1400),
+        ),
+      );
+    }
+    setState(() => _selectedPaper = nextPaper);
+  }
+
+  String _paperGuideText() {
+    if (_selectedPaper == 'PP1') {
+      return 'PP1: theory paper with short and extended response items.';
+    }
+    if (_selectedPaper == 'PP2') {
+      return _isPracticalSubject(_selectedSubject)
+          ? 'PP2: application/practical-leaning tasks with stepwise marking points.'
+          : 'PP2: theory/application paper with structured sections.';
+    }
+    return 'PP3: practical task paper with procedures, observations, and calculations.';
   }
 
   Future<bool> _confirmPromptReview() async {
@@ -680,16 +811,11 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Please confirm your prompt details before generation.',
-            ),
+            const Text('Please confirm your prompt details before generation.'),
             const SizedBox(height: 10),
             Text(
               preview,
-              style: const TextStyle(
-                fontSize: 12,
-                color: AppColors.textMuted,
-              ),
+              style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
             ),
           ],
         ),
@@ -734,35 +860,6 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
       _templateInsertedBlocks.clear();
     });
     _showTemplateToast('All template snippets removed.');
-  }
-
-  Future<void> _applyTemplatePreset(_TemplatePreset preset) async {
-    _clearSelectedTemplates();
-    if (preset.generationType.isNotEmpty) {
-      _generationType = preset.generationType;
-    }
-    if (preset.examSectionMode != null) {
-      _examSectionMode = preset.examSectionMode!;
-    }
-    if (preset.marks != null) {
-      _marksController.text = preset.marks!.toString();
-    }
-    if (preset.questions != null) {
-      _questionsController.text = preset.questions!.toString();
-    }
-    setState(() {});
-    for (final templateId in preset.templateIds) {
-      _PromptTemplate? template;
-      for (final candidate in _promptTemplates) {
-        if (candidate.id == templateId) {
-          template = candidate;
-          break;
-        }
-      }
-      if (template == null) continue;
-      await _toggleTemplateSelection(template);
-    }
-    _showTemplateToast('Preset "${preset.title}" applied.');
   }
 
   void _showTemplateToast(String message) {
@@ -909,6 +1006,140 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
                               ),
                             ),
                           const SizedBox(height: 10),
+                          if (_generationType == 'exam') ...[
+                            _SectionTitle('Exam Blueprint'),
+                            const SizedBox(height: 8),
+                            SwitchListTile(
+                              contentPadding: EdgeInsets.zero,
+                              value: _useBlueprint,
+                              onChanged: (v) =>
+                                  setState(() => _useBlueprint = v),
+                              title: const Text(
+                                'Use smart paper blueprint',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              subtitle: const Text(
+                                'Auto-target level, subject, and paper format for stronger generation.',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.textMuted,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            const Text(
+                              'Level',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.textMuted,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            SizedBox(
+                              height: 38,
+                              child: ListView.separated(
+                                scrollDirection: Axis.horizontal,
+                                itemCount: _levelOptions.length,
+                                separatorBuilder: (_, __) =>
+                                    const SizedBox(width: 8),
+                                itemBuilder: (context, idx) {
+                                  final level = _levelOptions[idx];
+                                  final selected = _selectedLevel == level;
+                                  return ChoiceChip(
+                                    label: Text(level),
+                                    selected: selected,
+                                    onSelected: (_) =>
+                                        _onBlueprintLevelSelected(level),
+                                  );
+                                },
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            const Text(
+                              'Subject',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.textMuted,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            SizedBox(
+                              height: 38,
+                              child: ListView.separated(
+                                scrollDirection: Axis.horizontal,
+                                itemCount: _subjectsForLevel(
+                                  _selectedLevel,
+                                ).length,
+                                separatorBuilder: (_, __) =>
+                                    const SizedBox(width: 8),
+                                itemBuilder: (context, idx) {
+                                  final subject = _subjectsForLevel(
+                                    _selectedLevel,
+                                  )[idx];
+                                  final selected = _selectedSubject == subject;
+                                  return ChoiceChip(
+                                    label: Text(subject),
+                                    selected: selected,
+                                    onSelected: (_) =>
+                                        _onBlueprintSubjectSelected(subject),
+                                  );
+                                },
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            const Text(
+                              'Paper',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.textMuted,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            SizedBox(
+                              height: 38,
+                              child: ListView.separated(
+                                scrollDirection: Axis.horizontal,
+                                itemCount: _paperOptions.length,
+                                separatorBuilder: (_, __) =>
+                                    const SizedBox(width: 8),
+                                itemBuilder: (context, idx) {
+                                  final paper = _paperOptions[idx];
+                                  final selected = _selectedPaper == paper;
+                                  return ChoiceChip(
+                                    label: Text(paper),
+                                    selected: selected,
+                                    onSelected: (_) =>
+                                        _onBlueprintPaperSelected(paper),
+                                  );
+                                },
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Active target: ${_levelLabel(_selectedLevel)} $_selectedSubject $_selectedPaper',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: AppColors.accent,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              _paperGuideText(),
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: AppColors.textMuted,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                          ],
                           _SectionTitle('Topic and Difficulty'),
                           const SizedBox(height: 8),
                           TextField(
@@ -979,8 +1210,7 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
                                   selected:
                                       _examSectionMode == 'structured_only',
                                   onSelected: (_) => setState(
-                                    () =>
-                                        _examSectionMode = 'structured_only',
+                                    () => _examSectionMode = 'structured_only',
                                   ),
                                 ),
                                 ChoiceChip(
@@ -1085,7 +1315,7 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
                                           children: [
                                             const SizedBox(height: 10),
                                             const Text(
-                                              'Tap one or more templates to append high-quality instructions, then read and confirm before generation.',
+                                              'Only school header template is kept active for manual branding. Blueprint chips above drive the core paper logic.',
                                               style: TextStyle(
                                                 fontSize: 12,
                                                 color: AppColors.textMuted,
@@ -1096,10 +1326,13 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
                                               width: double.infinity,
                                               padding: const EdgeInsets.all(10),
                                               decoration: BoxDecoration(
-                                                color: AppColors.primary.withValues(alpha: 0.10),
-                                                borderRadius: BorderRadius.circular(10),
+                                                color: AppColors.primary
+                                                    .withValues(alpha: 0.10),
+                                                borderRadius:
+                                                    BorderRadius.circular(10),
                                                 border: Border.all(
-                                                  color: AppColors.primary.withValues(alpha: 0.28),
+                                                  color: AppColors.primary
+                                                      .withValues(alpha: 0.28),
                                                 ),
                                               ),
                                               child: Text(
@@ -1112,36 +1345,6 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
                                                   height: 1.35,
                                                 ),
                                               ),
-                                            ),
-                                            const SizedBox(height: 10),
-                                            const Text(
-                                              'Template Presets',
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w700,
-                                                color: AppColors.textMuted,
-                                              ),
-                                            ),
-                                            const SizedBox(height: 8),
-                                            Wrap(
-                                              spacing: 8,
-                                              runSpacing: 8,
-                                              children: _templatePresets
-                                                  .map(
-                                                    (preset) => ActionChip(
-                                                      avatar: const Icon(
-                                                        Icons.auto_awesome_rounded,
-                                                        size: 16,
-                                                      ),
-                                                      label: Text(preset.title),
-                                                      onPressed: () =>
-                                                          _applyTemplatePreset(
-                                                        preset,
-                                                      ),
-                                                      tooltip: preset.subtitle,
-                                                    ),
-                                                  )
-                                                  .toList(),
                                             ),
                                             const SizedBox(height: 10),
                                             ..._visibleTemplates().map(
@@ -1393,14 +1596,18 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
                                     children: [
                                       TextButton.icon(
                                         onPressed: _openJobsScreen,
-                                        icon: const Icon(Icons.schedule_rounded),
+                                        icon: const Icon(
+                                          Icons.schedule_rounded,
+                                        ),
                                         label: const Text('My Jobs'),
                                       ),
                                       const Spacer(),
                                       if (_latestGeneration != null)
                                         OutlinedButton.icon(
                                           onPressed: _openLatestGeneration,
-                                          icon: const Icon(Icons.open_in_new_rounded),
+                                          icon: const Icon(
+                                            Icons.open_in_new_rounded,
+                                          ),
                                           label: const Text('Open Output'),
                                         ),
                                     ],
@@ -1556,26 +1763,4 @@ class _PromptTemplate {
   final bool requiresSchoolName;
   final bool requiresExamTitle;
   final Set<String> recommendedFor;
-}
-
-class _TemplatePreset {
-  const _TemplatePreset({
-    required this.id,
-    required this.title,
-    required this.subtitle,
-    required this.generationType,
-    required this.templateIds,
-    this.examSectionMode,
-    this.marks,
-    this.questions,
-  });
-
-  final String id;
-  final String title;
-  final String subtitle;
-  final String generationType;
-  final List<String> templateIds;
-  final String? examSectionMode;
-  final int? marks;
-  final int? questions;
 }

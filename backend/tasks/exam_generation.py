@@ -15,6 +15,7 @@ from server import (
     increment_usage_counter,
     record_metric,
     run_generation_pipeline,
+    sanitize_generation_error_message,
 )
 from tasks.notifications import (
     send_first_exam_upgrade_nudge,
@@ -91,7 +92,7 @@ async def _process_generation_job_impl(self, job_id: str) -> dict:
                             "completed_at": now_iso,
                             "expired_at": now_iso,
                             "expired_reason": "queue_timeout",
-                            "error": error_text,
+                            "error": sanitize_generation_error_message(error_text, 504),
                         }
                     },
                 )
@@ -180,12 +181,12 @@ async def _process_generation_job_impl(self, job_id: str) -> dict:
                     "$set": {
                         "status": "retrying",
                         "progress": 15,
-                        "error": str(exc.detail),
+                        "error": sanitize_generation_error_message(str(exc.detail), exc.status_code),
                     },
                     "$push": {
                         "error_log": {
                             "at": datetime.now(timezone.utc).isoformat(),
-                            "error": str(exc.detail),
+                            "error": sanitize_generation_error_message(str(exc.detail), exc.status_code),
                             "status_code": exc.status_code,
                             "retryable": True,
                         }
@@ -201,9 +202,20 @@ async def _process_generation_job_impl(self, job_id: str) -> dict:
                 delay,
                 exc.detail,
             )
-            raise self.retry(exc=Exception(str(exc.detail)), countdown=delay)
+            raise self.retry(
+                exc=Exception(
+                    sanitize_generation_error_message(str(exc.detail), exc.status_code)
+                ),
+                countdown=delay,
+            )
 
-        await _mark_job_failed(job_id, user_id, str(exc.detail), generation_type, exc.status_code)
+        await _mark_job_failed(
+            job_id,
+            user_id,
+            sanitize_generation_error_message(str(exc.detail), exc.status_code),
+            generation_type,
+            exc.status_code,
+        )
         return {"job_id": job_id, "status": "failed"}
     except Exception as exc:
         if self.request.retries < self.max_retries:
@@ -217,12 +229,12 @@ async def _process_generation_job_impl(self, job_id: str) -> dict:
                     "$set": {
                         "status": "retrying",
                         "progress": 15,
-                        "error": str(exc),
+                        "error": sanitize_generation_error_message(str(exc), None),
                     },
                     "$push": {
                         "error_log": {
                             "at": datetime.now(timezone.utc).isoformat(),
-                            "error": str(exc),
+                            "error": sanitize_generation_error_message(str(exc), None),
                             "retryable": True,
                         }
                     },
@@ -238,7 +250,13 @@ async def _process_generation_job_impl(self, job_id: str) -> dict:
             )
             raise self.retry(exc=exc, countdown=delay)
 
-        await _mark_job_failed(job_id, user_id, str(exc), generation_type, None)
+        await _mark_job_failed(
+            job_id,
+            user_id,
+            sanitize_generation_error_message(str(exc), None),
+            generation_type,
+            None,
+        )
         return {"job_id": job_id, "status": "failed"}
 
 
