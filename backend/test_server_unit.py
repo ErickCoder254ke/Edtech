@@ -110,7 +110,7 @@ class TestServerGuards(unittest.TestCase):
         with self.assertRaises(HTTPException) as ctx:
             server.validate_structured_output("quiz", {"quiz": [{"question": "Missing marks"}]})
         self.assertEqual(ctx.exception.status_code, 502)
-        self.assertIn("schema validation failed", str(ctx.exception.detail))
+        self.assertIn("format validation failed", str(ctx.exception.detail).lower())
 
     def test_build_prompt_enforces_strict_json_for_quiz(self):
         req = server.GenerationRequest(
@@ -130,6 +130,49 @@ class TestServerGuards(unittest.TestCase):
         prompt = server.build_prompt(req, context="sample context")
         self.assertIn("Return ONLY valid JSON", prompt)
         self.assertIn("Ensure total marks equals 50", prompt)
+
+    def test_build_prompt_mentions_paper_two_when_requested(self):
+        req = server.GenerationRequest(
+            document_ids=["d1"],
+            generation_type="exam",
+            marks=40,
+            additional_instructions="Generate Paper 2 practical",
+        )
+        prompt = server.build_prompt(req, context="sample context")
+        self.assertIn("Paper variant: Paper 2 (practical)", prompt)
+
+    def test_exam_quality_enforces_mark_scheme_and_paper_variant(self):
+        req = server.GenerationRequest(
+            document_ids=["d1"],
+            generation_type="exam",
+            marks=40,
+            additional_instructions="Paper 2 practical only",
+            num_questions=4,
+        )
+        payload = {
+            "school_name": "Sample School",
+            "exam_title": "Sample",
+            "subject": "Computer Studies",
+            "class_level": "Form 4",
+            "total_marks": 40,
+            "time_allowed": "2h",
+            "instructions": ["Answer all questions."],
+            "sections": [
+                {
+                    "section_name": "",
+                    "questions": [
+                        {"question_number": "1", "question_text": "Set margins in a document", "marks": 10, "type": "structured", "mark_scheme": ""},
+                        {"question_number": "2", "question_text": "Create a table with 4 columns", "marks": 10, "type": "structured", "mark_scheme": ""},
+                        {"question_number": "3", "question_text": "Sort records by score", "marks": 10, "type": "structured", "mark_scheme": ""},
+                        {"question_number": "4", "question_text": "Apply formulas in spreadsheet", "marks": 10, "type": "structured", "mark_scheme": ""},
+                    ],
+                }
+            ],
+        }
+        normalized = server.enforce_assessment_output_quality("exam", payload, request=req)
+        first = normalized["sections"][0]["questions"][0]
+        self.assertEqual(first["type"], "practical")
+        self.assertTrue(str(first["mark_scheme"]).strip())
 
     def test_normalize_topic_category_accepts_aliases(self):
         self.assertEqual(server.normalize_topic_category("Grade 1-4"), "grade_1_4")

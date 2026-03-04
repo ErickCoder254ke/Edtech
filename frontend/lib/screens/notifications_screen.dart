@@ -31,6 +31,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   String? _error;
   List<NotificationItem> _items = [];
   final Set<String> _markingRead = <String>{};
+  final Set<String> _deleting = <String>{};
 
   bool get _isStudent => widget.session.user.role.toLowerCase() == 'student';
 
@@ -142,6 +143,28 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final uri = Uri.tryParse(link);
     if (uri == null) return;
     await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> _deleteNotification(NotificationItem item) async {
+    if (_deleting.contains(item.id)) return;
+    setState(() => _deleting.add(item.id));
+    try {
+      await _runWithAuthRetry(
+        (token) => widget.apiClient.deleteNotification(
+          accessToken: token,
+          notificationId: item.id,
+        ),
+      );
+      if (!mounted) return;
+      setState(() {
+        _items = _items.where((n) => n.id != item.id).toList();
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) setState(() => _deleting.remove(item.id));
+    }
   }
 
   Future<void> _testPush() async {
@@ -322,6 +345,22 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                                       label: Text(
                                         item.read ? 'Read' : 'Mark Read',
                                       ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: OutlinedButton.icon(
+                                      onPressed: _deleting.contains(item.id)
+                                          ? null
+                                          : () => _deleteNotification(item),
+                                      icon: _deleting.contains(item.id)
+                                          ? const SizedBox(
+                                              width: 14,
+                                              height: 14,
+                                              child: CircularProgressIndicator(strokeWidth: 2),
+                                            )
+                                          : const Icon(Icons.delete_outline_rounded),
+                                      label: const Text('Delete'),
                                     ),
                                   ),
                                 ],

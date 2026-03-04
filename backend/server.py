@@ -900,6 +900,8 @@ class ClassSessionResponse(BaseModel):
     student_reviewed: bool = False
     average_rating: Optional[float] = None
     review_count: int = 0
+    teacher_average_rating: Optional[float] = None
+    teacher_review_count: int = 0
     open_access_issue_count: int = 0
     topic_suggestion_id: Optional[str] = None
 
@@ -1449,7 +1451,11 @@ async def send_subscription_updated_email(
     full_name: str,
     plan_name: str,
     generation_limit: int,
+    generation_remaining: int,
+    task_limit: Optional[int],
+    task_remaining: Optional[int],
     exam_limit: Optional[int],
+    exam_remaining: Optional[int],
     window_end_at: Optional[str],
     retention_days: Optional[int],
 ) -> None:
@@ -1458,22 +1464,35 @@ async def send_subscription_updated_email(
         return
 
     greeting_name = (full_name or "").strip().split(" ")[0] or "there"
-    exam_limit_text = str(exam_limit) if exam_limit is not None else "unlimited"
-    renewal_text = window_end_at or "your current usage window end date"
+    exam_limit_text = str(int(exam_limit or 0))
+    task_limit_text = str(int(task_limit or 0))
+    exam_remaining_text = str(int(exam_remaining or 0))
+    task_remaining_text = str(int(task_remaining or 0))
     retention_text = ""
     if retention_days is not None and int(retention_days) > 0:
         retention_text = (
             f"<p>Your current document retention policy is <strong>{int(retention_days)} day(s)</strong> "
             "from upload.</p>"
         )
+    window_text = ""
+    if window_end_at:
+        window_text = (
+            f"<p>Legacy subscription window (if active) ends on: <strong>{window_end_at}</strong>.</p>"
+        )
 
     html_content = (
         f"<p>Hi {greeting_name},</p>"
         "<p>Your payment has been confirmed.</p>"
         f"<p>Your <strong>{plan_name}</strong> credit pack is now active.</p>"
-        f"<p>You can now enjoy up to <strong>{generation_limit}</strong> total generations and "
-        f"<strong>{exam_limit_text}</strong> exam generations in this usage window.</p>"
-        f"<p>Your current usage window ends on: <strong>{renewal_text}</strong>.</p>"
+        "<p>Your current credit balances are:</p>"
+        "<ul>"
+        f"<li><strong>Total generations:</strong> {int(generation_remaining)} remaining / {int(generation_limit)} total</li>"
+        f"<li><strong>Task generations:</strong> {task_remaining_text} remaining / {task_limit_text} total</li>"
+        f"<li><strong>Exam generations:</strong> {exam_remaining_text} remaining / {exam_limit_text} total</li>"
+        "</ul>"
+        "<p>Task generations are consumed first for non-exam outputs; when task credits are depleted, "
+        "non-exam generation falls back to exam credits.</p>"
+        f"{window_text}"
         f"{retention_text}"
         "<p>Thank you for using Exam OS.</p>"
     )
@@ -1505,7 +1524,11 @@ async def enqueue_subscription_updated_email(
     full_name: str,
     plan_name: str,
     generation_limit: int,
+    generation_remaining: int,
+    task_limit: Optional[int],
+    task_remaining: Optional[int],
     exam_limit: Optional[int],
+    exam_remaining: Optional[int],
     window_end_at: Optional[str],
     retention_days: Optional[int],
 ) -> None:
@@ -1515,7 +1538,11 @@ async def enqueue_subscription_updated_email(
             full_name=full_name,
             plan_name=plan_name,
             generation_limit=generation_limit,
+            generation_remaining=generation_remaining,
+            task_limit=task_limit,
+            task_remaining=task_remaining,
             exam_limit=exam_limit,
+            exam_remaining=exam_remaining,
             window_end_at=window_end_at,
             retention_days=retention_days,
         )
@@ -2459,9 +2486,6 @@ async def mark_stale_generation_jobs(user_id: Optional[str] = None) -> int:
     query: Dict[str, Any] = {
         "status": "queued",
         "created_at": {"$lte": cutoff_iso},
-        # If a Celery task has already been published, avoid false-failing jobs
-        # that are simply waiting for worker pickup under load.
-        "worker_task_id": {"$in": [None, ""]},
     }
     if user_id:
         query["user_id"] = user_id
@@ -2472,8 +2496,10 @@ async def mark_stale_generation_jobs(user_id: Optional[str] = None) -> int:
                 "status": "failed",
                 "progress": 100,
                 "completed_at": now.isoformat(),
+                "expired_at": now.isoformat(),
+                "expired_reason": "queue_timeout",
                 "error": (
-                    "Queue timeout: worker did not pick this job in time. "
+                    f"Queue expired after {timeout_seconds} seconds before processing. "
                     "Please retry generation."
                 ),
             }
@@ -2664,8 +2690,82 @@ async def compute_class_rating_snapshot(class_id: str) -> Tuple[Optional[float],
     return (round(float(avg), 2) if avg is not None else None), count
 
 
+async def aggregate_class_rating_snapshots(class_ids: List[str]) -> Dict[str, Tuple[Optional[float], int]]:
+    clean_ids = [cid for cid in class_ids if str(cid or "").strip()]
+    if not clean_ids:
+        return {}
+    rows = await db.class_reviews.aggregate(
+        [
+            {"$match": {"class_id": {"$in": clean_ids}}},
+            {"$group": {"_id": "$class_id", "avg": {"$avg": "$rating"}, "count": {"$sum": 1}}},
+        ]
+    ).to_list(len(clean_ids))
+    out: Dict[str, Tuple[Optional[float], int]] = {}
+    for row in rows:
+        cid = str(row.get("_id") or "").strip()
+        if not cid:
+            continue
+        avg = row.get("avg")
+        out[cid] = ((round(float(avg), 2) if avg is not None else None), int(row.get("count", 0)))
+    return out
+
+
+async def compute_teacher_rating_snapshot(teacher_id: str) -> Tuple[Optional[float], int]:
+    agg = await db.class_reviews.aggregate(
+        [
+            {"$match": {"teacher_id": teacher_id}},
+            {"$group": {"_id": None, "avg": {"$avg": "$rating"}, "count": {"$sum": 1}}},
+        ]
+    ).to_list(1)
+    if not agg:
+        return None, 0
+    avg = agg[0].get("avg")
+    count = int(agg[0].get("count", 0))
+    return (round(float(avg), 2) if avg is not None else None), count
+
+
+async def aggregate_teacher_rating_snapshots(
+    teacher_ids: List[str],
+) -> Dict[str, Tuple[Optional[float], int]]:
+    clean_ids = [tid for tid in teacher_ids if str(tid or "").strip()]
+    if not clean_ids:
+        return {}
+    rows = await db.class_reviews.aggregate(
+        [
+            {"$match": {"teacher_id": {"$in": clean_ids}}},
+            {"$group": {"_id": "$teacher_id", "avg": {"$avg": "$rating"}, "count": {"$sum": 1}}},
+        ]
+    ).to_list(len(clean_ids))
+    out: Dict[str, Tuple[Optional[float], int]] = {}
+    for row in rows:
+        tid = str(row.get("_id") or "").strip()
+        if not tid:
+            continue
+        avg = row.get("avg")
+        out[tid] = ((round(float(avg), 2) if avg is not None else None), int(row.get("count", 0)))
+    return out
+
+
 async def compute_open_access_issue_count(class_id: str) -> int:
     return int(await db.class_access_issues.count_documents({"class_id": class_id, "status": "open"}))
+
+
+async def aggregate_open_access_issue_counts(class_ids: List[str]) -> Dict[str, int]:
+    clean_ids = [cid for cid in class_ids if str(cid or "").strip()]
+    if not clean_ids:
+        return {}
+    rows = await db.class_access_issues.aggregate(
+        [
+            {"$match": {"class_id": {"$in": clean_ids}, "status": "open"}},
+            {"$group": {"_id": "$class_id", "count": {"$sum": 1}}},
+        ]
+    ).to_list(len(clean_ids))
+    out: Dict[str, int] = {}
+    for row in rows:
+        cid = str(row.get("_id") or "").strip()
+        if cid:
+            out[cid] = int(row.get("count", 0))
+    return out
 
 
 def compute_class_escrow_split(amount_kes: int) -> Tuple[int, int]:
@@ -2679,6 +2779,12 @@ async def build_class_response(
     class_doc: Dict[str, Any],
     current_user_id: str,
     current_user_role: str,
+    *,
+    class_rating_map: Optional[Dict[str, Tuple[Optional[float], int]]] = None,
+    teacher_rating_map: Optional[Dict[str, Tuple[Optional[float], int]]] = None,
+    student_enrollment_map: Optional[Dict[str, str]] = None,
+    student_reviewed_class_ids: Optional[set[str]] = None,
+    open_access_issue_map: Optional[Dict[str, int]] = None,
     ) -> ClassSessionResponse:
     norm = normalize_datetime_fields(dict(class_doc), ["scheduled_start_at", "scheduled_end_at", "created_at"])
     fee_kes = int(norm.get("fee_kes", 0))
@@ -2689,29 +2795,47 @@ async def build_class_response(
     student_reviewed = False
     payment_required = False
     meeting_link = norm["meeting_link"]
+    class_id = str(norm.get("id") or "")
+    teacher_id = str(norm.get("teacher_id") or "")
     if current_user_role == "student":
-        enrollment = await db.class_enrollments.find_one(
-            {"class_id": norm["id"], "student_id": current_user_id},
-            {"_id": 0, "id": 1, "payment_status": 1},
-        )
-        payment_status = str((enrollment or {}).get("payment_status") or "not_joined").lower()
+        if student_enrollment_map is not None:
+            payment_status = str(student_enrollment_map.get(class_id) or "not_joined").lower()
+        else:
+            enrollment = await db.class_enrollments.find_one(
+                {"class_id": class_id, "student_id": current_user_id},
+                {"_id": 0, "id": 1, "payment_status": 1},
+            )
+            payment_status = str((enrollment or {}).get("payment_status") or "not_joined").lower()
         joined = payment_status in {"paid", "free"}
         if joined:
-            existing_review = await db.class_reviews.find_one(
-                {"class_id": norm["id"], "student_id": current_user_id},
-                {"_id": 0, "id": 1},
-            )
-            student_reviewed = existing_review is not None
+            if student_reviewed_class_ids is not None:
+                student_reviewed = class_id in student_reviewed_class_ids
+            else:
+                existing_review = await db.class_reviews.find_one(
+                    {"class_id": class_id, "student_id": current_user_id},
+                    {"_id": 0, "id": 1},
+                )
+                student_reviewed = existing_review is not None
         payment_required = fee_kes > 0 and not joined
         # Students should only see the meeting link after successful payment/free enrollment.
         if payment_required:
             meeting_link = ""
     elif fee_kes <= 0:
         payment_status = "free"
-    avg_rating, review_count = await compute_class_rating_snapshot(norm["id"])
+    if class_rating_map is not None:
+        avg_rating, review_count = class_rating_map.get(class_id, (None, 0))
+    else:
+        avg_rating, review_count = await compute_class_rating_snapshot(class_id)
+    if teacher_rating_map is not None:
+        teacher_avg_rating, teacher_review_count = teacher_rating_map.get(teacher_id, (None, 0))
+    else:
+        teacher_avg_rating, teacher_review_count = await compute_teacher_rating_snapshot(teacher_id)
     open_access_issue_count = 0
     if current_user_role == "teacher":
-        open_access_issue_count = await compute_open_access_issue_count(norm["id"])
+        if open_access_issue_map is not None:
+            open_access_issue_count = int(open_access_issue_map.get(class_id, 0))
+        else:
+            open_access_issue_count = await compute_open_access_issue_count(class_id)
     return ClassSessionResponse(
         id=norm["id"],
         teacher_id=norm["teacher_id"],
@@ -2738,6 +2862,8 @@ async def build_class_response(
         student_reviewed=student_reviewed,
         average_rating=avg_rating,
         review_count=review_count,
+        teacher_average_rating=teacher_avg_rating,
+        teacher_review_count=teacher_review_count,
         open_access_issue_count=open_access_issue_count,
         topic_suggestion_id=norm.get("topic_suggestion_id"),
     )
@@ -3784,7 +3910,15 @@ def validate_structured_output(generation_type: str, payload: Dict[str, Any]) ->
             return ExamOutput.model_validate(payload).model_dump()
         return payload
     except ValidationError as ve:
-        raise HTTPException(status_code=502, detail=f"LLM output schema validation failed: {ve.errors()}")
+        logger.warning(
+            "generation_schema_validation_failed type=%s errors=%s",
+            generation_type,
+            ve.errors(),
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Generated content format validation failed. Please retry.",
+        )
 
 
 _ASSESSMENT_COMMAND_VERBS = {
@@ -3835,7 +3969,53 @@ def _coerce_to_assessment_question(text: str) -> str:
     return f"Explain {core[0].lower() + core[1:]}."
 
 
-def enforce_assessment_output_quality(generation_type: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+def _default_exam_mark_scheme(
+    *,
+    question_text: str,
+    question_type: str,
+    marks: int,
+    options: Optional[List[str]] = None,
+) -> str:
+    prompt_text = _trim_numbering_prefix(question_text) or "the question prompt"
+    q_type = (question_type or "").strip().lower()
+    if q_type == "mcq":
+        options_line = ", ".join([str(opt).strip() for opt in (options or []) if str(opt).strip()])
+        if options_line:
+            return (
+                "Expected answer: state the correct option and justify briefly. "
+                f"Options provided: {options_line}. Award {max(1, marks)} mark(s)."
+            )
+        return "Expected answer: state the correct option and justify briefly."
+    if q_type in {"essay", "structured", "practical"}:
+        return (
+            f"Award up to {max(1, marks)} mark(s) for accurate, relevant points addressing: "
+            f"{prompt_text}. Include method clarity, key facts, and conclusion."
+        )
+    return f"Award marks for correct and relevant points for: {prompt_text}."
+
+
+def _infer_exam_paper_variant(additional_instructions: Optional[str], topic: Optional[str]) -> Optional[str]:
+    text = " ".join(
+        [
+            str(additional_instructions or "").strip().lower(),
+            str(topic or "").strip().lower(),
+        ]
+    ).strip()
+    if not text:
+        return None
+    if re.search(r"\b(paper\s*2|paper\s*ii|pp2|p2|practical)\b", text, flags=re.IGNORECASE):
+        return "paper_2"
+    if re.search(r"\b(paper\s*1|paper\s*i|pp1|p1|theory)\b", text, flags=re.IGNORECASE):
+        return "paper_1"
+    return None
+
+
+def enforce_assessment_output_quality(
+    generation_type: str,
+    payload: Dict[str, Any],
+    *,
+    request: Optional[GenerationRequest] = None,
+) -> Dict[str, Any]:
     if generation_type == "quiz":
         quiz_items = payload.get("quiz")
         if not isinstance(quiz_items, list) or not quiz_items:
@@ -3852,6 +4032,15 @@ def enforce_assessment_output_quality(generation_type: str, payload: Dict[str, A
             normalized["question"] = question_text
             normalized["marks"] = marks
             normalized_quiz.append(normalized)
+        expected = int((request.num_questions if request else 0) or 0)
+        if expected > 0 and len(normalized_quiz) < expected:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Generated quiz is incomplete for your requested size. "
+                    "Please retry."
+                ),
+            )
         if not normalized_quiz:
             raise HTTPException(status_code=502, detail="Quiz output did not include valid question objects.")
         payload["quiz"] = normalized_quiz
@@ -3861,8 +4050,15 @@ def enforce_assessment_output_quality(generation_type: str, payload: Dict[str, A
         sections = payload.get("sections")
         if not isinstance(sections, list) or not sections:
             raise HTTPException(status_code=502, detail="Exam output must contain at least one section.")
+        target_total_marks = int(payload.get("total_marks") or (request.marks if request else 0) or 0)
+        inferred_variant = _infer_exam_paper_variant(
+            (request.additional_instructions if request else None),
+            (request.topic if request else None),
+        )
+
         normalized_sections: List[Dict[str, Any]] = []
         total_questions = 0
+        all_questions_flat: List[Dict[str, Any]] = []
         for section in sections:
             if not isinstance(section, dict):
                 continue
@@ -3880,7 +4076,32 @@ def enforce_assessment_output_quality(generation_type: str, payload: Dict[str, A
                 normalized_question = dict(question)
                 normalized_question["question_text"] = question_text
                 normalized_question["marks"] = marks
+                q_type = str(normalized_question.get("type") or "").strip().lower()
+                if q_type not in {"mcq", "structured", "essay", "practical"}:
+                    q_type = "structured"
+                if inferred_variant == "paper_2":
+                    q_type = "practical"
+                    normalized_question.pop("options", None)
+                normalized_question["type"] = q_type
+                if q_type == "mcq":
+                    opts = normalized_question.get("options")
+                    if not isinstance(opts, list) or len([o for o in opts if str(o).strip()]) < 3:
+                        normalized_question["type"] = "structured"
+                        normalized_question.pop("options", None)
+                mark_scheme = str(normalized_question.get("mark_scheme") or "").strip()
+                if len(mark_scheme) < 18:
+                    normalized_question["mark_scheme"] = _default_exam_mark_scheme(
+                        question_text=question_text,
+                        question_type=str(normalized_question.get("type") or "structured"),
+                        marks=marks,
+                        options=(
+                            [str(o) for o in normalized_question.get("options", [])]
+                            if isinstance(normalized_question.get("options"), list)
+                            else None
+                        ),
+                    )
                 normalized_questions.append(normalized_question)
+                all_questions_flat.append(normalized_question)
             if not normalized_questions:
                 continue
             total_questions += len(normalized_questions)
@@ -3889,6 +4110,58 @@ def enforce_assessment_output_quality(generation_type: str, payload: Dict[str, A
             normalized_sections.append(normalized_section)
         if total_questions <= 0:
             raise HTTPException(status_code=502, detail="Exam output did not include valid questions.")
+
+        minimum_questions = 4
+        if target_total_marks >= 100:
+            minimum_questions = 10
+        elif target_total_marks >= 80:
+            minimum_questions = 8
+        elif target_total_marks >= 50:
+            minimum_questions = 6
+        if inferred_variant == "paper_2":
+            minimum_questions = max(4, minimum_questions - 2)
+        if request is not None and int(request.num_questions or 0) > 0:
+            minimum_questions = max(minimum_questions, int(request.num_questions or 0))
+        if total_questions < minimum_questions:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Generated exam is incomplete for the requested structure. "
+                    "Please retry."
+                ),
+            )
+
+        # Renumber per section and normalize section names for paper conventions.
+        for sec_idx, section in enumerate(normalized_sections, start=1):
+            if inferred_variant == "paper_1" and sec_idx == 1:
+                section["section_name"] = "SECTION A"
+            elif inferred_variant == "paper_1" and sec_idx == 2:
+                section["section_name"] = "SECTION B"
+            elif inferred_variant == "paper_2" and not str(section.get("section_name") or "").strip():
+                section["section_name"] = f"TASK {sec_idx}"
+            for q_idx, question in enumerate(section.get("questions", []), start=1):
+                question["question_number"] = str(q_idx)
+
+        # Reconcile marks so totals are consistent and predictable.
+        computed_total = int(sum(max(1, int(q.get("marks", 1) or 1)) for q in all_questions_flat))
+        if target_total_marks <= 0:
+            target_total_marks = computed_total
+        diff = int(target_total_marks - computed_total)
+        if all_questions_flat and diff != 0:
+            cursor = len(all_questions_flat) - 1
+            guard = 0
+            while diff != 0 and guard < 5000:
+                q = all_questions_flat[cursor]
+                marks_val = max(1, int(q.get("marks", 1) or 1))
+                if diff > 0:
+                    q["marks"] = marks_val + 1
+                    diff -= 1
+                elif marks_val > 1:
+                    q["marks"] = marks_val - 1
+                    diff += 1
+                cursor = (cursor - 1) % len(all_questions_flat)
+                guard += 1
+        payload["total_marks"] = int(sum(max(1, int(q.get("marks", 1) or 1)) for q in all_questions_flat))
         payload["sections"] = normalized_sections
         return payload
 
@@ -5623,7 +5896,15 @@ async def mpesa_callback(request: Request, payload: Dict[str, Any], background_t
                     full_name=user_doc.get("full_name", ""),
                     plan_name=entitlement.get("plan_name", plan.name),
                     generation_limit=int(entitlement.get("generation_limit", int(plan.generation_quota))),
+                    generation_remaining=int(entitlement.get("generation_remaining", 0) or 0),
+                    task_limit=int(entitlement.get("task_limit", 0) or 0),
+                    task_remaining=int(entitlement.get("task_remaining", 0) or 0),
                     exam_limit=entitlement.get("exam_limit"),
+                    exam_remaining=(
+                        int(entitlement.get("exam_remaining", 0))
+                        if entitlement.get("exam_remaining") is not None
+                        else None
+                    ),
                     window_end_at=entitlement.get("window_end_at"),
                     retention_days=(
                         int(entitlement.get("document_retention_days", 0))
@@ -5815,6 +6096,7 @@ async def delete_user_data(user_id: str):
     await db.refresh_tokens.delete_many({"user_id": user_id})
     await db.retention_email_targets.delete_many({"user_id": user_id})
     await db.retention_email_recipients.delete_many({"user_id": user_id})
+    await db.user_hidden_classes.delete_many({"user_id": user_id})
     await db.users.delete_one({"id": user_id})
 
 
@@ -6341,7 +6623,14 @@ Rules:
         total_marks = request.marks or 100
         instruction_text = (request.additional_instructions or "").strip()
         normalized_instructions = instruction_text.lower()
+        paper_variant = _infer_exam_paper_variant(request.additional_instructions, request.topic)
         q_types = list(request.question_types or ["mcq", "structured", "essay"])
+        if paper_variant == "paper_1":
+            q_types = [q for q in q_types if str(q).strip().lower() != "practical"]
+            if not q_types:
+                q_types = ["structured", "essay"]
+        elif paper_variant == "paper_2":
+            q_types = ["practical", "structured"]
         if ("do not include" in normalized_instructions or "without" in normalized_instructions) and (
             "multiple choice" in normalized_instructions or "mcq" in normalized_instructions
         ):
@@ -6352,11 +6641,33 @@ Rules:
             q_types = [q for q in q_types if q.lower() != "essay"]
         if not q_types:
             q_types = ["structured"]
+        target_questions = int(request.num_questions or 0)
+        if target_questions <= 0:
+            if total_marks >= 100:
+                target_questions = 10
+            elif total_marks >= 80:
+                target_questions = 8
+            elif total_marks >= 50:
+                target_questions = 6
+            else:
+                target_questions = 4
+        paper_blueprint = (
+            "Paper variant: general."
+            if not paper_variant
+            else (
+                "Paper variant: Paper 1 (theory). Use SECTION A and SECTION B. "
+                "SECTION A should contain short structured questions; SECTION B should contain longer structured/essay questions with full marking points."
+                if paper_variant == "paper_1"
+                else "Paper variant: Paper 2 (practical). Use task-oriented practical questions only, with step-based marking scheme and expected outputs for each task."
+            )
+        )
         return f"""Based STRICTLY on the coursework material, generate an exam paper.
 {f'Focus on topic: {request.topic}' if request.topic else ''}
 Difficulty: {request.difficulty}
 Total marks: {total_marks}
+Target number of questions/tasks: {target_questions}
 Question types: {", ".join(q_types)}
+{paper_blueprint}
 {f'Additional instructions: {instruction_text}' if instruction_text else ''}
 Coursework Material:
 {context}
@@ -6389,8 +6700,11 @@ Provide JSON:
 Rules:
 - Ensure total marks equals {total_marks}.
 - Follow additional instructions exactly.
+- Generate at least {target_questions} complete questions/tasks.
 - Every question must be an answerable assessment item, not a statement or revision note.
 - Question text must use interrogative wording or exam command verbs.
+- Every question MUST include a non-empty mark_scheme with clear expected answer points.
+- Do not leave any question without an answer key/marking guidance.
 {strict_json_clause}"""
 
     raise HTTPException(status_code=400, detail="Invalid generation type")
@@ -6435,6 +6749,7 @@ def _extract_exam_constraints(additional_instructions: Optional[str]) -> Dict[st
     question_marks_only = bool(
         re.search(r"(question\s+and\s*\(?marks\)?\s+only|only\s+have\s+question\s+and\s*\(?marks\)?)", lowered)
     )
+    paper_variant = _infer_exam_paper_variant(additional_instructions, None)
     return {
         "title": title,
         "school_name": school_name,
@@ -6442,6 +6757,7 @@ def _extract_exam_constraints(additional_instructions: Optional[str]) -> Dict[st
         "disallow_essay": disallow_essay,
         "single_section": single_section,
         "question_marks_only": question_marks_only,
+        "paper_variant": paper_variant,
     }
 
 
@@ -6485,10 +6801,18 @@ def apply_exam_constraints(
         sections = sections[:1]
 
     normalized_sections: List[Dict[str, Any]] = []
-    for section in sections:
+    for sec_idx, section in enumerate(sections, start=1):
         if not isinstance(section, dict):
             continue
         section_copy = dict(section)
+        if constraints.get("paper_variant") == "paper_1":
+            if sec_idx == 1:
+                section_copy["section_name"] = "SECTION A"
+            elif sec_idx == 2:
+                section_copy["section_name"] = "SECTION B"
+        elif constraints.get("paper_variant") == "paper_2":
+            if not str(section_copy.get("section_name") or "").strip():
+                section_copy["section_name"] = f"TASK {sec_idx}"
         questions = section_copy.get("questions", [])
         normalized_questions: List[Dict[str, Any]] = []
         for question in questions if isinstance(questions, list) else []:
@@ -6496,10 +6820,15 @@ def apply_exam_constraints(
                 continue
             q = dict(question)
             q_type = str(q.get("type", "")).lower()
+            if constraints.get("paper_variant") == "paper_2":
+                q_type = "practical"
+                q.pop("options", None)
             if (constraints["disallow_mcq"] and q_type == "mcq") or (
                 constraints["disallow_essay"] and q_type == "essay"
             ):
                 q["type"] = "structured"
+            else:
+                q["type"] = q_type or "structured"
 
             if constraints["disallow_mcq"] or constraints["question_marks_only"]:
                 q.pop("options", None)
@@ -6601,7 +6930,25 @@ async def run_generation_pipeline(
         "You are an expert academic assistant. "
         "Always use the provided coursework material only."
     )
-    generated_text = await generate_with_llm(prompt, system_msg, generation_type=request.generation_type)
+    try:
+        generated_text = await generate_with_llm(prompt, system_msg, generation_type=request.generation_type)
+    except HTTPException as exc:
+        logger.error(
+            "generation_llm_failed user_id=%s type=%s status=%s detail=%s",
+            user_id,
+            request.generation_type,
+            exc.status_code,
+            exc.detail,
+        )
+        if exc.status_code == 429:
+            raise HTTPException(
+                status_code=429,
+                detail="Generation service is busy right now. Please retry in a moment.",
+            )
+        raise HTTPException(
+            status_code=502,
+            detail="Generation service is temporarily unavailable. Please retry.",
+        )
     logger.info(
         "generation_llm_success user_id=%s type=%s chars=%s",
         user_id,
@@ -6632,13 +6979,16 @@ async def run_generation_pipeline(
                 request.generation_type,
             )
         except Exception as repair_exc:
-            preview = (generated_text or "").strip().replace("\n", " ")[:180]
+            logger.warning(
+                "generation_json_repair_failed user_id=%s type=%s parse_error=%s repair_error=%s",
+                user_id,
+                request.generation_type,
+                e,
+                repair_exc,
+            )
             raise HTTPException(
                 status_code=502,
-                detail=(
-                    f"LLM returned non-JSON output: {str(e)} | "
-                    f"repair_failed={str(repair_exc)} | preview='{preview}'"
-                ),
+                detail="Generated content was malformed and could not be repaired. Please retry.",
             )
 
     if request.generation_type == "exam":
@@ -6646,7 +6996,7 @@ async def run_generation_pipeline(
     content = validate_structured_output(request.generation_type, raw_content)
     content = validate_structured_output(
         request.generation_type,
-        enforce_assessment_output_quality(request.generation_type, content),
+        enforce_assessment_output_quality(request.generation_type, content, request=request),
     )
     logger.info(
         "generation_validation_success user_id=%s type=%s",
@@ -7042,6 +7392,13 @@ async def list_class_sessions(
     role = current_user.get("role", "").lower()
     now_iso = datetime.now(timezone.utc).isoformat()
     query: Dict[str, Any] = {}
+    hidden_docs = await db.user_hidden_classes.find(
+        {"user_id": current_user["id"]},
+        {"_id": 0, "class_id": 1},
+    ).to_list(5000)
+    hidden_ids = [str(d.get("class_id") or "").strip() for d in hidden_docs if str(d.get("class_id") or "").strip()]
+    if hidden_ids:
+        query["id"] = {"$nin": hidden_ids}
     if role == "teacher":
         query["teacher_id"] = current_user["id"]
     elif role == "student":
@@ -7060,7 +7417,61 @@ async def list_class_sessions(
 
     safe_limit = max(1, min(limit, 200))
     docs = await db.class_sessions.find(query, {"_id": 0}).sort("scheduled_start_at", 1).to_list(safe_limit)
-    return [await build_class_response(doc, current_user["id"], role) for doc in docs]
+    if not docs:
+        return []
+
+    class_ids = [str(doc.get("id") or "").strip() for doc in docs if str(doc.get("id") or "").strip()]
+    teacher_ids = sorted(
+        {
+            str(doc.get("teacher_id") or "").strip()
+            for doc in docs
+            if str(doc.get("teacher_id") or "").strip()
+        }
+    )
+    class_rating_map = await aggregate_class_rating_snapshots(class_ids)
+    teacher_rating_map = await aggregate_teacher_rating_snapshots(teacher_ids)
+
+    student_enrollment_map: Optional[Dict[str, str]] = None
+    student_reviewed_class_ids: Optional[set[str]] = None
+    open_access_issue_map: Optional[Dict[str, int]] = None
+
+    if role == "student":
+        enrollments = await db.class_enrollments.find(
+            {"student_id": current_user["id"], "class_id": {"$in": class_ids}},
+            {"_id": 0, "class_id": 1, "payment_status": 1},
+        ).to_list(max(1, len(class_ids)))
+        student_enrollment_map = {
+            str(doc.get("class_id") or ""): str(doc.get("payment_status") or "not_joined").lower()
+            for doc in enrollments
+            if str(doc.get("class_id") or "").strip()
+        }
+        student_reviews = await db.class_reviews.find(
+            {"student_id": current_user["id"], "class_id": {"$in": class_ids}},
+            {"_id": 0, "class_id": 1},
+        ).to_list(max(1, len(class_ids)))
+        student_reviewed_class_ids = {
+            str(doc.get("class_id") or "").strip()
+            for doc in student_reviews
+            if str(doc.get("class_id") or "").strip()
+        }
+    elif role == "teacher":
+        open_access_issue_map = await aggregate_open_access_issue_counts(class_ids)
+
+    output: List[ClassSessionResponse] = []
+    for doc in docs:
+        output.append(
+            await build_class_response(
+                doc,
+                current_user["id"],
+                role,
+                class_rating_map=class_rating_map,
+                teacher_rating_map=teacher_rating_map,
+                student_enrollment_map=student_enrollment_map,
+                student_reviewed_class_ids=student_reviewed_class_ids,
+                open_access_issue_map=open_access_issue_map,
+            )
+        )
+    return output
 
 
 @api_router.get("/v1/classes/", response_model=List[ClassSessionResponse], include_in_schema=False)
@@ -7086,6 +7497,64 @@ async def get_class_session(
     if role == "teacher" and class_doc.get("teacher_id") != current_user["id"]:
         raise HTTPException(status_code=403, detail="Access denied")
     return await build_class_response(class_doc, current_user["id"], role)
+
+
+@api_router.delete("/v1/classes/{class_id}/history")
+async def delete_class_history_entry(
+    class_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    await ensure_rate_limit(current_user["id"], "class_read_user", JOB_STATUS_PER_MIN_LIMIT)
+    await ensure_topic_access(current_user["id"])
+    role = str(current_user.get("role", "")).strip().lower()
+    class_doc = await db.class_sessions.find_one(
+        {"id": class_id},
+        {"_id": 0, "id": 1, "teacher_id": 1, "status": 1, "scheduled_end_at": 1},
+    )
+    if not class_doc:
+        raise HTTPException(status_code=404, detail="Class not found")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    ended = (
+        str(class_doc.get("status") or "").lower() == "completed"
+        or str(class_doc.get("scheduled_end_at") or "") < now_iso
+    )
+    if not ended:
+        raise HTTPException(status_code=409, detail="Only past classes can be removed from history")
+
+    if role == "teacher":
+        if str(class_doc.get("teacher_id") or "") != current_user["id"]:
+            raise HTTPException(status_code=403, detail="Access denied")
+    elif role == "student":
+        enrollment = await db.class_enrollments.find_one(
+            {"class_id": class_id, "student_id": current_user["id"]},
+            {"_id": 0, "payment_status": 1},
+        )
+        payment_status = str((enrollment or {}).get("payment_status") or "").lower()
+        if payment_status not in {"paid", "free"}:
+            raise HTTPException(
+                status_code=403,
+                detail="Only joined classes can be removed from your history",
+            )
+    else:
+        raise HTTPException(status_code=403, detail="Unsupported role")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.user_hidden_classes.update_one(
+        {"user_id": current_user["id"], "class_id": class_id},
+        {
+            "$setOnInsert": {
+                "id": str(uuid.uuid4()),
+                "user_id": current_user["id"],
+                "class_id": class_id,
+                "role": role,
+                "created_at": now_iso,
+            },
+            "$set": {"updated_at": now_iso},
+        },
+        upsert=True,
+    )
+    return {"message": "Class removed from your history", "class_id": class_id}
 
 
 @api_router.post("/v1/classes/{class_id}/join")
@@ -8508,6 +8977,64 @@ async def list_class_reviews(
     return output
 
 
+@api_router.get("/v1/teachers/{teacher_id}/reviews", response_model=List[ClassReviewResponse])
+async def list_teacher_reviews(
+    teacher_id: str,
+    limit: int = 200,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    await ensure_rate_limit(current_user["id"], "class_read_user", JOB_STATUS_PER_MIN_LIMIT)
+    await ensure_topic_access(current_user["id"])
+    teacher_exists = await db.users.find_one(
+        {"id": teacher_id, "role": "teacher"},
+        {"_id": 0, "id": 1},
+    )
+    if not teacher_exists:
+        raise HTTPException(status_code=404, detail="Teacher not found")
+
+    safe_limit = max(1, min(limit, 400))
+    reviews = await db.class_reviews.find(
+        {"teacher_id": teacher_id},
+        {"_id": 0},
+    ).sort("created_at", -1).to_list(safe_limit)
+
+    student_ids = sorted(
+        {
+            str(r.get("student_id") or "").strip()
+            for r in reviews
+            if str(r.get("student_id") or "").strip()
+        }
+    )
+    student_name_map: Dict[str, str] = {}
+    if student_ids:
+        users = await db.users.find(
+            {"id": {"$in": student_ids}},
+            {"_id": 0, "id": 1, "full_name": 1},
+        ).to_list(len(student_ids))
+        student_name_map = {
+            str(u.get("id") or ""): str(u.get("full_name") or "").strip()
+            for u in users
+            if str(u.get("id") or "").strip()
+        }
+
+    output: List[ClassReviewResponse] = []
+    for review in reviews:
+        norm = normalize_datetime_fields(review, ["created_at"])
+        output.append(
+            ClassReviewResponse(
+                id=norm["id"],
+                class_id=norm["class_id"],
+                student_id=norm["student_id"],
+                teacher_id=norm["teacher_id"],
+                rating=int(norm["rating"]),
+                comment=norm.get("comment"),
+                student_name=student_name_map.get(str(norm.get("student_id") or "")) or None,
+                created_at=norm["created_at"],
+            )
+        )
+    return output
+
+
 @api_router.get("/v1/notifications", response_model=List[NotificationResponse])
 async def list_notifications(
     limit: int = 60,
@@ -8578,6 +9105,20 @@ async def mark_notification_read(
     if not updated:
         raise HTTPException(status_code=404, detail="Notification not found")
     return {"id": updated["id"], "read": bool(updated.get("read", True))}
+
+
+@api_router.delete("/v1/notifications/{notification_id}")
+async def delete_notification(
+    notification_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    await ensure_rate_limit(current_user["id"], "notifications_write_user", JOB_STATUS_PER_MIN_LIMIT)
+    result = await db.notifications.delete_one(
+        {"id": notification_id, "user_id": current_user["id"]},
+    )
+    if int(getattr(result, "deleted_count", 0)) <= 0:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return {"id": notification_id, "deleted": True}
 
 
 @api_router.post("/v1/notifications/test-push")
@@ -9941,6 +10482,8 @@ async def startup_checks():
     await db.class_access_issues.create_index("id", unique=True)
     await db.class_access_issues.create_index([("class_id", 1), ("student_id", 1), ("status", 1)])
     await db.class_access_issues.create_index([("teacher_id", 1), ("status", 1), ("updated_at", -1)])
+    await db.user_hidden_classes.create_index([("user_id", 1), ("class_id", 1)], unique=True)
+    await db.user_hidden_classes.create_index([("user_id", 1), ("created_at", -1)])
     await db.teacher_verifications.create_index("teacher_id", unique=True)
     await db.teacher_verifications.create_index([("status", 1), ("submitted_at", -1)])
     await db.teacher_verifications.create_index([("reviewed_by", 1), ("reviewed_at", -1)])

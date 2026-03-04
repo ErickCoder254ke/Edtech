@@ -101,6 +101,20 @@ class _ClassesScreenState extends State<ClassesScreen> {
       if (_statusFilter == 'reviews') {
         return input.where((c) => c.reviewCount > 0 && gradePass(c)).toList();
       }
+      if (_statusFilter == 'upcoming') {
+        return input
+            .where(
+              (c) =>
+                  !_isClassEnded(c) &&
+                  (c.status.toLowerCase() == 'scheduled' ||
+                      c.status.toLowerCase() == 'live') &&
+                  gradePass(c),
+            )
+            .toList();
+      }
+      if (_statusFilter == 'past') {
+        return input.where((c) => _isClassEnded(c) && gradePass(c)).toList();
+      }
       return input.where(gradePass).toList();
     }
 
@@ -135,7 +149,14 @@ class _ClassesScreenState extends State<ClassesScreen> {
         return allClasses.where((c) => c.reviewCount > 0).length;
       }
       if (status == 'upcoming') {
-        return allClasses.where((c) => !_isClassEnded(c)).length;
+        return allClasses
+            .where(
+              (c) =>
+                  !_isClassEnded(c) &&
+                  (c.status.toLowerCase() == 'scheduled' ||
+                      c.status.toLowerCase() == 'live'),
+            )
+            .length;
       }
       if (status == 'past') {
         return allClasses.where((c) => _isClassEnded(c)).length;
@@ -615,6 +636,49 @@ class _ClassesScreenState extends State<ClassesScreen> {
     }
   }
 
+  Future<void> _deletePastClassFromHistory(ClassSession session) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Remove Past Class'),
+        content: const Text('This class will be removed from your history view.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    setState(() => _busyClassIds.add(session.id));
+    try {
+      await _runWithAuthRetry(
+        (token) => widget.apiClient.deleteClassHistory(
+          accessToken: token,
+          classId: session.id,
+        ),
+      );
+      if (!mounted) return;
+      setState(() {
+        _allClasses = _allClasses.where((c) => c.id != session.id).toList();
+      });
+      _applyFiltersFromCache();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Class removed from history.')),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) setState(() => _busyClassIds.remove(session.id));
+    }
+  }
+
   Future<void> _reportAccessIssue(ClassSession session) async {
     bool cannotAccessNow = true;
     final issueController = TextEditingController();
@@ -889,6 +953,66 @@ class _ClassesScreenState extends State<ClassesScreen> {
     }
   }
 
+  Future<void> _viewTeacherReviews(ClassSession session) async {
+    setState(() => _busyClassIds.add(session.id));
+    try {
+      final reviews = await _runWithAuthRetry(
+        (token) => widget.apiClient.listTeacherReviews(
+          accessToken: token,
+          teacherId: session.teacherId,
+          limit: 300,
+        ),
+      );
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('Teacher Reviews - ${session.teacherName}'),
+          content: SizedBox(
+            width: 420,
+            child: reviews.isEmpty
+                ? const Text('No reviews yet.')
+                : ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: reviews.length,
+                    separatorBuilder: (_, __) => const Divider(height: 16),
+                    itemBuilder: (_, i) {
+                      final r = reviews[i];
+                      final who = (r.studentName ?? '').trim().isNotEmpty
+                          ? r.studentName!.trim()
+                          : 'Student ${r.studentId.substring(0, r.studentId.length >= 6 ? 6 : r.studentId.length)}';
+                      final stars = '★' * r.rating + '☆' * (5 - r.rating);
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('$stars  $who', style: const TextStyle(fontWeight: FontWeight.w700)),
+                          if ((r.comment ?? '').trim().isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(r.comment!.trim(), style: const TextStyle(color: AppColors.textMuted)),
+                          ],
+                          const SizedBox(height: 4),
+                          Text(_fmt(r.createdAt), style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                        ],
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) setState(() => _busyClassIds.remove(session.id));
+    }
+  }
+
   String _fmt(DateTime dt) {
     final l = dt.toLocal();
     final y = l.year.toString().padLeft(4, '0');
@@ -1098,6 +1222,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
             child: RefreshIndicator(
               onRefresh: _loadClasses,
               child: ListView(
+                cacheExtent: 1400,
                 padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
                 children: [
                   if (_isTeacher) _buildCreateCard(),
@@ -1186,7 +1311,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
                                 : 'Upcoming classes will appear here.'),
                     )
                   else
-                    ..._classes.map((session) => _buildClassTile(session)),
+                    ..._classes.map((session) => RepaintBoundary(child: _buildClassTile(session))),
                 ],
               ),
             ),
@@ -1398,9 +1523,13 @@ class _ClassesScreenState extends State<ClassesScreen> {
                 _MiniMeta(text: 'Joins ${session.joinCount}'),
                 const SizedBox(width: 8),
                 _MiniMeta(
-                  text: session.averageRating == null
-                      ? 'No rating'
-                      : 'Rating ${session.averageRating} (${session.reviewCount})',
+                  text: _isTeacher
+                      ? (session.averageRating == null
+                            ? 'No class rating'
+                            : 'Class rating ${session.averageRating} (${session.reviewCount})')
+                      : (session.teacherAverageRating == null
+                            ? 'Teacher unrated'
+                            : 'Teacher ${session.teacherAverageRating} (${session.teacherReviewCount})'),
                 ),
                 if (_isTeacher) ...[
                   const SizedBox(width: 8),
@@ -1479,7 +1608,34 @@ class _ClassesScreenState extends State<ClassesScreen> {
                   ),
                 ],
               ),
+              if (_statusFilter == 'past' && ended) ...[
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: busy ? null : () => _deletePastClassFromHistory(session),
+                    icon: const Icon(Icons.delete_outline_rounded),
+                    label: const Text('Remove From Past'),
+                  ),
+                ),
+              ],
             ] else ...[
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: busy ? null : () => _viewTeacherReviews(session),
+                      icon: const Icon(Icons.reviews_outlined),
+                      label: Text(
+                        session.teacherReviewCount > 0
+                            ? 'View Reviews (${session.teacherReviewCount})'
+                            : 'View Reviews',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
               if (ended)
                 Container(
                   width: double.infinity,
@@ -1551,6 +1707,17 @@ class _ClassesScreenState extends State<ClassesScreen> {
                   ],
                 ],
               ),
+              if (_statusFilter == 'past' && ended && session.joined) ...[
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: busy ? null : () => _deletePastClassFromHistory(session),
+                    icon: const Icon(Icons.delete_outline_rounded),
+                    label: const Text('Remove From Past'),
+                  ),
+                ),
+              ],
             ],
           ],
         ),

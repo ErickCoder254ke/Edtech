@@ -732,6 +732,25 @@ class ApiClient {
         .toList();
   }
 
+  Future<List<ClassReview>> listTeacherReviews({
+    required String accessToken,
+    required String teacherId,
+    int limit = 200,
+  }) async {
+    final response = await _sendRequest(
+      () => http
+          .get(
+            _uri('/v1/teachers/$teacherId/reviews?limit=$limit'),
+            headers: _jsonHeaders(accessToken: accessToken),
+          )
+          .timeout(_requestTimeout),
+    );
+    final data = _parseJson(response) as List<dynamic>;
+    return data
+        .map((item) => ClassReview.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
   Future<List<NotificationItem>> listNotifications({
     required String accessToken,
     int limit = 60,
@@ -1057,6 +1076,34 @@ class ApiClient {
       () => http
           .post(
             _uri('/v1/notifications/$notificationId/read'),
+            headers: _jsonHeaders(accessToken: accessToken),
+          )
+          .timeout(_requestTimeout),
+    );
+  }
+
+  Future<void> deleteNotification({
+    required String accessToken,
+    required String notificationId,
+  }) async {
+    await _sendRequest(
+      () => http
+          .delete(
+            _uri('/v1/notifications/$notificationId'),
+            headers: _jsonHeaders(accessToken: accessToken),
+          )
+          .timeout(_requestTimeout),
+    );
+  }
+
+  Future<void> deleteClassHistory({
+    required String accessToken,
+    required String classId,
+  }) async {
+    await _sendRequest(
+      () => http
+          .delete(
+            _uri('/v1/classes/$classId/history'),
             headers: _jsonHeaders(accessToken: accessToken),
           )
           .timeout(_requestTimeout),

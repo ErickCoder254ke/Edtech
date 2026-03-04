@@ -344,6 +344,8 @@ class ClassSession {
     required this.studentReviewed,
     this.averageRating,
     required this.reviewCount,
+    this.teacherAverageRating,
+    required this.teacherReviewCount,
     required this.openAccessIssueCount,
     this.topicSuggestionId,
   });
@@ -370,6 +372,8 @@ class ClassSession {
   final bool studentReviewed;
   final double? averageRating;
   final int reviewCount;
+  final double? teacherAverageRating;
+  final int teacherReviewCount;
   final int openAccessIssueCount;
   final String? topicSuggestionId;
 
@@ -404,6 +408,8 @@ class ClassSession {
       studentReviewed: json['student_reviewed'] as bool? ?? false,
       averageRating: (json['average_rating'] as num?)?.toDouble(),
       reviewCount: (json['review_count'] as num?)?.toInt() ?? 0,
+      teacherAverageRating: (json['teacher_average_rating'] as num?)?.toDouble(),
+      teacherReviewCount: (json['teacher_review_count'] as num?)?.toInt() ?? 0,
       openAccessIssueCount: (json['open_access_issue_count'] as num?)?.toInt() ?? 0,
       topicSuggestionId: json['topic_suggestion_id'] as String?,
     );

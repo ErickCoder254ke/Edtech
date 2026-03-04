@@ -388,6 +388,9 @@ async def _send_quota_exhausted_nudge_impl(user_id: str, quota_type: str) -> Non
         generation_used = int(entitlement.get("generation_used", 0))
         generation_limit = int(entitlement.get("generation_limit", 0))
         generation_remaining = int(entitlement.get("generation_remaining", 0))
+        task_limit = int(entitlement.get("task_limit", 0) or 0)
+        task_used = int(entitlement.get("task_used", 0) or 0)
+        task_remaining = int(entitlement.get("task_remaining", 0) or 0)
         exam_limit = entitlement.get("exam_limit")
         exam_used = int(entitlement.get("exam_used") or 0) if exam_limit is not None else None
         exam_remaining = int(entitlement.get("exam_remaining") or 0) if exam_limit is not None else None
@@ -398,6 +401,11 @@ async def _send_quota_exhausted_nudge_impl(user_id: str, quota_type: str) -> Non
                 f"Exam quota: <strong>{exam_used or 0}/{int(exam_limit or 0)}</strong> used "
                 f"(remaining: <strong>{exam_remaining or 0}</strong>)."
             )
+            if task_limit > 0:
+                quota_line += (
+                    f" Task quota: <strong>{task_used}/{task_limit}</strong> used "
+                    f"(remaining: <strong>{task_remaining}</strong>)."
+                )
             action_line = (
                 f"Upgrade or renew your plan to continue generating exams without interruption "
                 f"(Monthly starts at KES {monthly_price})."
@@ -408,6 +416,16 @@ async def _send_quota_exhausted_nudge_impl(user_id: str, quota_type: str) -> Non
                 f"Generation quota: <strong>{generation_used}/{generation_limit}</strong> used "
                 f"(remaining: <strong>{generation_remaining}</strong>)."
             )
+            if task_limit > 0:
+                quota_line += (
+                    f" Task quota: <strong>{task_used}/{task_limit}</strong> used "
+                    f"(remaining: <strong>{task_remaining}</strong>)."
+                )
+            if exam_limit is not None:
+                quota_line += (
+                    f" Exam quota: <strong>{exam_used or 0}/{int(exam_limit or 0)}</strong> used "
+                    f"(remaining: <strong>{exam_remaining or 0}</strong>)."
+                )
             action_line = (
                 f"Upgrade to continue creating new outputs right away "
                 f"(Monthly starts at KES {monthly_price})."
@@ -442,10 +460,11 @@ async def _send_quota_exhausted_nudge_impl(user_id: str, quota_type: str) -> Non
             upsert=True,
         )
         logger.info(
-            "engagement_email_sent type=%s_quota_exhausted user_id=%s remaining_generation=%s remaining_exam=%s",
+            "engagement_email_sent type=%s_quota_exhausted user_id=%s remaining_generation=%s remaining_task=%s remaining_exam=%s",
             normalized_type,
             user_id,
             generation_remaining,
+            task_remaining,
             exam_remaining,
         )
     except Exception:
@@ -771,6 +790,9 @@ async def _build_retention_email_payload(target: Dict[str, Any]) -> Dict[str, An
     generation_used = int(entitlement.get("generation_used", 0))
     generation_limit = int(entitlement.get("generation_limit", 0))
     generation_remaining = int(entitlement.get("generation_remaining", 0))
+    task_limit = int(entitlement.get("task_limit", 0) or 0)
+    task_used = int(entitlement.get("task_used", 0) or 0)
+    task_remaining = int(entitlement.get("task_remaining", 0) or 0)
     exam_limit = entitlement.get("exam_limit")
     exam_used = entitlement.get("exam_used")
     exam_remaining = entitlement.get("exam_remaining")
@@ -795,6 +817,12 @@ async def _build_retention_email_payload(target: Dict[str, Any]) -> Dict[str, An
         exam_line = (
             f"<li><strong>Exam quota:</strong> {int(exam_used or 0)} used / {int(exam_limit)} total "
             f"(remaining: {int(exam_remaining or 0)})</li>"
+        )
+    task_line = ""
+    if task_limit > 0:
+        task_line = (
+            f"<li><strong>Task quota:</strong> {task_used} used / {task_limit} total "
+            f"(remaining: {task_remaining})</li>"
         )
 
     subject = f"Exam OS Retention Insight: {headline}"
@@ -844,6 +872,7 @@ async def _build_retention_email_payload(target: Dict[str, Any]) -> Dict[str, An
         f"<li><strong>Plan:</strong> {plan_name}</li>"
         f"<li><strong>Generations:</strong> {generation_used} used / {generation_limit} total "
         f"(remaining: {generation_remaining})</li>"
+        f"{task_line}"
         f"{exam_line}"
         "</ul>"
         f"<p><strong>Document availability:</strong> {availability_line}</p>"

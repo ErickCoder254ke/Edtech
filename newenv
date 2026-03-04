@@ -39,6 +39,16 @@ MPESA_CALLBACK_SECRET_QUERY_PARAM=token
 MPESA_CALLBACK_SECRET_HEADER=x-callback-token
 
 # --------------------------
+# Generation Queue Expiry
+# --------------------------
+# Maximum time (seconds) a generation job can stay queued before backend auto-expires it.
+# If exceeded, job is marked failed with queue_timeout and user is prompted to retry.
+GENERATION_JOB_QUEUE_TIMEOUT_SECONDS=300
+
+# Admin alert threshold (minutes) for stuck queued/processing jobs in monitoring panel.
+ALERT_QUEUED_JOB_MAX_AGE_MINUTES=10
+
+# --------------------------
 # Class Access Issue Reporting
 # --------------------------
 # Per-student rate limit for reporting class access issues.

@@ -9,6 +9,7 @@ from pymongo import ReturnDocument
 from task_queue import celery_app
 from tasks._async_runner import run_async
 from server import (
+    GENERATION_JOB_QUEUE_TIMEOUT_SECONDS,
     GenerationRequest,
     db,
     increment_usage_counter,
@@ -63,6 +64,51 @@ async def _process_generation_job_impl(self, job_id: str) -> dict:
     request_payload = processing_job.get("request") or {}
     generation_type = processing_job.get("type", "unknown")
     result_reference = processing_job.get("result_reference") or job_id
+    created_at_raw = str(processing_job.get("created_at") or "").strip()
+    timeout_seconds = max(30, int(GENERATION_JOB_QUEUE_TIMEOUT_SECONDS))
+    if created_at_raw:
+        created_at: datetime | None = None
+        try:
+            created_at = datetime.fromisoformat(created_at_raw)
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+        except Exception:
+            created_at = None
+        if created_at is not None:
+            queue_age = (datetime.now(timezone.utc) - created_at).total_seconds()
+            if queue_age > timeout_seconds:
+                error_text = (
+                    f"Queue expired after {timeout_seconds} seconds before processing. "
+                    "Please retry generation."
+                )
+                now_iso = datetime.now(timezone.utc).isoformat()
+                await db.generation_jobs.update_one(
+                    {"job_id": job_id},
+                    {
+                        "$set": {
+                            "status": "failed",
+                            "progress": 100,
+                            "completed_at": now_iso,
+                            "expired_at": now_iso,
+                            "expired_reason": "queue_timeout",
+                            "error": error_text,
+                        }
+                    },
+                )
+                send_generation_status_notification.delay(
+                    user_id=user_id,
+                    job_id=job_id,
+                    status="failed",
+                    message=error_text,
+                )
+                logger.warning(
+                    "generation_job_expired_before_processing user_id=%s job_id=%s queue_age_seconds=%.2f timeout_seconds=%s",
+                    user_id,
+                    job_id,
+                    queue_age,
+                    timeout_seconds,
+                )
+                return {"job_id": job_id, "status": "failed", "reason": "queue_timeout"}
     logger.info(
         "generation_job_processing_start user_id=%s job_id=%s type=%s attempt=%s",
         user_id,
