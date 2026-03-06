@@ -4569,6 +4569,7 @@ async def _generate_with_openai_style_provider(
         raise HTTPException(status_code=502, detail=f"{provider_label} API key is not configured")
     last_error: Optional[Exception] = None
     saw_rate_limit = False
+    last_http_error_detail: Optional[str] = None
     for attempt in range(1, max_attempts + 1):
         try:
             logger.info(
@@ -4620,6 +4621,10 @@ async def _generate_with_openai_style_provider(
         except httpx.HTTPStatusError as e:
             last_error = e
             status = e.response.status_code if e.response is not None else 0
+            if e.response is not None:
+                body_text = e.response.text.strip()
+                if body_text:
+                    last_http_error_detail = body_text[:500]
             logger.warning("%s generation attempt %s/%s failed: %s", provider_label, attempt, max_attempts, e)
             if status == 429:
                 saw_rate_limit = True
@@ -4650,6 +4655,11 @@ async def _generate_with_openai_style_provider(
         raise HTTPException(
             status_code=429,
             detail=f"{provider_label} generation rate limit reached",
+        )
+    if last_http_error_detail:
+        raise HTTPException(
+            status_code=502,
+            detail=f"{provider_label} generation failed after retries: {last_http_error_detail}",
         )
     raise HTTPException(
         status_code=502,
@@ -4991,7 +5001,7 @@ async def _generate_with_llm_internal(
                     timeout_seconds=60.0,
                     max_attempts=3,
                     max_tokens=_openai_max_tokens_for_generation(generation_type),
-                    force_json_object=True,
+                    force_json_object=False,
                 )
             if provider == "nvidia":
                 return await _generate_with_nvidia(prompt, system_message, generation_type)
@@ -5048,6 +5058,7 @@ async def repair_json_with_llm(raw_text: str, generation_type: str) -> Dict[str,
             timeout_seconds=45.0,
             max_attempts=2,
             max_tokens=1800,
+            force_json_object=False,
         )
     elif _is_llm_provider_configured("openai"):
         repaired_text = await _generate_with_openai_style_provider(
