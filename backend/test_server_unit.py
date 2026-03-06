@@ -130,6 +130,11 @@ class TestServerGuards(unittest.TestCase):
         prompt = server.build_prompt(req, context="sample context")
         self.assertIn("Return ONLY valid JSON", prompt)
         self.assertIn("Ensure total marks equals 50", prompt)
+        self.assertIn("SECTION A", prompt)
+        self.assertIn("SECTION B", prompt)
+        self.assertIn("SECTION C", prompt)
+        self.assertIn("candidate_details", prompt)
+        self.assertIn("at least 20 total questions", prompt)
 
     def test_build_prompt_mentions_paper_two_when_requested(self):
         req = server.GenerationRequest(
@@ -173,6 +178,63 @@ class TestServerGuards(unittest.TestCase):
         first = normalized["sections"][0]["questions"][0]
         self.assertEqual(first["type"], "practical")
         self.assertTrue(str(first["mark_scheme"]).strip())
+
+    def test_exam_quality_requires_kenyan_three_section_blueprint(self):
+        req = server.GenerationRequest(
+            document_ids=["d1"],
+            generation_type="exam",
+            marks=60,
+            num_questions=20,
+        )
+        payload = {
+            "school_name": "Sample School",
+            "exam_title": "Sample",
+            "subject": "Science",
+            "class_level": "Grade 6",
+            "total_marks": 60,
+            "time_allowed": "1h 30m",
+            "instructions": ["Answer questions."],
+            "sections": [
+                {
+                    "section_name": "Only Section",
+                    "questions": [
+                        {"question_number": str(i + 1), "question_text": f"Question {i+1}?", "marks": 3, "type": "structured", "mark_scheme": "points"}
+                        for i in range(12)
+                    ],
+                }
+            ],
+        }
+        with self.assertRaises(HTTPException) as ctx:
+            server.enforce_assessment_output_quality("exam", payload, request=req)
+        self.assertEqual(ctx.exception.status_code, 502)
+        self.assertIn("Kenyan section blueprint", str(ctx.exception.detail))
+
+    def test_exam_quality_adds_candidate_details_and_instruction_defaults(self):
+        req = server.GenerationRequest(
+            document_ids=["d1"],
+            generation_type="exam",
+            marks=50,
+            num_questions=20,
+        )
+        payload = {
+            "school_name": "Sample School",
+            "exam_title": "End Term Exam",
+            "subject": "Mathematics",
+            "class_level": "Grade 7",
+            "total_marks": 50,
+            "time_allowed": "2 hours",
+            "instructions": ["Write your name."],
+            "sections": [
+                {"section_name": "SECTION A", "questions": [{"question_number": str(i + 1), "question_text": f"Short question {i+1}?", "marks": 1, "type": "mcq", "options": ["A", "B", "C", "D"], "mark_scheme": "correct answer"} for i in range(10)]},
+                {"section_name": "SECTION B", "questions": [{"question_number": str(i + 1), "question_text": f"Structured question {i+1}?", "marks": 4, "type": "structured", "sub_questions": ["(a) One", "(b) Two"], "mark_scheme": "points"} for i in range(5)]},
+                {"section_name": "SECTION C", "questions": [{"question_number": str(i + 1), "question_text": f"Essay question {i+1}?", "marks": 10, "type": "essay", "mark_scheme": "points"} for i in range(2)]},
+            ],
+        }
+        normalized = server.enforce_assessment_output_quality("exam", payload, request=req)
+        self.assertEqual(len(normalized["sections"]), 3)
+        self.assertGreaterEqual(len(normalized["instructions"]), 4)
+        self.assertIn("candidate_details", normalized)
+        self.assertIn("admission_number", normalized["candidate_details"])
 
     def test_build_prompt_mentions_paper_three_when_requested(self):
         req = server.GenerationRequest(

@@ -1137,6 +1137,13 @@ class QuizOutput(BaseModel):
     quiz: List[QuizQuestion]
 
 
+class CandidateDetails(BaseModel):
+    name: str
+    admission_number: str
+    school: str
+    date: str
+
+
 class ExamQuestion(BaseModel):
     question_number: str
     question_text: str
@@ -1157,8 +1164,10 @@ class ExamOutput(BaseModel):
     exam_title: str
     subject: Optional[str] = None
     class_level: Optional[str] = None
+    term: Optional[str] = None
     total_marks: int
     time_allowed: str
+    candidate_details: Optional[CandidateDetails] = None
     instructions: List[str]
     sections: List[ExamSection]
 
@@ -4005,6 +4014,141 @@ def _default_exam_mark_scheme(
     return f"Award marks for correct and relevant points for: {prompt_text}."
 
 
+def _exam_target_question_count(
+    total_marks: int,
+    requested_questions: int,
+    paper_variant: Optional[str],
+) -> int:
+    target = max(20, int(requested_questions or 0))
+    if target <= 0:
+        if total_marks >= 100:
+            target = 24
+        elif total_marks >= 80:
+            target = 22
+        else:
+            target = 20
+    if paper_variant == "paper_3":
+        target = max(18, target)
+    return target
+
+
+def _default_candidate_details() -> Dict[str, str]:
+    return {
+        "name": "____________________________",
+        "admission_number": "____________________________",
+        "school": "____________________________",
+        "date": "____________________________",
+    }
+
+
+def _default_exam_instructions() -> List[str]:
+    return [
+        "Write your name clearly in the spaces provided.",
+        "Answer all questions in Section A.",
+        "Answer all questions in Section B unless instructed otherwise.",
+        "Answer the required questions in Section C.",
+        "Show all working where necessary.",
+        "Use blue or black ink only.",
+    ]
+
+
+def _normalize_exam_term(term: Optional[str], additional_instructions: Optional[str]) -> str:
+    merged = " ".join([str(term or "").strip(), str(additional_instructions or "").strip()]).lower()
+    if "midterm" in merged or "mid-term" in merged or "mid term" in merged:
+        return "Midterm"
+    if "endterm" in merged or "end-term" in merged or "end term" in merged:
+        return "Endterm"
+    return "Opener"
+
+
+def _section_blueprint_counts(total_questions: int) -> Dict[str, int]:
+    total = max(20, total_questions)
+    section_c = min(4, max(2, round(total * 0.15)))
+    section_b = min(8, max(5, round(total * 0.28)))
+    section_a = total - section_b - section_c
+    if section_a < 10:
+        deficit = 10 - section_a
+        reduce_from_b = min(deficit, max(0, section_b - 5))
+        section_b -= reduce_from_b
+        deficit -= reduce_from_b
+        if deficit > 0:
+            reduce_from_c = min(deficit, max(0, section_c - 2))
+            section_c -= reduce_from_c
+            deficit -= reduce_from_c
+        section_a = total - section_b - section_c
+    return {"section_a": section_a, "section_b": section_b, "section_c": section_c}
+
+
+def _classify_exam_question_bucket(question: Dict[str, Any]) -> str:
+    q_type = str(question.get("type") or "").strip().lower()
+    marks = int(question.get("marks", 0) or 0)
+    sub_questions = question.get("sub_questions")
+    has_sub_questions = isinstance(sub_questions, list) and any(str(item).strip() for item in sub_questions)
+    text = str(question.get("question_text") or "").strip().lower()
+    if q_type == "essay" or marks >= 8:
+        return "section_c"
+    if q_type == "structured" or q_type == "practical" or has_sub_questions or re.search(r"\(\s*[a-c]\s*\)", text):
+        if marks >= 3:
+            return "section_b"
+    if q_type == "mcq" or marks <= 2:
+        return "section_a"
+    if marks >= 6:
+        return "section_c"
+    return "section_b"
+
+
+def _rebalance_exam_sections(
+    questions: List[Dict[str, Any]],
+    total_questions: int,
+) -> List[Dict[str, Any]]:
+    targets = _section_blueprint_counts(total_questions)
+    buckets: Dict[str, List[Dict[str, Any]]] = {"section_a": [], "section_b": [], "section_c": []}
+    for question in questions:
+        bucket = _classify_exam_question_bucket(question)
+        buckets[bucket].append(question)
+
+    def _move(source: str, target: str) -> None:
+        if buckets[source]:
+            buckets[target].append(buckets[source].pop())
+
+    while len(buckets["section_a"]) < targets["section_a"]:
+        if len(buckets["section_b"]) > targets["section_b"]:
+            _move("section_b", "section_a")
+        elif len(buckets["section_c"]) > targets["section_c"]:
+            _move("section_c", "section_a")
+        else:
+            break
+    while len(buckets["section_b"]) < targets["section_b"]:
+        if len(buckets["section_c"]) > targets["section_c"]:
+            _move("section_c", "section_b")
+        elif len(buckets["section_a"]) > targets["section_a"]:
+            _move("section_a", "section_b")
+        else:
+            break
+    while len(buckets["section_c"]) < targets["section_c"]:
+        if len(buckets["section_b"]) > targets["section_b"]:
+            _move("section_b", "section_c")
+        elif len(buckets["section_a"]) > targets["section_a"]:
+            _move("section_a", "section_c")
+        else:
+            break
+
+    return [
+        {
+            "section_name": "SECTION A",
+            "questions": buckets["section_a"],
+        },
+        {
+            "section_name": "SECTION B",
+            "questions": buckets["section_b"],
+        },
+        {
+            "section_name": "SECTION C",
+            "questions": buckets["section_c"],
+        },
+    ]
+
+
 def _infer_exam_paper_variant(additional_instructions: Optional[str], topic: Optional[str]) -> Optional[str]:
     text = " ".join(
         [
@@ -4146,8 +4290,6 @@ def enforce_assessment_output_quality(
             (request.topic if request else None),
         )
 
-        normalized_sections: List[Dict[str, Any]] = []
-        total_questions = 0
         all_questions_flat: List[Dict[str, Any]] = []
         for section in sections:
             if not isinstance(section, dict):
@@ -4155,7 +4297,6 @@ def enforce_assessment_output_quality(
             questions = section.get("questions")
             if not isinstance(questions, list):
                 continue
-            normalized_questions: List[Dict[str, Any]] = []
             for question in questions:
                 if not isinstance(question, dict):
                     continue
@@ -4193,58 +4334,61 @@ def enforce_assessment_output_quality(
                             else None
                         ),
                     )
-                normalized_questions.append(normalized_question)
                 all_questions_flat.append(normalized_question)
-            if not normalized_questions:
-                continue
-            total_questions += len(normalized_questions)
-            normalized_section = dict(section)
-            normalized_section["questions"] = normalized_questions
-            normalized_sections.append(normalized_section)
+        total_questions = len(all_questions_flat)
         if total_questions <= 0:
             raise HTTPException(status_code=502, detail="Exam output did not include valid questions.")
 
-        minimum_questions = 4
-        if target_total_marks >= 100:
-            minimum_questions = 10
-        elif target_total_marks >= 80:
-            minimum_questions = 8
-        elif target_total_marks >= 50:
-            minimum_questions = 6
-        if inferred_variant == "paper_3":
-            minimum_questions = max(3, min(minimum_questions, 6))
-        if inferred_variant == "paper_2":
-            minimum_questions = max(4, minimum_questions - 2)
-        if request is not None and int(request.num_questions or 0) > 0:
-            minimum_questions = max(minimum_questions, int(request.num_questions or 0))
+        minimum_questions = _exam_target_question_count(
+            target_total_marks,
+            int(request.num_questions or 0) if request else 0,
+            inferred_variant,
+        )
         if total_questions < minimum_questions:
             raise HTTPException(
                 status_code=502,
                 detail=(
-                    "Generated exam is incomplete for the requested structure. "
-                    "Please retry."
+                    "Generated exam is incomplete for the requested Kenyan exam structure. "
+                    f"Expected at least {minimum_questions} total questions but got {total_questions}."
                 ),
             )
 
-        # Renumber per section and normalize section names for paper conventions.
-        for sec_idx, section in enumerate(normalized_sections, start=1):
-            if inferred_variant == "paper_1" and sec_idx == 1:
-                section["section_name"] = "SECTION A"
-            elif inferred_variant == "paper_1" and sec_idx == 2:
-                section["section_name"] = "SECTION B"
-            elif inferred_variant == "paper_2" and subject_code in {"HIS", "GEO", "ENG", "BUS", "CRE", "AGRI"}:
-                if sec_idx == 1:
-                    section["section_name"] = "SECTION A"
-                elif sec_idx == 2:
-                    section["section_name"] = "SECTION B"
-                elif sec_idx == 3:
-                    section["section_name"] = "SECTION C"
-            elif inferred_variant == "paper_2" and not str(section.get("section_name") or "").strip():
-                section["section_name"] = f"TASK {sec_idx}"
-            elif inferred_variant == "paper_3":
-                section["section_name"] = f"TASK {sec_idx}"
+        normalized_sections = _rebalance_exam_sections(all_questions_flat, total_questions)
+
+        section_a_count = len(normalized_sections[0]["questions"])
+        section_b_count = len(normalized_sections[1]["questions"])
+        section_c_count = len(normalized_sections[2]["questions"])
+        if section_a_count < 10 or section_b_count < 5 or section_c_count < 2:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Generated exam failed Kenyan section blueprint validation. "
+                    f"Counts were A={section_a_count}, B={section_b_count}, C={section_c_count}."
+                ),
+            )
+
+        for sec_idx, section in enumerate(normalized_sections):
             for q_idx, question in enumerate(section.get("questions", []), start=1):
                 question["question_number"] = str(q_idx)
+                if sec_idx == 0:
+                    question["marks"] = 1 if int(question.get("marks", 1) or 1) <= 1 else 2
+                    if question.get("type") not in {"mcq", "structured"}:
+                        question["type"] = "structured"
+                    question.pop("sub_questions", None)
+                elif sec_idx == 1:
+                    question["type"] = "structured" if question.get("type") != "practical" else "practical"
+                    sub_questions = question.get("sub_questions")
+                    if not isinstance(sub_questions, list) or len([s for s in sub_questions if str(s).strip()]) < 2:
+                        question["sub_questions"] = [
+                            "(a) State or identify the required point.",
+                            "(b) Explain or apply the concept.",
+                            "(c) Give a relevant example or conclusion.",
+                        ]
+                    question.pop("options", None)
+                else:
+                    if question.get("type") not in {"essay", "practical"}:
+                        question["type"] = "essay"
+                    question.pop("options", None)
 
         # Reconcile marks so totals are consistent and predictable.
         computed_total = int(sum(max(1, int(q.get("marks", 1) or 1)) for q in all_questions_flat))
@@ -4266,6 +4410,30 @@ def enforce_assessment_output_quality(
                 cursor = (cursor - 1) % len(all_questions_flat)
                 guard += 1
         payload["total_marks"] = int(sum(max(1, int(q.get("marks", 1) or 1)) for q in all_questions_flat))
+        payload["term"] = _normalize_exam_term(payload.get("term"), request.additional_instructions if request else None)
+        payload["candidate_details"] = payload.get("candidate_details") or _default_candidate_details()
+        if not isinstance(payload["candidate_details"], dict):
+            payload["candidate_details"] = _default_candidate_details()
+        else:
+            payload["candidate_details"] = {
+                "name": str(payload["candidate_details"].get("name") or _default_candidate_details()["name"]),
+                "admission_number": str(
+                    payload["candidate_details"].get("admission_number")
+                    or _default_candidate_details()["admission_number"]
+                ),
+                "school": str(payload["candidate_details"].get("school") or _default_candidate_details()["school"]),
+                "date": str(payload["candidate_details"].get("date") or _default_candidate_details()["date"]),
+            }
+        payload["instructions"] = [
+            str(item).strip()
+            for item in (payload.get("instructions") if isinstance(payload.get("instructions"), list) else [])
+            if str(item).strip()
+        ] or _default_exam_instructions()
+        if len(payload["instructions"]) < 4:
+            merged = payload["instructions"] + [line for line in _default_exam_instructions() if line not in payload["instructions"]]
+            payload["instructions"] = merged[:6]
+        elif len(payload["instructions"]) > 6:
+            payload["instructions"] = payload["instructions"][:6]
         payload["sections"] = normalized_sections
         return payload
 
@@ -4391,8 +4559,10 @@ def coerce_generation_payload(
             "exam_title": "Exam",
             "subject": "",
             "class_level": "",
+            "term": "Opener",
             "total_marks": request.marks or 100,
             "time_allowed": "",
+            "candidate_details": _default_candidate_details(),
             "instructions": [],
             "sections": payload,
         }
@@ -6833,18 +7003,13 @@ Rules:
             q_types = [q for q in q_types if q.lower() != "essay"]
         if not q_types:
             q_types = ["structured"]
-        target_questions = int(request.num_questions or 0)
-        if target_questions <= 0:
-            if total_marks >= 100:
-                target_questions = 10
-            elif total_marks >= 80:
-                target_questions = 8
-            elif total_marks >= 50:
-                target_questions = 6
-            else:
-                target_questions = 4
-        if paper_variant == "paper_3":
-            target_questions = max(3, min(target_questions, 6))
+        target_questions = _exam_target_question_count(
+            total_marks=total_marks,
+            requested_questions=int(request.num_questions or 0),
+            paper_variant=paper_variant,
+        )
+        section_counts = _section_blueprint_counts(target_questions)
+        term = _normalize_exam_term(None, request.additional_instructions)
         paper_blueprint = (
             "Paper variant: general."
             if not paper_variant
@@ -6874,6 +7039,8 @@ Difficulty: {request.difficulty}
 Total marks: {total_marks}
 Target number of questions/tasks: {target_questions}
 Question types: {", ".join(q_types)}
+Curriculum alignment: Kenyan CBC.
+Term: {term}
 {paper_blueprint}
 {f'Additional instructions: {instruction_text}' if instruction_text else ''}
 Coursework Material:
@@ -6884,20 +7051,52 @@ Provide JSON:
   "exam_title":"...",
   "subject":"...",
   "class_level":"...",
+  "term":"{term}",
   "total_marks":{total_marks},
   "time_allowed":"...",
+  "candidate_details":{{
+    "name":"____________________________",
+    "admission_number":"____________________________",
+    "school":"____________________________",
+    "date":"____________________________"
+  }},
   "instructions":["..."],
   "sections":[
     {{
-      "section_name":"...",
+      "section_name":"SECTION A",
+      "questions":[
+        {{
+          "question_number":"1",
+          "question_text":"...",
+          "marks":1,
+          "type":"mcq|structured",
+          "options":["A","B","C","D"],
+          "mark_scheme":"..."
+        }}
+      ]
+    }},
+    {{
+      "section_name":"SECTION B",
+      "questions":[
+        {{
+          "question_number":"1",
+          "question_text":"...",
+          "marks":6,
+          "type":"structured",
+          "sub_questions":["(a) ...","(b) ...","(c) ..."],
+          "mark_scheme":"..."
+        }}
+      ]
+    }},
+    {{
+      "section_name":"SECTION C",
       "questions":[
         {{
           "question_number":"1",
           "question_text":"...",
           "marks":10,
-          "type":"mcq|structured|essay",
-          "options":["A","B","C","D"],
-          "sub_questions":["..."],
+          "type":"essay",
+          "sub_questions":["(a) ...","(b) ..."],
           "mark_scheme":"..."
         }}
       ]
@@ -6907,11 +7106,21 @@ Provide JSON:
 Rules:
 - Ensure total marks equals {total_marks}.
 - Follow additional instructions exactly.
-- Generate at least {target_questions} complete questions/tasks.
+- Generate EXACTLY three sections named SECTION A, SECTION B, and SECTION C.
+- Generate at least {target_questions} total questions/tasks across all sections.
+- SECTION A must contain {section_counts["section_a"]} short questions worth 1 or 2 marks each.
+- SECTION B must contain {section_counts["section_b"]} structured multi-part questions that use (a), (b), (c) style subparts.
+- SECTION C must contain {section_counts["section_c"]} long-answer, essay, or problem-solving questions.
+- Include a print-ready header with subject, class level, term, duration, and total marks.
+- Include candidate details placeholders for Name, Admission Number, School, and Date.
+- Include 4 to 6 candidate instructions written in natural school-exam language.
 - Every question must be an answerable assessment item, not a statement or revision note.
+- Use realistic Kenyan classroom or national-exam style wording where appropriate.
+- Make the paper progressively harder from Section A to Section C.
 - Question text must use interrogative wording or exam command verbs.
 - Every question MUST include a non-empty mark_scheme with clear expected answer points.
 - Do not leave any question without an answer key/marking guidance.
+- Self-check before finalizing: at least 20 total questions, all three section headers exist, and every question has a marking scheme. If any rule fails, regenerate the paper from scratch and return only the corrected JSON.
 {strict_json_clause}"""
 
     raise HTTPException(status_code=400, detail="Invalid generation type")
@@ -7068,6 +7277,70 @@ def apply_exam_constraints(
     return updated
 
 
+async def _parse_and_validate_generation_output(
+    request: GenerationRequest,
+    generated_text: str,
+) -> Dict[str, Any]:
+    try:
+        raw_content = coerce_generation_payload(
+            request,
+            parse_llm_json_output(generated_text),
+        )
+    except Exception as e:
+        logger.warning(
+            "generation_json_parse_failed type=%s error=%s; attempting llm json repair",
+            request.generation_type,
+            e,
+        )
+        try:
+            raw_content = coerce_generation_payload(
+                request,
+                await repair_json_with_llm(generated_text, request.generation_type),
+            )
+            logger.info(
+                "generation_json_repair_success type=%s",
+                request.generation_type,
+            )
+        except Exception as repair_exc:
+            logger.warning(
+                "generation_json_repair_failed type=%s parse_error=%s repair_error=%s",
+                request.generation_type,
+                e,
+                repair_exc,
+            )
+            raise HTTPException(
+                status_code=502,
+                detail="Generated content was malformed and could not be repaired. Please retry.",
+            )
+
+    if request.generation_type == "exam":
+        raw_content = apply_exam_constraints(raw_content, request.additional_instructions)
+    content = validate_structured_output(request.generation_type, raw_content)
+    content = validate_structured_output(
+        request.generation_type,
+        enforce_assessment_output_quality(request.generation_type, content, request=request),
+    )
+    return content
+
+
+def _build_exam_regeneration_prompt(base_prompt: str, validation_error: str) -> str:
+    return (
+        f"{base_prompt}\n\n"
+        "REGENERATION REQUIRED.\n"
+        f"The previous draft failed backend validation for this reason: {validation_error}\n"
+        "Generate a new exam from scratch that strictly satisfies all of these conditions:\n"
+        "- Exactly three sections named SECTION A, SECTION B, SECTION C.\n"
+        "- At least 20 total questions.\n"
+        "- SECTION A has 10-20 short questions worth 1 or 2 marks.\n"
+        "- SECTION B has 5-8 structured multi-part questions.\n"
+        "- SECTION C has 2-4 long-answer/problem-solving questions.\n"
+        "- Include candidate details placeholders.\n"
+        "- Include 4-6 candidate instructions.\n"
+        "- Every question must include a usable mark_scheme.\n"
+        "Return only corrected JSON."
+    )
+
+
 async def run_generation_pipeline(
     user_id: str,
     request: GenerationRequest,
@@ -7179,47 +7452,22 @@ async def run_generation_pipeline(
     )
 
     try:
-        raw_content = coerce_generation_payload(
-            request,
-            parse_llm_json_output(generated_text),
-        )
-    except Exception as e:
-        logger.warning(
-            "generation_json_parse_failed user_id=%s type=%s error=%s; attempting llm json repair",
-            user_id,
-            request.generation_type,
-            e,
-        )
-        try:
-            raw_content = coerce_generation_payload(
-                request,
-                await repair_json_with_llm(generated_text, request.generation_type),
-            )
-            logger.info(
-                "generation_json_repair_success user_id=%s type=%s",
-                user_id,
-                request.generation_type,
-            )
-        except Exception as repair_exc:
+        content = await _parse_and_validate_generation_output(request, generated_text)
+    except HTTPException as exc:
+        if request.generation_type == "exam" and exc.status_code == 502:
             logger.warning(
-                "generation_json_repair_failed user_id=%s type=%s parse_error=%s repair_error=%s",
+                "generation_exam_validation_retry user_id=%s detail=%s",
                 user_id,
-                request.generation_type,
-                e,
-                repair_exc,
+                exc.detail,
             )
-            raise HTTPException(
-                status_code=502,
-                detail="Generated content was malformed and could not be repaired. Please retry.",
+            regenerated_text = await generate_with_llm(
+                _build_exam_regeneration_prompt(prompt, str(exc.detail)),
+                system_msg,
+                generation_type=request.generation_type,
             )
-
-    if request.generation_type == "exam":
-        raw_content = apply_exam_constraints(raw_content, request.additional_instructions)
-    content = validate_structured_output(request.generation_type, raw_content)
-    content = validate_structured_output(
-        request.generation_type,
-        enforce_assessment_output_quality(request.generation_type, content, request=request),
-    )
+            content = await _parse_and_validate_generation_output(request, regenerated_text)
+        else:
+            raise
     logger.info(
         "generation_validation_success user_id=%s type=%s",
         user_id,
