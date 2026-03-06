@@ -50,6 +50,7 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY") or os.environ.get("EMERGENT_LLM_KEY")
+GROK_API_KEY = os.environ.get("GROK_API_KEY") or os.environ.get("XAI_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GEMINI_API_KEYS = [
     k.strip()
@@ -69,6 +70,8 @@ OPENAI_EMBEDDING_MODEL = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embeddin
 GEMINI_EMBEDDING_MODEL = os.environ.get("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
 GEMINI_EMBEDDING_DIMENSIONS = int(os.environ.get("GEMINI_EMBEDDING_DIMENSIONS", "1536"))
 OPENAI_CHAT_MODEL = os.environ.get("OPENAI_CHAT_MODEL", "gpt-4o")
+GROK_BASE_URL = os.environ.get("GROK_BASE_URL", "https://api.x.ai/v1").rstrip("/")
+GROK_CHAT_MODEL = os.environ.get("GROK_CHAT_MODEL", "grok-3-fast")
 GEMINI_CHAT_MODEL = os.environ.get("GEMINI_CHAT_MODEL", "gemini-2.0-flash")
 GEMINI_CHAT_MODELS = [
     m.strip()
@@ -4429,17 +4432,19 @@ def _is_llm_provider_configured(provider: str) -> bool:
         return bool(NVIDIA_API_KEY or any(v for v in NVIDIA_MODEL_KEYS.values()))
     if provider == "openai":
         return bool(OPENAI_API_KEY)
+    if provider == "grok":
+        return bool(GROK_API_KEY)
     return False
 
 
 def _resolve_llm_providers() -> List[str]:
-    if LLM_PROVIDER in {"openai", "gemini", "nvidia"}:
+    if LLM_PROVIDER in {"openai", "grok", "gemini", "nvidia"}:
         return [LLM_PROVIDER]
     if LLM_PROVIDER == "hybrid":
         configured = LLM_PROVIDERS or ["gemini", "nvidia"]
         deduped: List[str] = []
         for provider in configured:
-            if provider in {"openai", "gemini", "nvidia"} and provider not in deduped:
+            if provider in {"openai", "grok", "gemini", "nvidia"} and provider not in deduped:
                 deduped.append(provider)
         return deduped
     return []
@@ -4911,10 +4916,10 @@ async def _generate_with_llm_internal(
     if not providers:
         raise HTTPException(
             status_code=500,
-            detail="LLM_PROVIDER is invalid. Use openai, gemini, nvidia, or hybrid.",
+            detail="LLM_PROVIDER is invalid. Use openai, grok, gemini, nvidia, or hybrid.",
         )
     ordered_providers = await _provider_order_for_request(providers)
-    if (generation_type or "").strip().lower() == "exam" and LLM_EXAM_PROVIDER in {"openai", "gemini", "nvidia"}:
+    if (generation_type or "").strip().lower() == "exam" and LLM_EXAM_PROVIDER in {"openai", "grok", "gemini", "nvidia"}:
         if LLM_EXAM_PROVIDER in ordered_providers:
             ordered_providers = [LLM_EXAM_PROVIDER] + [p for p in ordered_providers if p != LLM_EXAM_PROVIDER]
         else:
@@ -4975,6 +4980,19 @@ async def _generate_with_llm_internal(
                     max_tokens=_openai_max_tokens_for_generation(generation_type),
                     force_json_object=True,
                 )
+            if provider == "grok":
+                return await _generate_with_openai_style_provider(
+                    endpoint_url=f"{GROK_BASE_URL}/chat/completions",
+                    api_key=GROK_API_KEY or "",
+                    model_name=GROK_CHAT_MODEL,
+                    provider_label="Grok",
+                    prompt=prompt,
+                    system_message=system_message,
+                    timeout_seconds=60.0,
+                    max_attempts=3,
+                    max_tokens=_openai_max_tokens_for_generation(generation_type),
+                    force_json_object=True,
+                )
             if provider == "nvidia":
                 return await _generate_with_nvidia(prompt, system_message, generation_type)
             failure_details.append(f"{provider}: unsupported provider")
@@ -5016,9 +5034,21 @@ async def repair_json_with_llm(raw_text: str, generation_type: str) -> Dict[str,
     )
     repair_system = "You are a strict JSON repair tool. Output only valid JSON."
     # JSON repair should be fast and deterministic; avoid round-robin routing.
-    # Prefer Gemini first when available, then OpenAI, and only then NVIDIA.
+    # Prefer Gemini first when available, then Grok/OpenAI, and only then NVIDIA.
     if _is_llm_provider_configured("gemini"):
         repaired_text = await _generate_with_gemini(repair_prompt, repair_system)
+    elif _is_llm_provider_configured("grok"):
+        repaired_text = await _generate_with_openai_style_provider(
+            endpoint_url=f"{GROK_BASE_URL}/chat/completions",
+            api_key=GROK_API_KEY or "",
+            model_name=GROK_CHAT_MODEL,
+            provider_label="Grok",
+            prompt=repair_prompt,
+            system_message=repair_system,
+            timeout_seconds=45.0,
+            max_attempts=2,
+            max_tokens=1800,
+        )
     elif _is_llm_provider_configured("openai"):
         repaired_text = await _generate_with_openai_style_provider(
             endpoint_url="https://api.openai.com/v1/chat/completions",
@@ -10002,6 +10032,8 @@ async def runtime_config():
         "llm_exam_provider": LLM_EXAM_PROVIDER,
         "openai_embedding_model": OPENAI_EMBEDDING_MODEL,
         "openai_chat_model": OPENAI_CHAT_MODEL,
+        "grok_base_url": GROK_BASE_URL,
+        "grok_chat_model": GROK_CHAT_MODEL,
         "nvidia_chat_model": NVIDIA_CHAT_MODEL,
         "nvidia_chat_models": _resolve_nvidia_models(),
         "nvidia_base_url": NVIDIA_BASE_URL,
@@ -10017,6 +10049,7 @@ async def runtime_config():
         "gemini_chat_models": GEMINI_CHAT_MODELS,
         "gemini_key_count": len(set([k for k in GEMINI_API_KEYS if k] + ([GEMINI_API_KEY] if GEMINI_API_KEY else []))),
         "has_openai_api_key": bool(OPENAI_API_KEY),
+        "has_grok_api_key": bool(GROK_API_KEY),
         "has_nvidia_api_key": bool(NVIDIA_API_KEY),
         "has_gemini_api_key": bool(GEMINI_API_KEY),
         "vector_index_name": VECTOR_INDEX_NAME,
@@ -10466,8 +10499,8 @@ async def startup_checks():
     global _EMAIL_SIGNATURE_BLOCK
     if EMBEDDING_PROVIDER not in {"openai", "gemini"}:
         raise RuntimeError("EMBEDDING_PROVIDER must be 'openai' or 'gemini'")
-    if LLM_PROVIDER not in {"openai", "gemini", "nvidia", "hybrid"}:
-        raise RuntimeError("LLM_PROVIDER must be 'openai', 'gemini', 'nvidia', or 'hybrid'")
+    if LLM_PROVIDER not in {"openai", "grok", "gemini", "nvidia", "hybrid"}:
+        raise RuntimeError("LLM_PROVIDER must be 'openai', 'grok', 'gemini', 'nvidia', or 'hybrid'")
     if TOPIC_DUPLICATE_SIMILARITY_THRESHOLD < 0 or TOPIC_DUPLICATE_SIMILARITY_THRESHOLD > 1:
         raise RuntimeError("TOPIC_DUPLICATE_SIMILARITY_THRESHOLD must be between 0 and 1")
     if TOPIC_VOTE_SPIKE_WINDOW_SECONDS <= 0 or TOPIC_VOTE_SPIKE_MAX <= 0:
@@ -10480,8 +10513,8 @@ async def startup_checks():
         raise RuntimeError("LOCALPRO_TIMEOUT_SECONDS must be greater than zero")
     if LLM_ROUTING_MODE not in {"round_robin", "priority"}:
         raise RuntimeError("LLM_ROUTING_MODE must be 'round_robin' or 'priority'")
-    if LLM_EXAM_PROVIDER and LLM_EXAM_PROVIDER not in {"openai", "gemini", "nvidia"}:
-        raise RuntimeError("LLM_EXAM_PROVIDER must be one of: openai, gemini, nvidia (or empty)")
+    if LLM_EXAM_PROVIDER and LLM_EXAM_PROVIDER not in {"openai", "grok", "gemini", "nvidia"}:
+        raise RuntimeError("LLM_EXAM_PROVIDER must be one of: openai, grok, gemini, nvidia (or empty)")
     if NVIDIA_MODEL_KEYS_PARSE_ERROR:
         raise RuntimeError(f"NVIDIA_MODEL_KEYS_JSON is invalid: {NVIDIA_MODEL_KEYS_PARSE_ERROR}")
 
@@ -10491,6 +10524,8 @@ async def startup_checks():
         raise RuntimeError("GEMINI_API_KEY or GEMINI_API_KEYS required for gemini embeddings")
     if LLM_PROVIDER == "openai" and not OPENAI_API_KEY:
         raise RuntimeError("OPENAI_API_KEY (or EMERGENT_LLM_KEY) required for openai LLM")
+    if LLM_PROVIDER == "grok" and not GROK_API_KEY:
+        raise RuntimeError("GROK_API_KEY (or XAI_API_KEY) required for grok LLM")
     if LLM_PROVIDER == "gemini" and not (GEMINI_API_KEY or GEMINI_API_KEYS):
         raise RuntimeError("GEMINI_API_KEY or GEMINI_API_KEYS required for gemini LLM")
     if LLM_PROVIDER == "nvidia" and not _is_llm_provider_configured("nvidia"):

@@ -58,6 +58,20 @@ GEMINI_EXAM_MAX_OUTPUT_TOKENS=3200
 GEMINI_QUIZ_MAX_OUTPUT_TOKENS=2000
 
 # --------------------------
+# Grok LLM Provider
+# --------------------------
+# xAI Grok uses an OpenAI-compatible chat completions API.
+GROK_API_KEY=
+GROK_BASE_URL=https://api.x.ai/v1
+GROK_CHAT_MODEL=grok-3-fast
+
+# To prioritize Grok for exams while keeping fallback providers:
+# LLM_PROVIDER=hybrid
+# LLM_PROVIDERS=grok,nvidia,gemini
+# LLM_ROUTING_MODE=priority
+# LLM_EXAM_PROVIDER=grok
+
+# --------------------------
 # Class Access Issue Reporting
 # --------------------------
 # Per-student rate limit for reporting class access issues.

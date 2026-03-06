@@ -852,6 +852,25 @@ class _ExamCard extends StatefulWidget {
 class _ExamCardState extends State<_ExamCard> {
   final Set<int> _expanded = <int>{};
 
+  Widget _metaPill(String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: AppColors.glassBorder),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontSize: 11,
+          color: AppColors.textMuted,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final content = widget.content;
@@ -893,27 +912,31 @@ class _ExamCardState extends State<_ExamCard> {
               if (subject.isNotEmpty || classLevel.isNotEmpty) ...[
                 const SizedBox(height: 6),
                 Center(
-                  child: Text(
-                    [
-                      if (classLevel.isNotEmpty) 'Class: $classLevel',
-                      if (subject.isNotEmpty) 'Subject: $subject',
-                    ].join('   |   '),
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: AppColors.textMuted),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    alignment: WrapAlignment.center,
+                    children: [
+                      if (classLevel.isNotEmpty)
+                        _metaPill('Class: $classLevel'),
+                      if (subject.isNotEmpty) _metaPill('Subject: $subject'),
+                    ],
                   ),
                 ),
               ],
               const SizedBox(height: 6),
-              if ((content['total_marks']?.toString() ?? '').isNotEmpty)
-                Text('Total marks: ${content['total_marks']}'),
-              if ((content['time_allowed']?.toString() ?? '').isNotEmpty)
-                Text('Time allowed: ${content['time_allowed']}'),
-              Text(
-                widget.teacherMode ? 'Teacher Copy' : 'Student Copy',
-                style: const TextStyle(
-                  color: AppColors.textMuted,
-                  fontSize: 12,
-                ),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  if ((content['total_marks']?.toString() ?? '').isNotEmpty)
+                    _metaPill('Total: ${content['total_marks']} marks'),
+                  if ((content['time_allowed']?.toString() ?? '').isNotEmpty)
+                    _metaPill('Time: ${content['time_allowed']}'),
+                  _metaPill(
+                    widget.teacherMode ? 'Teacher Copy' : 'Student Copy',
+                  ),
+                ],
               ),
             ],
           ),
@@ -955,6 +978,8 @@ class _ExamCardState extends State<_ExamCard> {
                     ...questions.map((qRaw) {
                       final q = qRaw as Map;
                       final options = (q['options'] as List?) ?? const [];
+                      final marks = (q['marks'] as num?)?.toInt() ?? 0;
+                      final type = (q['type']?.toString() ?? '').trim();
                       return AnimatedContainer(
                         duration: const Duration(milliseconds: 220),
                         curve: Curves.easeOutCubic,
@@ -974,8 +999,18 @@ class _ExamCardState extends State<_ExamCard> {
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
+                            const SizedBox(height: 6),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                _metaPill('$marks marks'),
+                                if (type.isNotEmpty)
+                                  _metaPill(type.toUpperCase()),
+                              ],
+                            ),
                             if (options.isNotEmpty) ...[
-                              const SizedBox(height: 6),
+                              const SizedBox(height: 8),
                               ...options.asMap().entries.map(
                                 (entry) => _OptionChoiceTile(
                                   label: String.fromCharCode(65 + entry.key),
@@ -988,12 +1023,30 @@ class _ExamCardState extends State<_ExamCard> {
                             if (widget.teacherMode &&
                                 (q['mark_scheme']?.toString() ?? '')
                                     .isNotEmpty) ...[
-                              const SizedBox(height: 6),
-                              Text(
-                                'Mark Scheme: ${q['mark_scheme']}',
-                                style: const TextStyle(
-                                  color: Colors.greenAccent,
-                                  fontWeight: FontWeight.w700,
+                              const SizedBox(height: 8),
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 8,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.greenAccent.withValues(
+                                    alpha: 0.10,
+                                  ),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: Colors.greenAccent.withValues(
+                                      alpha: 0.35,
+                                    ),
+                                  ),
+                                ),
+                                child: Text(
+                                  'Mark Scheme: ${q['mark_scheme']}',
+                                  style: const TextStyle(
+                                    color: Colors.greenAccent,
+                                    fontWeight: FontWeight.w700,
+                                  ),
                                 ),
                               ),
                             ],
