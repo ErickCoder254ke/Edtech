@@ -288,13 +288,19 @@ class TestServerGuards(unittest.TestCase):
 
     def test_is_llm_provider_configured_supports_groq(self):
         original = server.GROQ_API_KEY
+        original_keys = list(server.GROQ_API_KEYS)
         try:
             server.GROQ_API_KEY = "groq-test-key"
+            server.GROQ_API_KEYS = []
             self.assertTrue(server._is_llm_provider_configured("groq"))
             server.GROQ_API_KEY = ""
+            server.GROQ_API_KEYS = ["groq-test-key-2"]
+            self.assertTrue(server._is_llm_provider_configured("groq"))
+            server.GROQ_API_KEYS = []
             self.assertFalse(server._is_llm_provider_configured("groq"))
         finally:
             server.GROQ_API_KEY = original
+            server.GROQ_API_KEYS = original_keys
 
     def test_resolve_llm_providers_includes_groq(self):
         original_provider = server.LLM_PROVIDER
@@ -306,6 +312,15 @@ class TestServerGuards(unittest.TestCase):
         finally:
             server.LLM_PROVIDER = original_provider
             server.LLM_PROVIDERS = original_providers
+
+    def test_ordered_groq_keys_rotates(self):
+        import asyncio
+
+        first = asyncio.run(server._ordered_groq_keys_for_request(["k1", "k2", "k3"]))
+        second = asyncio.run(server._ordered_groq_keys_for_request(["k1", "k2", "k3"]))
+        self.assertEqual(len(first), 3)
+        self.assertEqual(len(second), 3)
+        self.assertNotEqual(first, second)
 
 
 if __name__ == "__main__":

@@ -51,6 +51,11 @@ db = client[os.environ["DB_NAME"]]
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY") or os.environ.get("EMERGENT_LLM_KEY")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY") or os.environ.get("GROK_API_KEY")
+GROQ_API_KEYS = [
+    k.strip()
+    for k in (os.environ.get("GROQ_API_KEYS") or os.environ.get("GROK_API_KEYS") or "").split(",")
+    if k.strip()
+]
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GEMINI_API_KEYS = [
     k.strip()
@@ -291,6 +296,9 @@ _raw_redis_url = (os.environ.get("REDIS_BROKER_URL") or os.environ.get("REDIS_UR
 REDIS_WAKE_URL = _raw_redis_url or "redis://localhost:6379/0"
 RATE_LIMIT_USE_REDIS = os.environ.get("RATE_LIMIT_USE_REDIS", "true").lower() == "true"
 GEMINI_SHARED_STATE_USE_REDIS = os.environ.get("GEMINI_SHARED_STATE_USE_REDIS", "true").lower() == "true"
+GROQ_SHARED_STATE_USE_REDIS = os.environ.get("GROQ_SHARED_STATE_USE_REDIS", "true").lower() == "true"
+GROQ_RATE_LIMIT_COOLDOWN_SECONDS = float(os.environ.get("GROQ_RATE_LIMIT_COOLDOWN_SECONDS", "20"))
+GROQ_KEY_FAILURE_COOLDOWN_SECONDS = float(os.environ.get("GROQ_KEY_FAILURE_COOLDOWN_SECONDS", "8"))
 SIGNUP_OTP_TTL_MINUTES = int(os.environ.get("SIGNUP_OTP_TTL_MINUTES", "10"))
 SIGNUP_OTP_LENGTH = int(os.environ.get("SIGNUP_OTP_LENGTH", "6"))
 SIGNUP_OTP_MAX_ATTEMPTS = int(os.environ.get("SIGNUP_OTP_MAX_ATTEMPTS", "5"))
@@ -529,6 +537,9 @@ def safe_delete_uploaded_file(path_raw: str) -> bool:
 _GEMINI_KEY_COOLDOWN_UNTIL: Dict[str, float] = {}
 _GEMINI_KEY_ROUTER_LOCK = asyncio.Lock()
 _GEMINI_KEY_ROUTER_NEXT_INDEX = 0
+_GROQ_KEY_COOLDOWN_UNTIL: Dict[str, float] = {}
+_GROQ_KEY_ROUTER_LOCK = asyncio.Lock()
+_GROQ_KEY_ROUTER_NEXT_INDEX = 0
 _LLM_PROVIDER_COOLDOWN_UNTIL: Dict[str, float] = {}
 _LLM_ROUTER_LOCK = asyncio.Lock()
 _LLM_ROUTER_NEXT_INDEX = 0
@@ -4607,7 +4618,7 @@ def _is_llm_provider_configured(provider: str) -> bool:
     if provider == "openai":
         return bool(OPENAI_API_KEY)
     if provider == "groq":
-        return bool(GROQ_API_KEY)
+        return bool(GROQ_API_KEY or GROQ_API_KEYS)
     return False
 
 
@@ -4675,6 +4686,24 @@ async def _ordered_gemini_keys_for_request(gemini_keys: List[str]) -> List[str]:
     return gemini_keys[start_index:] + gemini_keys[:start_index]
 
 
+async def _ordered_groq_keys_for_request(groq_keys: List[str]) -> List[str]:
+    if len(groq_keys) <= 1:
+        return groq_keys
+    redis_client = _get_redis_shared_client() if GROQ_SHARED_STATE_USE_REDIS else None
+    if redis_client is not None:
+        try:
+            index_value = await asyncio.to_thread(redis_client.incr, "llm:groq:key_router_idx")
+            start_index = (int(index_value) - 1) % len(groq_keys)
+            return groq_keys[start_index:] + groq_keys[:start_index]
+        except Exception as exc:
+            logger.warning("groq_key_router_redis_failed error=%s", exc)
+    global _GROQ_KEY_ROUTER_NEXT_INDEX
+    async with _GROQ_KEY_ROUTER_LOCK:
+        start_index = _GROQ_KEY_ROUTER_NEXT_INDEX % len(groq_keys)
+        _GROQ_KEY_ROUTER_NEXT_INDEX += 1
+    return groq_keys[start_index:] + groq_keys[:start_index]
+
+
 def _gemini_backoff_seconds(attempt: int, retry_after: float = 0.0) -> float:
     cap_seconds = max(
         1.0,
@@ -4694,6 +4723,11 @@ def _gemini_cooldown_redis_key(api_key: str) -> str:
     return f"llm:gemini:cooldown:{digest}"
 
 
+def _groq_cooldown_redis_key(api_key: str) -> str:
+    digest = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:24]
+    return f"llm:groq:cooldown:{digest}"
+
+
 async def _get_gemini_key_cooldown_until(api_key: str) -> float:
     redis_client = _get_redis_shared_client() if GEMINI_SHARED_STATE_USE_REDIS else None
     now = time.time()
@@ -4706,6 +4740,20 @@ async def _get_gemini_key_cooldown_until(api_key: str) -> float:
         except Exception as exc:
             logger.warning("gemini_cooldown_read_redis_failed error=%s", exc)
     return _GEMINI_KEY_COOLDOWN_UNTIL.get(api_key, 0.0)
+
+
+async def _get_groq_key_cooldown_until(api_key: str) -> float:
+    redis_client = _get_redis_shared_client() if GROQ_SHARED_STATE_USE_REDIS else None
+    now = time.time()
+    if redis_client is not None:
+        try:
+            ttl = await asyncio.to_thread(redis_client.ttl, _groq_cooldown_redis_key(api_key))
+            if isinstance(ttl, int) and ttl > 0:
+                return now + float(ttl)
+            return 0.0
+        except Exception as exc:
+            logger.warning("groq_cooldown_read_redis_failed error=%s", exc)
+    return _GROQ_KEY_COOLDOWN_UNTIL.get(api_key, 0.0)
 
 
 async def _set_gemini_key_cooldown(api_key: str, seconds: float) -> None:
@@ -4725,6 +4773,25 @@ async def _set_gemini_key_cooldown(api_key: str, seconds: float) -> None:
             )
         except Exception as exc:
             logger.warning("gemini_cooldown_write_redis_failed error=%s", exc)
+
+
+async def _set_groq_key_cooldown(api_key: str, seconds: float) -> None:
+    if seconds <= 0:
+        return
+    now = time.time()
+    _GROQ_KEY_COOLDOWN_UNTIL[api_key] = now + seconds
+    redis_client = _get_redis_shared_client() if GROQ_SHARED_STATE_USE_REDIS else None
+    if redis_client is not None:
+        try:
+            ttl = max(1, int(math.ceil(seconds)))
+            await asyncio.to_thread(
+                redis_client.setex,
+                _groq_cooldown_redis_key(api_key),
+                ttl,
+                "1",
+            )
+        except Exception as exc:
+            logger.warning("groq_cooldown_write_redis_failed error=%s", exc)
 
 
 async def _generate_with_openai_style_provider(
@@ -5009,6 +5076,72 @@ async def _generate_with_gemini(
     raise HTTPException(status_code=502, detail=f"Gemini generation failed after retries: {last_error}")
 
 
+async def _generate_with_groq(
+    prompt: str,
+    system_message: str,
+    generation_type: Optional[str],
+    *,
+    max_attempts_per_key: int = 2,
+) -> str:
+    groq_keys = list(GROQ_API_KEYS)
+    if GROQ_API_KEY and GROQ_API_KEY not in groq_keys:
+        groq_keys.append(GROQ_API_KEY)
+    if not groq_keys:
+        raise HTTPException(
+            status_code=502,
+            detail="GROQ_API_KEY or GROQ_API_KEYS is required when using Groq",
+        )
+
+    last_error: Optional[HTTPException] = None
+    ordered_keys = await _ordered_groq_keys_for_request(groq_keys)
+    available_keys: List[str] = []
+    next_ready_ts: Optional[float] = None
+    now = time.time()
+    for groq_key in ordered_keys:
+        cooldown_until = await _get_groq_key_cooldown_until(groq_key)
+        if cooldown_until <= now:
+            available_keys.append(groq_key)
+        else:
+            next_ready_ts = cooldown_until if next_ready_ts is None else min(next_ready_ts, cooldown_until)
+    if not available_keys:
+        wait_seconds = max(0.5, (next_ready_ts or now) - now)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Groq generation rate limit reached; all Groq keys are cooling down for about {wait_seconds:.1f}s",
+        )
+
+    for groq_key in available_keys:
+        try:
+            return await _generate_with_openai_style_provider(
+                endpoint_url=f"{GROQ_BASE_URL}/chat/completions",
+                api_key=groq_key,
+                model_name=GROQ_CHAT_MODEL,
+                provider_label="Groq",
+                prompt=prompt,
+                system_message=system_message,
+                timeout_seconds=60.0,
+                max_attempts=max_attempts_per_key,
+                max_tokens=_openai_max_tokens_for_generation(generation_type),
+                force_json_object=False,
+            )
+        except HTTPException as exc:
+            last_error = exc
+            if exc.status_code == 429:
+                await _set_groq_key_cooldown(groq_key, GROQ_RATE_LIMIT_COOLDOWN_SECONDS)
+            elif exc.status_code in {500, 502, 503, 504}:
+                await _set_groq_key_cooldown(groq_key, max(1.0, GROQ_KEY_FAILURE_COOLDOWN_SECONDS))
+            logger.warning(
+                "groq_key_fallback status=%s detail=%s",
+                exc.status_code,
+                exc.detail,
+            )
+            continue
+
+    if last_error is not None:
+        raise last_error
+    raise HTTPException(status_code=502, detail="Groq generation failed without a key attempt")
+
+
 def _nvidia_max_tokens_for_generation(generation_type: Optional[str]) -> int:
     gtype = (generation_type or "").strip().lower()
     if gtype == "exam":
@@ -5165,18 +5298,7 @@ async def _generate_with_llm_internal(
                     force_json_object=True,
                 )
             if provider == "groq":
-                return await _generate_with_openai_style_provider(
-                    endpoint_url=f"{GROQ_BASE_URL}/chat/completions",
-                    api_key=GROQ_API_KEY or "",
-                    model_name=GROQ_CHAT_MODEL,
-                    provider_label="Groq",
-                    prompt=prompt,
-                    system_message=system_message,
-                    timeout_seconds=60.0,
-                    max_attempts=3,
-                    max_tokens=_openai_max_tokens_for_generation(generation_type),
-                    force_json_object=False,
-                )
+                return await _generate_with_groq(prompt, system_message, generation_type)
             if provider == "nvidia":
                 return await _generate_with_nvidia(prompt, system_message, generation_type)
             failure_details.append(f"{provider}: unsupported provider")
@@ -5222,17 +5344,11 @@ async def repair_json_with_llm(raw_text: str, generation_type: str) -> Dict[str,
     if _is_llm_provider_configured("gemini"):
         repaired_text = await _generate_with_gemini(repair_prompt, repair_system)
     elif _is_llm_provider_configured("groq"):
-        repaired_text = await _generate_with_openai_style_provider(
-            endpoint_url=f"{GROQ_BASE_URL}/chat/completions",
-            api_key=GROQ_API_KEY or "",
-            model_name=GROQ_CHAT_MODEL,
-            provider_label="Groq",
-            prompt=repair_prompt,
-            system_message=repair_system,
-            timeout_seconds=45.0,
-            max_attempts=2,
-            max_tokens=1800,
-            force_json_object=False,
+        repaired_text = await _generate_with_groq(
+            repair_prompt,
+            repair_system,
+            generation_type,
+            max_attempts_per_key=1,
         )
     elif _is_llm_provider_configured("openai"):
         repaired_text = await _generate_with_openai_style_provider(
@@ -10297,6 +10413,10 @@ async def runtime_config():
         "openai_chat_model": OPENAI_CHAT_MODEL,
         "groq_base_url": GROQ_BASE_URL,
         "groq_chat_model": GROQ_CHAT_MODEL,
+        "groq_key_count": len(set([k for k in GROQ_API_KEYS if k] + ([GROQ_API_KEY] if GROQ_API_KEY else []))),
+        "groq_shared_state_use_redis": GROQ_SHARED_STATE_USE_REDIS,
+        "groq_rate_limit_cooldown_seconds": GROQ_RATE_LIMIT_COOLDOWN_SECONDS,
+        "groq_key_failure_cooldown_seconds": GROQ_KEY_FAILURE_COOLDOWN_SECONDS,
         "nvidia_chat_model": NVIDIA_CHAT_MODEL,
         "nvidia_chat_models": _resolve_nvidia_models(),
         "nvidia_base_url": NVIDIA_BASE_URL,
@@ -10312,7 +10432,7 @@ async def runtime_config():
         "gemini_chat_models": GEMINI_CHAT_MODELS,
         "gemini_key_count": len(set([k for k in GEMINI_API_KEYS if k] + ([GEMINI_API_KEY] if GEMINI_API_KEY else []))),
         "has_openai_api_key": bool(OPENAI_API_KEY),
-        "has_groq_api_key": bool(GROQ_API_KEY),
+        "has_groq_api_key": bool(GROQ_API_KEY or GROQ_API_KEYS),
         "has_nvidia_api_key": bool(NVIDIA_API_KEY),
         "has_gemini_api_key": bool(GEMINI_API_KEY),
         "vector_index_name": VECTOR_INDEX_NAME,
@@ -10787,8 +10907,8 @@ async def startup_checks():
         raise RuntimeError("GEMINI_API_KEY or GEMINI_API_KEYS required for gemini embeddings")
     if LLM_PROVIDER == "openai" and not OPENAI_API_KEY:
         raise RuntimeError("OPENAI_API_KEY (or EMERGENT_LLM_KEY) required for openai LLM")
-    if LLM_PROVIDER == "groq" and not GROQ_API_KEY:
-        raise RuntimeError("GROQ_API_KEY (or GROK_API_KEY) required for groq LLM")
+    if LLM_PROVIDER == "groq" and not (GROQ_API_KEY or GROQ_API_KEYS):
+        raise RuntimeError("GROQ_API_KEY or GROQ_API_KEYS (or legacy GROK_API_KEY) required for groq LLM")
     if LLM_PROVIDER == "gemini" and not (GEMINI_API_KEY or GEMINI_API_KEYS):
         raise RuntimeError("GEMINI_API_KEY or GEMINI_API_KEYS required for gemini LLM")
     if LLM_PROVIDER == "nvidia" and not _is_llm_provider_configured("nvidia"):
