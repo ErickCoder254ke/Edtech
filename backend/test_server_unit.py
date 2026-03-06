@@ -224,23 +224,23 @@ class TestServerGuards(unittest.TestCase):
             server.get_topic_sort("old")
         self.assertEqual(ctx.exception.status_code, 400)
 
-    def test_is_llm_provider_configured_supports_grok(self):
-        original = server.GROK_API_KEY
+    def test_is_llm_provider_configured_supports_groq(self):
+        original = server.GROQ_API_KEY
         try:
-            server.GROK_API_KEY = "grok-test-key"
-            self.assertTrue(server._is_llm_provider_configured("grok"))
-            server.GROK_API_KEY = ""
-            self.assertFalse(server._is_llm_provider_configured("grok"))
+            server.GROQ_API_KEY = "groq-test-key"
+            self.assertTrue(server._is_llm_provider_configured("groq"))
+            server.GROQ_API_KEY = ""
+            self.assertFalse(server._is_llm_provider_configured("groq"))
         finally:
-            server.GROK_API_KEY = original
+            server.GROQ_API_KEY = original
 
-    def test_resolve_llm_providers_includes_grok(self):
+    def test_resolve_llm_providers_includes_groq(self):
         original_provider = server.LLM_PROVIDER
         original_providers = list(server.LLM_PROVIDERS)
         try:
             server.LLM_PROVIDER = "hybrid"
-            server.LLM_PROVIDERS = ["grok", "gemini", "grok", "nvidia"]
-            self.assertEqual(server._resolve_llm_providers(), ["grok", "gemini", "nvidia"])
+            server.LLM_PROVIDERS = ["groq", "gemini", "groq", "nvidia"]
+            self.assertEqual(server._resolve_llm_providers(), ["groq", "gemini", "nvidia"])
         finally:
             server.LLM_PROVIDER = original_provider
             server.LLM_PROVIDERS = original_providers
