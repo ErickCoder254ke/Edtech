@@ -1,0 +1,684 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ExamOS | Investor Funding Proposal</title>
+  <meta
+    name="description"
+    content="Investor-facing funding proposal for ExamOS, an AI-powered learning ecosystem for students, teachers, and parents in Kenya."
+  />
+  <style>
+    :root {
+      --bg: #f4efe6;
+      --surface: rgba(255, 249, 240, 0.82);
+      --surface-strong: #fffaf1;
+      --ink: #191512;
+      --muted: #64584d;
+      --line: rgba(53, 37, 20, 0.1);
+      --amber: #c47b2c;
+      --amber-deep: #8e5417;
+      --pine: #184e46;
+      --teal: #2f8d82;
+      --brick: #bb6655;
+      --cream: #fffaf1;
+      --shadow-lg: 0 26px 80px rgba(50, 33, 16, 0.14);
+      --shadow-md: 0 14px 34px rgba(50, 33, 16, 0.08);
+      --max: 1200px;
+      --radius-xl: 34px;
+      --radius-lg: 24px;
+      --radius-md: 18px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 0% 0%, rgba(196, 123, 44, 0.16), transparent 24%),
+        radial-gradient(circle at 90% 12%, rgba(24, 78, 70, 0.14), transparent 22%),
+        linear-gradient(180deg, #f8f3ea 0%, #f0e5d4 100%);
+      line-height: 1.55;
+      overflow-x: hidden;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(77, 57, 31, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(77, 57, 31, 0.035) 1px, transparent 1px);
+      background-size: 30px 30px;
+      mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.44), transparent 88%);
+      opacity: 0.4;
+    }
+    a { color: inherit; text-decoration: none; }
+    img { max-width: 100%; display: block; }
+    .wrap { width: min(calc(100% - 32px), var(--max)); margin: 0 auto; }
+    .topbar {
+      position: sticky; top: 0; z-index: 30; backdrop-filter: blur(14px);
+      background: rgba(244, 239, 230, 0.72); border-bottom: 1px solid var(--line);
+    }
+    .topbar-inner {
+      display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 0;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-mark {
+      width: 44px; height: 44px; border-radius: 14px; background: linear-gradient(135deg, var(--amber), var(--pine));
+      color: #fff8ef; display: grid; place-items: center; font-size: 1rem; font-weight: 700; letter-spacing: 0.08em;
+      box-shadow: 0 14px 28px rgba(24, 78, 70, 0.18);
+    }
+    .brand-copy small, .eyebrow, .label, .micro, .mini, .section-tag {
+      display: block; text-transform: uppercase; letter-spacing: 0.16em; font-size: 0.7rem; color: var(--muted);
+    }
+    .brand-copy strong { display: block; font-size: 1rem; }
+    .nav { display: flex; flex-wrap: wrap; gap: 16px; color: var(--muted); font-size: 0.94rem; }
+    .hero { padding: 42px 0 22px; }
+    .hero-shell { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 22px; align-items: stretch; }
+    .hero-main, .glass, .quote-card, .budget-band, .closing-card {
+      position: relative; overflow: hidden; border: 1px solid rgba(53, 37, 20, 0.09); background: var(--surface); backdrop-filter: blur(12px); box-shadow: var(--shadow-lg);
+    }
+    .hero-main { border-radius: 36px; padding: 34px; min-height: 620px; }
+    .hero-main::after, .glass::after, .budget-band::after, .closing-card::after {
+      content: ""; position: absolute; inset: auto -50px -50px auto; width: 180px; height: 180px; border-radius: 50%;
+      background: radial-gradient(circle, rgba(47, 141, 130, 0.13), transparent 68%); pointer-events: none;
+    }
+    .hero-main::before {
+      content: ""; position: absolute; top: -90px; right: -90px; width: 260px; height: 260px; border-radius: 50%;
+      background: radial-gradient(circle, rgba(196, 123, 44, 0.22), transparent 68%);
+    }
+    .hero-gridline {
+      position: absolute; inset: 0; pointer-events: none;
+      background:
+        linear-gradient(rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.14)) top/100% 1px no-repeat,
+        linear-gradient(90deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.12)) left/1px 100% no-repeat;
+      opacity: 0.18;
+    }
+    h1, h2, h3, h4 { margin: 0; line-height: 1.04; font-weight: 700; }
+    h1 { margin-top: 12px; font-size: clamp(3.05rem, 5.2vw, 5.5rem); max-width: 10ch; letter-spacing: -0.04em; }
+    h2 { font-size: clamp(2rem, 3vw, 3.1rem); margin-bottom: 14px; letter-spacing: -0.03em; }
+    h3 { font-size: 1.18rem; margin-bottom: 10px; }
+    h4 { font-size: 1rem; margin-bottom: 8px; }
+    .lead { margin: 18px 0 22px; max-width: 62ch; font-size: 1.08rem; color: #352d27; }
+    .chip-row, .cta-row, .hero-metrics, .section-grid, .three-grid, .two-grid, .phase-grid, .budget-grid, .footer-grid, .value-grid, .audience-grid, .insight-grid {
+      display: grid; gap: 16px;
+    }
+    .chip-row { grid-template-columns: repeat(3, max-content); gap: 10px; align-items: center; }
+    .chip {
+      padding: 9px 12px; border-radius: 999px; background: rgba(255, 255, 255, 0.56); border: 1px solid rgba(53, 37, 20, 0.08);
+      color: #453a31; font-size: 0.83rem;
+    }
+    .cta-row { grid-template-columns: repeat(2, max-content); margin: 22px 0 26px; align-items: center; }
+    .button, .ghost {
+      display: inline-flex; align-items: center; justify-content: center; gap: 10px; padding: 14px 18px; border-radius: 999px;
+      font-size: 0.93rem; font-weight: 700; transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+    }
+    .button { background: linear-gradient(135deg, var(--amber), var(--amber-deep)); color: #fff9f1; box-shadow: 0 16px 34px rgba(142, 84, 23, 0.2); }
+    .ghost { border: 1px solid rgba(24, 78, 70, 0.18); background: rgba(255, 255, 255, 0.5); color: var(--pine); }
+    .button:hover, .ghost:hover { transform: translateY(-2px); }
+    .hero-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: auto; }
+    .metric {
+      padding: 18px; border-radius: 22px; background: rgba(255, 252, 246, 0.76); border: 1px solid rgba(53, 37, 20, 0.08); box-shadow: var(--shadow-md);
+    }
+    .metric strong { display: block; font-size: 1.55rem; margin-bottom: 5px; }
+    .side-col { display: grid; gap: 16px; }
+    .glass { border-radius: 28px; padding: 24px; }
+    .funding-ask { font-size: clamp(2.6rem, 4.2vw, 4.2rem); color: var(--pine); margin: 10px 0 12px; letter-spacing: -0.04em; }
+    .ring {
+      margin-top: 18px; width: 148px; height: 148px; border-radius: 50%; background: conic-gradient(var(--amber) 0 39%, var(--pine) 39% 100%);
+      display: grid; place-items: center; box-shadow: inset 0 0 0 1px rgba(53, 37, 20, 0.06);
+    }
+    .ring::after {
+      content: "Deployment\AAsk"; white-space: pre; width: 102px; height: 102px; border-radius: 50%; display: grid; place-items: center;
+      text-align: center; line-height: 1.2; font-size: 0.84rem; background: var(--cream); color: var(--muted); border: 1px solid rgba(53, 37, 20, 0.08);
+    }
+    .funding-breakdown { display: grid; gap: 12px; margin-top: 18px; }
+    .fund-line {
+      display: grid; grid-template-columns: 1fr auto; gap: 14px; padding: 12px 14px; border-radius: 16px; background: rgba(255, 255, 255, 0.58); border: 1px solid rgba(53, 37, 20, 0.08);
+    }
+    main section { padding: 26px 0; }
+    .section-grid, .two-grid, .budget-grid, .footer-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+    .three-grid, .value-grid, .audience-grid, .insight-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .card, .phase, .value-card, .audience-card, .insight-card, .budget-card, .revenue-card, .ecosystem-card {
+      background: rgba(255, 251, 244, 0.8); border: 1px solid rgba(53, 37, 20, 0.08); border-radius: 24px; padding: 20px; box-shadow: var(--shadow-md);
+    }
+    .card p, .phase p, .value-card p, .audience-card p, .insight-card p, .budget-card p, .revenue-card p, .ecosystem-card p, .glass p, .quote-card p, .text, li {
+      color: #463b31;
+    }
+    .quote-card { border-radius: 30px; padding: 26px; }
+    .quote-card p:first-of-type { font-size: 1.18rem; line-height: 1.45; }
+    .quote-card::before {
+      content: "“"; position: absolute; top: 8px; left: 16px; font-size: 4rem; color: rgba(196, 123, 44, 0.18); line-height: 1;
+    }
+    .note, .stack-note {
+      margin-top: 16px; padding: 16px 18px; border-radius: 18px; border-left: 4px solid var(--amber); background: rgba(255, 255, 255, 0.6);
+    }
+    .list { list-style: none; padding: 0; margin: 16px 0 0; display: grid; gap: 10px; }
+    .list li {
+      padding: 12px 14px; border-radius: 16px; background: rgba(255, 255, 255, 0.56); border: 1px solid rgba(53, 37, 20, 0.08);
+    }
+    .ecosystem { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 16px; align-items: stretch; }
+    .ecosystem-board {
+      position: relative; min-height: 360px; padding: 22px; border-radius: 30px;
+      background:
+        radial-gradient(circle at 20% 20%, rgba(196, 123, 44, 0.14), transparent 24%),
+        radial-gradient(circle at 85% 24%, rgba(47, 141, 130, 0.16), transparent 20%),
+        linear-gradient(180deg, rgba(255, 252, 246, 0.9), rgba(253, 247, 239, 0.86));
+      border: 1px solid rgba(53, 37, 20, 0.08); box-shadow: var(--shadow-md); overflow: hidden;
+    }
+    .ecosystem-center {
+      position: absolute; inset: 50% auto auto 50%; transform: translate(-50%, -50%); width: 168px; height: 168px; border-radius: 50%;
+      display: grid; place-items: center; text-align: center; padding: 18px; background: linear-gradient(135deg, var(--pine), #103a34); color: #f8f2e7;
+      box-shadow: 0 24px 50px rgba(16, 58, 52, 0.22);
+    }
+    .orbit {
+      position: absolute; width: 170px; padding: 14px; border-radius: 20px; background: rgba(255, 255, 255, 0.8);
+      border: 1px solid rgba(53, 37, 20, 0.08); box-shadow: var(--shadow-md); animation: float 5.5s ease-in-out infinite;
+    }
+    .orbit:nth-child(1) { top: 28px; left: 26px; }
+    .orbit:nth-child(2) { top: 34px; right: 26px; animation-delay: 0.8s; }
+    .orbit:nth-child(3) { bottom: 30px; left: 36px; animation-delay: 1.5s; }
+    .orbit:nth-child(4) { bottom: 32px; right: 24px; animation-delay: 2.2s; }
+    .orbit strong, .ecosystem-center strong, .phase-index, .budget-amount, .revenue-card strong { display: block; }
+    .orbit strong { margin-bottom: 6px; font-size: 1rem; }
+    .phase-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 18px; }
+    .phase { position: relative; padding-top: 54px; }
+    .phase-index {
+      position: absolute; top: 18px; left: 18px; width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center;
+      background: linear-gradient(135deg, var(--amber), var(--amber-deep)); color: #fff8ef; font-size: 0.92rem; font-weight: 700; box-shadow: 0 12px 28px rgba(142, 84, 23, 0.2);
+    }
+    .phase-list { list-style: none; padding: 0; margin: 14px 0 0; display: grid; gap: 8px; }
+    .phase-list li { padding-left: 16px; position: relative; background: none; border: 0; }
+    .phase-list li::before { content: ""; position: absolute; left: 0; top: 10px; width: 8px; height: 8px; border-radius: 50%; background: var(--amber); }
+    .insight-card { min-height: 100%; }
+    .budget-band, .closing-card { border-radius: 32px; padding: 30px; }
+    .budget-grid { margin-top: 18px; }
+    .budget-card { min-height: 100%; }
+    .budget-amount { font-size: 2rem; color: var(--amber-deep); margin: 8px 0; letter-spacing: -0.03em; }
+    .revenue-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-top: 18px; }
+    .revenue-card strong { font-size: 1rem; margin-bottom: 8px; }
+    .closing-card {
+      background: linear-gradient(135deg, rgba(24, 78, 70, 0.94), rgba(15, 52, 46, 0.98)); color: #f9f1e6; box-shadow: 0 24px 50px rgba(15, 52, 46, 0.24);
+    }
+    .closing-card p, .closing-card li, .closing-card .eyebrow, .closing-card .micro { color: rgba(249, 241, 230, 0.82); }
+    .closing-card .button { background: linear-gradient(135deg, #f2cf8f, #d38e39); color: #291b08; box-shadow: none; }
+    .footer-grid { margin-top: 18px; }
+    .muted { color: var(--muted); }
+    @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+    @media (max-width: 1100px) {
+      .hero-shell, .section-grid, .two-grid, .budget-grid, .footer-grid, .ecosystem, .phase-grid, .value-grid, .audience-grid, .insight-grid, .revenue-strip { grid-template-columns: 1fr; }
+      .hero-metrics, .three-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .ecosystem-board { min-height: 500px; }
+    }
+    @media (max-width: 760px) {
+      .topbar-inner { flex-direction: column; align-items: flex-start; }
+      .hero { padding-top: 24px; }
+      .hero-main, .glass, .quote-card, .budget-band, .closing-card, .ecosystem-board { padding: 22px; border-radius: 24px; }
+      .chip-row, .cta-row, .hero-metrics, .three-grid { grid-template-columns: 1fr; }
+      h1 { max-width: 100%; }
+      .ecosystem-board { min-height: 680px; }
+      .ecosystem-center { width: 150px; height: 150px; }
+      .orbit { width: calc(50% - 24px); }
+      .orbit:nth-child(1) { top: 24px; left: 18px; }
+      .orbit:nth-child(2) { top: 24px; right: 18px; }
+      .orbit:nth-child(3) { bottom: 24px; left: 18px; }
+      .orbit:nth-child(4) { bottom: 24px; right: 18px; }
+    }
+    @media (max-width: 560px) {
+      .orbit { position: static; width: 100%; animation: none; }
+      .ecosystem-board { display: grid; gap: 14px; min-height: auto; }
+      .ecosystem-center { position: static; transform: none; width: 100%; height: auto; border-radius: 24px; min-height: 130px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <div class="brand">
+        <div class="brand-mark">EO</div>
+        <div class="brand-copy">
+          <small>Investor Proposal</small>
+          <strong>ExamOS by EdTech Intelligence</strong>
+        </div>
+      </div>
+      <nav class="nav">
+        <a href="#positioning">Positioning</a>
+        <a href="#ecosystem">Ecosystem</a>
+        <a href="#growth">Growth</a>
+        <a href="#revenue">Revenue</a>
+        <a href="#budget">Budget</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero wrap">
+      <div class="hero-shell">
+        <article class="hero-main">
+          <div class="hero-gridline"></div>
+          <span class="eyebrow">AI-powered academic platform for Kenya</span>
+          <h1>ExamOS is not just a revision app. It is a learning ecosystem.</h1>
+          <p class="lead">
+            ExamOS is designed to sit at the exact intersection where students want results, teachers want time-saving tools, and parents want visible academic improvement. It combines AI-generated assessments, concept support, curriculum notes, tutoring access, demand-driven classes, and secure payment flows into one practical platform.
+          </p>
+          <div class="chip-row">
+            <span class="chip">Students</span>
+            <span class="chip">Teachers</span>
+            <span class="chip">Parents</span>
+          </div>
+          <div class="cta-row">
+            <a class="button" href="#budget">See Funding Ask</a>
+            <a class="ghost" href="#growth">Explore Growth Plan</a>
+          </div>
+          <div class="hero-metrics">
+            <div class="metric">
+              <span class="mini">Coverage</span>
+              <strong>CBC to Senior School</strong>
+              <span class="muted">From lower levels through Junior Secondary and Senior School.</span>
+            </div>
+            <div class="metric">
+              <span class="mini">Core promise</span>
+              <strong>Results, not hype</strong>
+              <span class="muted">Students want to pass exams. That is the anchor.</span>
+            </div>
+            <div class="metric">
+              <span class="mini">Teacher value</span>
+              <strong>Less prep time</strong>
+              <span class="muted">Generate exams, quizzes, and classes faster.</span>
+            </div>
+            <div class="metric">
+              <span class="mini">Parent trust</span>
+              <strong>Protected payments</strong>
+              <span class="muted">Escrow reduces fear around paying for learning support.</span>
+            </div>
+          </div>
+        </article>
+
+        <div class="side-col">
+          <aside class="glass">
+            <span class="label">Minimum deployment ask</span>
+            <div class="funding-ask">KSh 1,650</div>
+            <p>
+              The public launch only needs a lean infrastructure push: <strong>KSh 650</strong> for backend hosting and <strong>KSh 1,000</strong> for a custom domain.
+            </p>
+            <div class="funding-breakdown">
+              <div class="fund-line"><span>Backend hosting</span><strong>KSh 650</strong></div>
+              <div class="fund-line"><span>Custom domain</span><strong>KSh 1,000</strong></div>
+            </div>
+            <div class="ring"></div>
+          </aside>
+
+          <aside class="glass">
+            <span class="label">What backend hosting really means</span>
+            <h3>The hidden engine that keeps the app alive.</h3>
+            <p>
+              Backend hosting is the service that keeps ExamOS online behind the scenes. It handles logins, saved data, AI requests, tutoring workflows, class creation, note retrieval, and payment-related activity.
+            </p>
+            <p>
+              Without it, the app may look impressive on the surface but cannot actually serve users consistently. A custom domain then gives the product a clean, professional identity that investors and users can trust.
+            </p>
+          </aside>
+        </div>
+      </div>
+    </section>
+    <section id="positioning" class="wrap">
+      <div class="section-grid">
+        <article>
+          <span class="eyebrow">Product positioning</span>
+          <h2>ExamOS is built around one market truth.</h2>
+          <p class="text">
+            Students want help right before exams. Teachers want tools that save time. Parents want visible academic improvement. ExamOS sits exactly at that intersection and turns those three needs into one connected product experience.
+          </p>
+          <div class="insight-grid" style="margin-top: 18px;">
+            <article class="insight-card">
+              <span class="micro">Student insight</span>
+              <h3>Urgency drives usage</h3>
+              <p>Students often look for support when pressure is highest, especially near exams and revision periods.</p>
+            </article>
+            <article class="insight-card">
+              <span class="micro">Teacher insight</span>
+              <h3>Productivity wins</h3>
+              <p>Teachers adopt faster when the platform clearly removes repetitive work and saves preparation time.</p>
+            </article>
+            <article class="insight-card">
+              <span class="micro">Parent insight</span>
+              <h3>Trust drives payment</h3>
+              <p>Parents are more willing to pay when outcomes feel real and the money flow feels protected.</p>
+            </article>
+          </div>
+        </article>
+        <aside class="quote-card">
+          <span class="label">Positioning statement</span>
+          <p>
+            Instead of being just another revision platform, ExamOS becomes a national learning ecosystem where academic support, structured content, tutoring access, and teacher-led delivery all reinforce each other.
+          </p>
+          <div class="stack-note">
+            The platform is strong because it serves three stakeholders at once: the learner, the educator, and the paying decision-maker in the home.
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section id="ecosystem" class="wrap">
+      <span class="eyebrow">Learning ecosystem</span>
+      <h2>One product, multiple value loops.</h2>
+      <div class="ecosystem">
+        <div class="ecosystem-board">
+          <div class="orbit">
+            <span class="micro">AI tools</span>
+            <strong>Exam and quiz generation</strong>
+            <span>Teachers and students create revision material quickly.</span>
+          </div>
+          <div class="orbit">
+            <span class="micro">Study support</span>
+            <strong>Concept breakdown</strong>
+            <span>Difficult topics become easier to understand step by step.</span>
+          </div>
+          <div class="orbit">
+            <span class="micro">Content layer</span>
+            <strong>Structured notes</strong>
+            <span>Curriculum-aligned resources by topic and grade level.</span>
+          </div>
+          <div class="orbit">
+            <span class="micro">Marketplace layer</span>
+            <strong>Tutoring and demand classes</strong>
+            <span>Students ask, teachers respond, and parents can pay securely.</span>
+          </div>
+          <div class="ecosystem-center">
+            <div>
+              <span class="micro" style="color: rgba(249, 241, 230, 0.72);">ExamOS</span>
+              <strong style="font-size: 1.35rem; margin-top: 6px;">Adaptive learning ecosystem</strong>
+            </div>
+          </div>
+        </div>
+        <div class="three-grid">
+          <article class="ecosystem-card">
+            <span class="label">For students</span>
+            <h3>Personalized learning support</h3>
+            <p>Students can generate revision quizzes, break down difficult concepts using AI, access structured notes, and suggest topics they want teachers to cover.</p>
+          </article>
+          <article class="ecosystem-card">
+            <span class="label">For teachers</span>
+            <h3>Tools that save time</h3>
+            <p>Teachers can generate exam papers, create revision quizzes, identify requested topics, and launch classes based on actual student demand.</p>
+          </article>
+          <article class="ecosystem-card">
+            <span class="label">For parents</span>
+            <h3>Trusted academic support</h3>
+            <p>Parents can book tutors, discover verified educators, and pay through an escrow model where the tutor is paid only after delivery.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="wrap">
+      <span class="eyebrow">Platform value proposition</span>
+      <h2>Each audience gets a clear reason to stay.</h2>
+      <div class="audience-grid">
+        <article class="audience-card">
+          <span class="label">Students</span>
+          <h3>Immediate academic utility</h3>
+          <ul class="list">
+            <li>Generate revision quizzes instantly.</li>
+            <li>Use AI to simplify hard concepts.</li>
+            <li>Access notes by grade level and topic.</li>
+            <li>Suggest and vote on learning requests.</li>
+          </ul>
+        </article>
+        <article class="audience-card">
+          <span class="label">Teachers</span>
+          <h3>Demand-aware teaching tools</h3>
+          <ul class="list">
+            <li>Create exam papers and quizzes faster.</li>
+            <li>Spot topics students are actively requesting.</li>
+            <li>Launch classes based on real demand signals.</li>
+            <li>Attach Zoom or other external lesson links inside the app.</li>
+          </ul>
+        </article>
+        <article class="audience-card">
+          <span class="label">Parents</span>
+          <h3>Clarity and protection</h3>
+          <ul class="list">
+            <li>Book tutoring sessions directly.</li>
+            <li>Access verified educators.</li>
+            <li>Track useful learning opportunities.</li>
+            <li>Pay through a protected escrow wallet flow.</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section id="growth" class="wrap">
+      <span class="eyebrow">Growth philosophy</span>
+      <h2>People follow results, not features.</h2>
+      <div class="two-grid">
+        <article>
+          <p class="text">
+            Students do not download academic apps because they heard the word AI. They download because they want to pass exams, fix weak topics, and feel more prepared. That is why ExamOS marketing is anchored on outcomes, not buzzwords.
+          </p>
+          <div class="note">
+            The product story is simple: help students learn faster, help teachers teach better, and give parents more confidence that support money is going somewhere meaningful.
+          </div>
+        </article>
+        <article class="glass">
+          <span class="label">Why this matters</span>
+          <h3>Outcome-led products spread better.</h3>
+          <p>
+            A teacher who saves hours becomes an advocate. A student who revises faster becomes a repeat user. A parent who sees safe payments becomes more willing to trust the platform.
+          </p>
+        </article>
+      </div>
+
+      <div class="phase-grid">
+        <article class="phase">
+          <span class="phase-index">01</span>
+          <span class="micro">School network penetration</span>
+          <h3>Start where academic behavior already exists.</h3>
+          <p>Secondary schools, tuition centers, and private tutors are the fastest entry points because teachers become distribution channels.</p>
+          <ul class="phase-list">
+            <li>Position AI exam generation as a productivity tool.</li>
+            <li>If teachers adopt, students follow naturally.</li>
+          </ul>
+        </article>
+
+        <article class="phase">
+          <span class="phase-index">02</span>
+          <span class="micro">TikTok and student discovery</span>
+          <h3>Short-form content makes the value obvious.</h3>
+          <p>Students often discover learning tools through fast, relatable videos with revision pressure as the hook.</p>
+          <ul class="phase-list">
+            <li>POV: you forgot to revise for tomorrow's exam.</li>
+            <li>Struggling with Chemistry organic reactions?</li>
+          </ul>
+        </article>
+
+        <article class="phase">
+          <span class="phase-index">03</span>
+          <span class="micro">Exam season domination</span>
+          <h3>Revision urgency becomes a growth engine.</h3>
+          <p>Exam periods create natural spikes in search behavior, urgency, and willingness to try solutions that save time.</p>
+          <ul class="phase-list">
+            <li>KCSE revision tools.</li>
+            <li>Instant quiz generators and concept explanations.</li>
+          </ul>
+        </article>
+
+        <article class="phase">
+          <span class="phase-index">04</span>
+          <span class="micro">Demand-based classes</span>
+          <h3>Student demand creates teachable markets.</h3>
+          <p>Students suggest topics, other students upvote, and teachers respond by launching targeted classes.</p>
+          <ul class="phase-list">
+            <li>Example: balancing chemical equations.</li>
+            <li>Demand grows, teacher launches a live class.</li>
+          </ul>
+        </article>
+        <article class="phase">
+          <span class="phase-index">05</span>
+          <span class="micro">Tutor marketplace integration</span>
+          <h3>LocalPro KE expands supply fast.</h3>
+          <p>API integration with LocalPro KE gives ExamOS access to a wider network of tutors and professionals.</p>
+          <ul class="phase-list">
+            <li>Discover tutors.</li>
+            <li>Schedule sessions.</li>
+            <li>Use secure escrow payments.</li>
+          </ul>
+        </article>
+
+        <article class="phase">
+          <span class="phase-index">06</span>
+          <span class="micro">Student community growth</span>
+          <h3>Participation turns into retention.</h3>
+          <p>Students are encouraged to suggest topics, vote on requests, and share quizzes with classmates, creating a collaborative loop.</p>
+          <ul class="phase-list">
+            <li>Classes emerge from demand, not rigid schedules.</li>
+            <li>Shared activity creates stronger network effects.</li>
+          </ul>
+        </article>
+
+        <article class="phase">
+          <span class="phase-index">07</span>
+          <span class="micro">Institutional partnerships</span>
+          <h3>Schools and academies deepen scale.</h3>
+          <p>Future partnerships can include schools, tuition centers, tutoring academies, and educational content creators.</p>
+          <ul class="phase-list">
+            <li>Generate assessments.</li>
+            <li>Deliver lessons through platform-linked flows.</li>
+          </ul>
+        </article>
+
+        <article class="phase">
+          <span class="phase-index">08</span>
+          <span class="micro">Dedicated marketing team</span>
+          <h3>Scale after traction becomes visible.</h3>
+          <p>Once early adoption is proven, ExamOS can justify a focused marketing team to expand nationally.</p>
+          <ul class="phase-list">
+            <li>Social growth, digital ads, influencers, SEO, ambassadors.</li>
+            <li>Nationwide school and learning-community reach.</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="wrap">
+      <span class="eyebrow">Target market</span>
+      <h2>Built for the people who feel exam pressure most.</h2>
+      <div class="value-grid">
+        <article class="value-card">
+          <span class="label">Primary market</span>
+          <h3>Students in active learning cycles</h3>
+          <p>Especially learners in CBC/CBE, Junior Secondary, and Senior School who need revision support, concept clarity, and organized resources.</p>
+        </article>
+        <article class="value-card">
+          <span class="label">High-leverage user</span>
+          <h3>Teachers as adoption drivers</h3>
+          <p>Teachers do not just use the product. They also create content, launch classes, and influence student behavior around the platform.</p>
+        </article>
+        <article class="value-card">
+          <span class="label">Decision-maker layer</span>
+          <h3>Parents who pay for support</h3>
+          <p>Parents care about safety, visible improvement, and trusted educators. Escrow makes that trust much easier to earn.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="revenue" class="wrap">
+      <div class="budget-band">
+        <span class="eyebrow">Revenue model</span>
+        <h2>Multiple earning paths, not one fragile stream.</h2>
+        <p class="text">
+          ExamOS is designed to generate revenue from different layers of the ecosystem: teacher productivity, student usage, tutoring activity, and paid class delivery.
+        </p>
+        <div class="revenue-strip">
+          <article class="revenue-card">
+            <strong>Tutoring commissions</strong>
+            <p>The platform takes a share from tutoring sessions booked and completed through the system.</p>
+          </article>
+          <article class="revenue-card">
+            <strong>Premium AI tools</strong>
+            <p>Teachers and institutions can pay for more advanced generation and workflow features.</p>
+          </article>
+          <article class="revenue-card">
+            <strong>Student subscriptions</strong>
+            <p>Advanced revision support and premium features create recurring value for active learners.</p>
+          </article>
+          <article class="revenue-card">
+            <strong>Paid educator classes</strong>
+            <p>Teachers can launch paid demand-driven classes, with ExamOS earning through the transaction flow.</p>
+          </article>
+        </div>
+        <div class="stack-note">
+          Escrow-based payments make the marketplace more transparent for both parents and tutors while also supporting sustainable platform revenue.
+        </div>
+      </div>
+    </section>
+
+    <section id="budget" class="wrap">
+      <div class="two-grid">
+        <article class="budget-band">
+          <span class="eyebrow">Funding ask</span>
+          <h2>A small launch ask with immediate visible impact.</h2>
+          <div class="budget-grid">
+            <article class="budget-card">
+              <span class="label">Backend hosting</span>
+              <div class="budget-amount">KSh 650</div>
+              <p>This covers the minimum hosting need of at least USD 5 in Kenya shillings so the backend stays live and user actions can actually work.</p>
+            </article>
+            <article class="budget-card">
+              <span class="label">Custom domain</span>
+              <div class="budget-amount">KSh 1,000</div>
+              <p>This gives ExamOS a clean, memorable web identity and helps the product feel launch-ready instead of temporary.</p>
+            </article>
+          </div>
+          <div class="note">
+            <strong>Already handled:</strong> Play Store distribution costs were already taken care of in the earlier project <strong>LocalPro KE</strong>, so this proposal stays tightly focused on deployment essentials.
+          </div>
+        </article>
+        <article class="glass">
+          <span class="label">Long-term vision</span>
+          <h3>National digital learning infrastructure.</h3>
+          <p>
+            The long-term ambition is to make ExamOS a trusted education layer across Kenya by combining AI support, tutoring access, structured notes, demand-driven classes, and institutional partnerships.
+          </p>
+          <ul class="list">
+            <li>Help students learn faster.</li>
+            <li>Help teachers teach better.</li>
+            <li>Help parents stop wondering whether their child actually understood the topic.</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="wrap" style="padding: 28px 0 52px;">
+    <div class="closing-card">
+      <span class="eyebrow">Investor takeaway</span>
+      <h2>ExamOS already has the shape of a scalable education business.</h2>
+      <div class="footer-grid">
+        <div>
+          <p>
+            This is not a request to fund a vague idea. It is a request to help push an already-structured platform into a more credible public launch state.
+          </p>
+          <p>
+            The minimum ask is <strong>KSh 1,650</strong>. A more comfortable support level would be <strong>KSh 2,000+</strong> to create a small cushion around exchange-rate movement and setup overhead.
+          </p>
+        </div>
+        <div>
+          <ul class="list">
+            <li>Investor value comes from backing a product that solves obvious educational pain points.</li>
+            <li>Growth comes from results-led adoption, not empty feature marketing.</li>
+            <li>Revenue grows through tutoring, subscriptions, paid classes, and premium tools.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="cta-row" style="margin-bottom: 0; margin-top: 22px;">
+        <a class="button" href="#positioning">Revisit Proposal</a>
+        <span class="muted" style="color: rgba(249, 241, 230, 0.74);">Prepared for investor-facing deployment</span>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>
