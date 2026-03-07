@@ -251,6 +251,58 @@
       margin-bottom: 4px;
       color: var(--pine);
     }
+    .forecast-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 18px;
+    }
+    .timeline-chart {
+      margin-top: 16px;
+      padding: 18px;
+      border-radius: 22px;
+      background: rgba(255, 255, 255, 0.56);
+      border: 1px solid rgba(53, 37, 20, 0.08);
+    }
+    .line-grid {
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 8px;
+      align-items: end;
+      min-height: 220px;
+      margin-top: 12px;
+    }
+    .line-month {
+      display: grid;
+      justify-items: center;
+      gap: 8px;
+    }
+    .line-bar-wrap {
+      width: 100%;
+      height: 180px;
+      display: flex;
+      align-items: end;
+      justify-content: center;
+    }
+    .line-bar {
+      width: min(26px, 100%);
+      border-radius: 999px 999px 10px 10px;
+      background: linear-gradient(180deg, var(--amber), var(--pine));
+      box-shadow: 0 10px 20px rgba(24, 78, 70, 0.12);
+    }
+    .line-value {
+      font-size: 0.74rem;
+      color: var(--muted);
+      writing-mode: vertical-rl;
+      transform: rotate(180deg);
+      line-height: 1;
+    }
+    .line-label {
+      font-size: 0.72rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
     .demo-grid { grid-template-columns: 1fr 1fr; }
     .flow-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 18px; }
     .flow-card {
@@ -285,7 +337,7 @@
     .muted { color: var(--muted); }
     @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
     @media (max-width: 1100px) {
-      .hero-shell, .section-grid, .two-grid, .budget-grid, .footer-grid, .ecosystem, .phase-grid, .value-grid, .audience-grid, .insight-grid, .revenue-strip, .revenue-mix, .demo-grid, .flow-grid { grid-template-columns: 1fr; }
+      .hero-shell, .section-grid, .two-grid, .budget-grid, .footer-grid, .ecosystem, .phase-grid, .value-grid, .audience-grid, .insight-grid, .revenue-strip, .revenue-mix, .demo-grid, .flow-grid, .forecast-grid { grid-template-columns: 1fr; }
       .hero-metrics, .three-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .ecosystem-board { min-height: 500px; }
       .figure-grid { grid-template-columns: 1fr; }
@@ -305,11 +357,13 @@
       .orbit:nth-child(4) { bottom: 24px; right: 18px; }
       .phase { padding-left: 20px; padding-top: 74px; }
       .chart-row { grid-template-columns: 1fr; }
+      .line-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
     }
     @media (max-width: 560px) {
       .orbit { position: static; width: 100%; animation: none; }
       .ecosystem-board { display: grid; gap: 14px; min-height: auto; }
       .ecosystem-center { position: static; transform: none; width: 100%; height: auto; border-radius: 24px; min-height: 130px; }
+      .line-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
     }
   </style>
 </head>
@@ -752,6 +806,109 @@
             </div>
             <div class="note">
               This is intentionally a rough planning estimate, not a hard forecast. The point is that even modest early activity can already cover a small deployment budget and begin proving the revenue logic.
+            </div>
+          </article>
+        </div>
+        <div class="forecast-grid">
+          <article class="graph-card">
+            <span class="label">Estimated month 6 scenario</span>
+            <h3>Stronger traction with wider platform activity</h3>
+            <p>
+              By the end of month 6, a more ambitious but still reasonable scenario could be <strong>700 active users</strong>, made up of roughly <strong>560 students</strong> and <strong>140 teachers</strong>. If there are <strong>700 token or package purchases</strong> in that month at at least <strong>KSh 30</strong> profit each, package profit becomes <strong>KSh 21,000</strong>.
+            </p>
+            <p>
+              If the platform is now handling about <strong>40 paid classes</strong> per month with an average of <strong>30 students per class</strong> paying around <strong>KSh 80</strong>, that creates <strong>KSh 96,000</strong> in class payments. At <strong>15%</strong> commission, ExamOS keeps <strong>KSh 14,400</strong>.
+            </p>
+            <div class="chart">
+              <div class="chart-row">
+                <span>Package profit</span>
+                <div class="chart-track"><div class="chart-fill" style="width: 59%;"></div></div>
+                <strong>KSh 21,000</strong>
+              </div>
+              <div class="chart-row">
+                <span>Class commission</span>
+                <div class="chart-track"><div class="chart-fill" style="width: 41%;"></div></div>
+                <strong>KSh 14,400</strong>
+              </div>
+              <div class="chart-row">
+                <span>Total estimate</span>
+                <div class="chart-track"><div class="chart-fill" style="width: 100%;"></div></div>
+                <strong>KSh 35,400</strong>
+              </div>
+            </div>
+          </article>
+          <article class="graph-card">
+            <span class="label">Revenue growth line</span>
+            <h3>Estimated monthly growth from month 1 to month 12</h3>
+            <p>
+              This is a rough momentum view showing how revenue could rise as user count, class activity, and package purchases increase over time.
+            </p>
+            <div class="timeline-chart">
+              <div class="line-grid">
+                <div class="line-month">
+                  <span class="line-value">1.2k</span>
+                  <div class="line-bar-wrap"><div class="line-bar" style="height: 12px;"></div></div>
+                  <span class="line-label">M1</span>
+                </div>
+                <div class="line-month">
+                  <span class="line-value">2.4k</span>
+                  <div class="line-bar-wrap"><div class="line-bar" style="height: 22px;"></div></div>
+                  <span class="line-label">M2</span>
+                </div>
+                <div class="line-month">
+                  <span class="line-value">9.8k</span>
+                  <div class="line-bar-wrap"><div class="line-bar" style="height: 50px;"></div></div>
+                  <span class="line-label">M3</span>
+                </div>
+                <div class="line-month">
+                  <span class="line-value">14k</span>
+                  <div class="line-bar-wrap"><div class="line-bar" style="height: 72px;"></div></div>
+                  <span class="line-label">M4</span>
+                </div>
+                <div class="line-month">
+                  <span class="line-value">22k</span>
+                  <div class="line-bar-wrap"><div class="line-bar" style="height: 105px;"></div></div>
+                  <span class="line-label">M5</span>
+                </div>
+                <div class="line-month">
+                  <span class="line-value">35.4k</span>
+                  <div class="line-bar-wrap"><div class="line-bar" style="height: 138px;"></div></div>
+                  <span class="line-label">M6</span>
+                </div>
+                <div class="line-month">
+                  <span class="line-value">41k</span>
+                  <div class="line-bar-wrap"><div class="line-bar" style="height: 150px;"></div></div>
+                  <span class="line-label">M7</span>
+                </div>
+                <div class="line-month">
+                  <span class="line-value">48k</span>
+                  <div class="line-bar-wrap"><div class="line-bar" style="height: 160px;"></div></div>
+                  <span class="line-label">M8</span>
+                </div>
+                <div class="line-month">
+                  <span class="line-value">55k</span>
+                  <div class="line-bar-wrap"><div class="line-bar" style="height: 168px;"></div></div>
+                  <span class="line-label">M9</span>
+                </div>
+                <div class="line-month">
+                  <span class="line-value">63k</span>
+                  <div class="line-bar-wrap"><div class="line-bar" style="height: 174px;"></div></div>
+                  <span class="line-label">M10</span>
+                </div>
+                <div class="line-month">
+                  <span class="line-value">70k</span>
+                  <div class="line-bar-wrap"><div class="line-bar" style="height: 178px;"></div></div>
+                  <span class="line-label">M11</span>
+                </div>
+                <div class="line-month">
+                  <span class="line-value">82k</span>
+                  <div class="line-bar-wrap"><div class="line-bar" style="height: 180px;"></div></div>
+                  <span class="line-label">M12</span>
+                </div>
+              </div>
+            </div>
+            <div class="note">
+              The shape here assumes word-of-mouth growth, stronger teacher adoption, more paid classes, and a higher number of recurring token purchases as the platform becomes more trusted.
             </div>
           </article>
         </div>
