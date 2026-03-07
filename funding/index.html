@@ -76,6 +76,13 @@
     }
     .brand-copy strong { display: block; font-size: 1rem; }
     .nav { display: flex; flex-wrap: wrap; gap: 16px; color: var(--muted); font-size: 0.94rem; }
+    .nav-download {
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: linear-gradient(135deg, var(--pine), #103a34);
+      color: #f8f2e7;
+      box-shadow: 0 12px 24px rgba(16, 58, 52, 0.18);
+    }
     .hero { padding: 42px 0 22px; }
     .hero-shell { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 22px; align-items: stretch; }
     .hero-main, .glass, .quote-card, .budget-band, .closing-card {
@@ -103,7 +110,7 @@
     h3 { font-size: 1.18rem; margin-bottom: 10px; }
     h4 { font-size: 1rem; margin-bottom: 8px; }
     .lead { margin: 18px 0 22px; max-width: 62ch; font-size: 1.08rem; color: #352d27; }
-    .chip-row, .cta-row, .hero-metrics, .section-grid, .three-grid, .two-grid, .phase-grid, .budget-grid, .footer-grid, .value-grid, .audience-grid, .insight-grid {
+    .chip-row, .cta-row, .hero-metrics, .section-grid, .three-grid, .two-grid, .phase-grid, .budget-grid, .footer-grid, .value-grid, .audience-grid, .insight-grid, .demo-grid, .flow-grid, .revenue-mix {
       display: grid; gap: 16px;
     }
     .chip-row { grid-template-columns: repeat(3, max-content); gap: 10px; align-items: center; }
@@ -142,10 +149,10 @@
     main section { padding: 26px 0; }
     .section-grid, .two-grid, .budget-grid, .footer-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
     .three-grid, .value-grid, .audience-grid, .insight-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    .card, .phase, .value-card, .audience-card, .insight-card, .budget-card, .revenue-card, .ecosystem-card {
+    .card, .phase, .value-card, .audience-card, .insight-card, .budget-card, .revenue-card, .ecosystem-card, .demo-card, .flow-card, .graph-card {
       background: rgba(255, 251, 244, 0.8); border: 1px solid rgba(53, 37, 20, 0.08); border-radius: 24px; padding: 20px; box-shadow: var(--shadow-md);
     }
-    .card p, .phase p, .value-card p, .audience-card p, .insight-card p, .budget-card p, .revenue-card p, .ecosystem-card p, .glass p, .quote-card p, .text, li {
+    .card p, .phase p, .value-card p, .audience-card p, .insight-card p, .budget-card p, .revenue-card p, .ecosystem-card p, .glass p, .quote-card p, .text, li, .demo-card p, .flow-card p, .graph-card p {
       color: #463b31;
     }
     .quote-card { border-radius: 30px; padding: 26px; }
@@ -185,7 +192,7 @@
     .orbit strong, .ecosystem-center strong, .phase-index, .budget-amount, .revenue-card strong { display: block; }
     .orbit strong { margin-bottom: 6px; font-size: 1rem; }
     .phase-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 18px; }
-    .phase { position: relative; padding-top: 54px; }
+    .phase { position: relative; padding-top: 20px; padding-left: 82px; min-height: 100%; }
     .phase-index {
       position: absolute; top: 18px; left: 18px; width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center;
       background: linear-gradient(135deg, var(--amber), var(--amber-deep)); color: #fff8ef; font-size: 0.92rem; font-weight: 700; box-shadow: 0 12px 28px rgba(142, 84, 23, 0.2);
@@ -200,6 +207,75 @@
     .budget-amount { font-size: 2rem; color: var(--amber-deep); margin: 8px 0; letter-spacing: -0.03em; }
     .revenue-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-top: 18px; }
     .revenue-card strong { font-size: 1rem; margin-bottom: 8px; }
+    .revenue-mix { grid-template-columns: 1.2fr 0.8fr; margin-top: 18px; align-items: stretch; }
+    .graph-card { min-height: 100%; }
+    .chart {
+      display: grid;
+      gap: 14px;
+      margin-top: 10px;
+    }
+    .chart-row {
+      display: grid;
+      grid-template-columns: 140px 1fr 72px;
+      gap: 12px;
+      align-items: center;
+      font-size: 0.92rem;
+    }
+    .chart-track {
+      height: 14px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(24, 78, 70, 0.08);
+      border: 1px solid rgba(53, 37, 20, 0.05);
+    }
+    .chart-fill {
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--amber), var(--pine));
+    }
+    .figure-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .figure {
+      padding: 14px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.58);
+      border: 1px solid rgba(53, 37, 20, 0.08);
+    }
+    .figure strong {
+      display: block;
+      font-size: 1.3rem;
+      margin-bottom: 4px;
+      color: var(--pine);
+    }
+    .demo-grid { grid-template-columns: 1fr 1fr; }
+    .flow-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 18px; }
+    .flow-card {
+      position: relative;
+      padding-top: 50px;
+      min-height: 100%;
+    }
+    .flow-card::before {
+      content: attr(data-step);
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      font-size: 0.8rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--amber), var(--amber-deep));
+      color: #fff8ef;
+    }
+    .demo-card h3, .flow-card h3, .graph-card h3 {
+      margin-bottom: 8px;
+    }
     .closing-card {
       background: linear-gradient(135deg, rgba(24, 78, 70, 0.94), rgba(15, 52, 46, 0.98)); color: #f9f1e6; box-shadow: 0 24px 50px rgba(15, 52, 46, 0.24);
     }
@@ -209,9 +285,10 @@
     .muted { color: var(--muted); }
     @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
     @media (max-width: 1100px) {
-      .hero-shell, .section-grid, .two-grid, .budget-grid, .footer-grid, .ecosystem, .phase-grid, .value-grid, .audience-grid, .insight-grid, .revenue-strip { grid-template-columns: 1fr; }
+      .hero-shell, .section-grid, .two-grid, .budget-grid, .footer-grid, .ecosystem, .phase-grid, .value-grid, .audience-grid, .insight-grid, .revenue-strip, .revenue-mix, .demo-grid, .flow-grid { grid-template-columns: 1fr; }
       .hero-metrics, .three-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .ecosystem-board { min-height: 500px; }
+      .figure-grid { grid-template-columns: 1fr; }
     }
     @media (max-width: 760px) {
       .topbar-inner { flex-direction: column; align-items: flex-start; }
@@ -226,6 +303,8 @@
       .orbit:nth-child(2) { top: 24px; right: 18px; }
       .orbit:nth-child(3) { bottom: 24px; left: 18px; }
       .orbit:nth-child(4) { bottom: 24px; right: 18px; }
+      .phase { padding-left: 20px; padding-top: 74px; }
+      .chart-row { grid-template-columns: 1fr; }
     }
     @media (max-width: 560px) {
       .orbit { position: static; width: 100%; animation: none; }
@@ -250,6 +329,7 @@
         <a href="#growth">Growth</a>
         <a href="#revenue">Revenue</a>
         <a href="#budget">Budget</a>
+        <a class="nav-download" href="https://github.com/ErickCoder254ke/pet/releases/download/ExamOS-apk/ExamOS.apk" target="_blank" rel="noreferrer">Download App</a>
       </nav>
     </div>
   </header>
@@ -613,6 +693,116 @@
         <div class="stack-note">
           Escrow-based payments make the marketplace more transparent for both parents and tutors while also supporting sustainable platform revenue.
         </div>
+        <div class="revenue-mix">
+          <article class="graph-card">
+            <span class="label">Rough month 3 estimate</span>
+            <h3>Projected revenue with 250 users</h3>
+            <p>
+              Assumption set: by month 3, ExamOS has <strong>250 active users</strong> made up of about <strong>200 students</strong> and <strong>50 teachers</strong>. If roughly <strong>200 package purchases</strong> happen in that month and each purchase gives at least <strong>KSh 30</strong> profit, that contributes <strong>KSh 6,000</strong>.
+            </p>
+            <p>
+              For classes, assume <strong>16 paid classes</strong> in the month, with an average of <strong>20 students per class</strong> paying about <strong>KSh 80</strong> each. That is <strong>KSh 25,600</strong> in class payments flowing through the platform, and at <strong>15%</strong> commission ExamOS keeps <strong>KSh 3,840</strong>.
+            </p>
+            <div class="chart">
+              <div class="chart-row">
+                <span>Package profit</span>
+                <div class="chart-track"><div class="chart-fill" style="width: 61%;"></div></div>
+                <strong>KSh 6,000</strong>
+              </div>
+              <div class="chart-row">
+                <span>Class commission</span>
+                <div class="chart-track"><div class="chart-fill" style="width: 39%;"></div></div>
+                <strong>KSh 3,840</strong>
+              </div>
+              <div class="chart-row">
+                <span>Total estimate</span>
+                <div class="chart-track"><div class="chart-fill" style="width: 100%;"></div></div>
+                <strong>KSh 9,840</strong>
+              </div>
+            </div>
+          </article>
+          <article class="graph-card">
+            <span class="label">Math summary</span>
+            <h3>Simple assumptions, visible upside</h3>
+            <div class="figure-grid">
+              <div class="figure">
+                <strong>250</strong>
+                <span>Users by month 3</span>
+              </div>
+              <div class="figure">
+                <strong>200</strong>
+                <span>Package purchases</span>
+              </div>
+              <div class="figure">
+                <strong>16</strong>
+                <span>Hosted paid classes</span>
+              </div>
+              <div class="figure">
+                <strong>20</strong>
+                <span>Students per class</span>
+              </div>
+              <div class="figure">
+                <strong>KSh 80</strong>
+                <span>Avg fee per class seat</span>
+              </div>
+              <div class="figure">
+                <strong>15%</strong>
+                <span>Platform commission</span>
+              </div>
+            </div>
+            <div class="note">
+              This is intentionally a rough planning estimate, not a hard forecast. The point is that even modest early activity can already cover a small deployment budget and begin proving the revenue logic.
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="wrap">
+      <div class="demo-grid">
+        <article class="glass">
+          <span class="eyebrow">Main AI engine demo</span>
+          <h2>How the engine helps without making the user think like an engineer.</h2>
+          <p class="text">
+            Under the hood, ExamOS takes learning material, breaks it into useful pieces, finds the most relevant sections, and then uses those sections to generate a cleaner answer, quiz, or exam. The user only sees speed and relevance. The complexity stays in the background.
+          </p>
+          <div class="note">
+            In simple terms: the platform first understands the notes, then looks for the right parts, then uses those parts to create a useful academic output.
+          </div>
+        </article>
+        <article class="demo-card">
+          <span class="label">Plain-language glossary</span>
+          <h3>The words behind the engine</h3>
+          <ul class="list">
+            <li><strong>Chunks:</strong> small pieces of notes or documents so the system can work with content in manageable parts.</li>
+            <li><strong>Embedding:</strong> a way of teaching the system what a piece of content is about so it can find related material later.</li>
+            <li><strong>Retrieval:</strong> when the platform pulls back the most relevant note pieces for the topic being asked about.</li>
+            <li><strong>Generation:</strong> the final step where ExamOS turns the relevant material into quizzes, explanations, summaries, or exam drafts.</li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="flow-grid">
+        <article class="flow-card" data-step="1">
+          <span class="label">Step one</span>
+          <h3>Learning material enters</h3>
+          <p>Notes, PDFs, and curriculum content are brought into the platform so the engine has real academic material to work with.</p>
+        </article>
+        <article class="flow-card" data-step="2">
+          <span class="label">Step two</span>
+          <h3>Content is organized</h3>
+          <p>The system breaks that content into smaller pieces and labels what each part is generally about for faster matching later.</p>
+        </article>
+        <article class="flow-card" data-step="3">
+          <span class="label">Step three</span>
+          <h3>Relevant pieces are found</h3>
+          <p>When a student or teacher asks for help, ExamOS searches those stored pieces and pulls the most useful ones first.</p>
+        </article>
+        <article class="flow-card" data-step="4">
+          <span class="label">Step four</span>
+          <h3>A useful answer is created</h3>
+          <p>The engine uses those relevant pieces to generate a more grounded output, whether that is a quiz, explanation, study aid, or exam draft.</p>
+        </article>
       </div>
     </section>
 
