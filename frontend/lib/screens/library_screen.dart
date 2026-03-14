@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 
 import '../models/models.dart';
 import '../services/api_client.dart';
@@ -112,7 +112,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
       if (!mounted) return;
       await Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) => GenerationViewerScreen(generation: resolved),
+          builder: (_) => GenerationViewerScreen(
+              generation: resolved,
+              apiClient: widget.apiClient,
+              session: widget.session,
+              onSessionUpdated: widget.onSessionUpdated,
+              onSessionInvalid: widget.onSessionInvalid,
+            ),
         ),
       );
     } on ApiException catch (e) {
@@ -340,7 +346,7 @@ class _DocumentTile extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '${doc.fileType.toUpperCase()} • ${doc.totalChunks} chunks',
+                    '${doc.fileType.toUpperCase()} â€¢ ${doc.totalChunks} chunks',
                     style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
                   ),
                   const SizedBox(height: 2),
@@ -626,3 +632,4 @@ class _GlowCircle extends StatelessWidget {
     );
   }
 }
+

@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
@@ -8,26 +8,155 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 import '../models/models.dart';
+import '../services/api_client.dart';
 import '../theme/app_colors.dart';
 import '../widgets/glass_container.dart';
 
 enum _ViewMode { student, teacher }
 
 class GenerationViewerScreen extends StatefulWidget {
-  const GenerationViewerScreen({super.key, required this.generation});
+  const GenerationViewerScreen({
+    super.key,
+    required this.generation,
+    required this.apiClient,
+    required this.session,
+    required this.onSessionUpdated,
+    required this.onSessionInvalid,
+  });
 
   final GenerationResponse generation;
+  final ApiClient apiClient;
+  final Session session;
+  final ValueChanged<Session> onSessionUpdated;
+  final VoidCallback onSessionInvalid;
 
   @override
   State<GenerationViewerScreen> createState() => _GenerationViewerScreenState();
 }
 
 class _GenerationViewerScreenState extends State<GenerationViewerScreen> {
+  late GenerationResponse _generation;
+  late Session _session;
+  bool _isRevising = false;
+
   _ViewMode _mode = _ViewMode.student;
 
+  @override
+  void initState() {
+    super.initState();
+    _generation = _generation;
+    _session = widget.session;
+  }
+
+  Future<T> _runWithAuthRetry<T>(
+    Future<T> Function(String accessToken) op,
+  ) async {
+    try {
+      return await op(_session.accessToken);
+    } on ApiException catch (e) {
+      if (e.statusCode != 401) rethrow;
+      try {
+        final refreshed = await widget.apiClient.refreshTokens(
+          refreshToken: _session.refreshToken,
+        );
+        final nextSession = refreshed.toSession();
+        widget.onSessionUpdated(nextSession);
+        if (mounted) setState(() => _session = nextSession);
+        return await op(nextSession.accessToken);
+      } on ApiException {
+        widget.onSessionInvalid();
+        rethrow;
+      }
+    }
+  }
+
+  int _revisionLimit() => _generation.revisionLimit ?? 2;
+  int _revisionCount() => _generation.revisionCount ?? 0;
+  int _revisionRemaining() =>
+      math.max(0, _revisionLimit() - _revisionCount());
+
+  Future<void> _promptRevision(BuildContext context) async {
+    if (_isRevising) return;
+    if (_revisionRemaining() <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Revision limit reached.')),
+      );
+      return;
+    }
+
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Revise Exam (${_revisionRemaining()} left)'),
+        content: TextField(
+          controller: controller,
+          minLines: 3,
+          maxLines: 6,
+          decoration: const InputDecoration(
+            hintText:
+                'Describe changes you want (e.g. "Add 5 more structured questions in SECTION B" or "Fix mark allocation to total 100").',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text),
+            child: const Text('Revise'),
+          ),
+        ],
+      ),
+    );
+
+    final instructions = (result ?? '').trim();
+    if (instructions.isEmpty) return;
+    if (!mounted) return;
+    await _submitRevision(instructions);
+  }
+
+  Future<void> _submitRevision(String instructions) async {
+    if (_isRevising) return;
+    setState(() => _isRevising = true);
+    try {
+      final updated = await _runWithAuthRetry(
+        (token) => widget.apiClient.reviseExamGeneration(
+          accessToken: token,
+          generationId: _generation.id,
+          instructions: instructions,
+        ),
+      );
+      if (!mounted) return;
+      setState(() => _generation = updated);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _revisionRemaining() > 0
+                ? 'Exam revised. ${_revisionRemaining()} revision(s) left.'
+                : 'Exam revised. No revisions left.',
+          ),
+        ),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to revise exam right now.')),
+      );
+    } finally {
+      if (mounted) setState(() => _isRevising = false);
+    }
+  }
+
   bool get _supportsModes =>
-      widget.generation.generationType == 'quiz' ||
-      widget.generation.generationType == 'exam';
+      _generation.generationType == 'quiz' ||
+      _generation.generationType == 'exam';
 
   String? _creditBucketLabel(String? bucket) {
     final norm = (bucket ?? '').trim().toLowerCase();
@@ -47,7 +176,7 @@ class _GenerationViewerScreenState extends State<GenerationViewerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final type = widget.generation.generationType;
+    final type = _generation.generationType;
     return Scaffold(
       appBar: AppBar(
         title: Text(_title(type)),
@@ -62,6 +191,21 @@ class _GenerationViewerScreenState extends State<GenerationViewerScreen> {
               tooltip: 'Print Exam',
               onPressed: () => _printExam(context),
               icon: const Icon(Icons.print_rounded),
+            ),
+          if (type == 'exam')
+            IconButton(
+              tooltip: _revisionRemaining() > 0
+                  ? 'Revise Exam (${_revisionRemaining()} left)'
+                  : 'Revision limit reached',
+              onPressed:
+                  _revisionRemaining() > 0 ? () => _promptRevision(context) : null,
+              icon: _isRevising
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.edit_note_rounded),
             ),
         ],
       ),
@@ -96,7 +240,7 @@ class _GenerationViewerScreenState extends State<GenerationViewerScreen> {
                         ),
                         const SizedBox(width: 8),
                         if (_creditBucketLabel(
-                              widget.generation.consumedCreditBucket,
+                              _generation.consumedCreditBucket,
                             ) !=
                             null)
                           Container(
@@ -113,7 +257,7 @@ class _GenerationViewerScreenState extends State<GenerationViewerScreen> {
                             ),
                             child: Text(
                               _creditBucketLabel(
-                                widget.generation.consumedCreditBucket,
+                                _generation.consumedCreditBucket,
                               )!,
                               style: const TextStyle(
                                 fontSize: 11,
@@ -123,7 +267,7 @@ class _GenerationViewerScreenState extends State<GenerationViewerScreen> {
                           ),
                         const Spacer(),
                         Text(
-                          widget.generation.createdAt
+                          _generation.createdAt
                               .toLocal()
                               .toString()
                               .split('.')
@@ -173,22 +317,22 @@ class _GenerationViewerScreenState extends State<GenerationViewerScreen> {
   Widget _bodyForType(String type) {
     switch (type) {
       case 'summary':
-        return _SummaryCard(content: widget.generation.content);
+        return _SummaryCard(content: _generation.content);
       case 'concepts':
-        return _ConceptsCard(content: widget.generation.content);
+        return _ConceptsCard(content: _generation.content);
       case 'examples':
-        return _ExamplesCard(content: widget.generation.content);
+        return _ExamplesCard(content: _generation.content);
       case 'quiz':
         return _mode == _ViewMode.teacher
-            ? _TeacherQuizCard(content: widget.generation.content)
-            : _StudentQuizCard(content: widget.generation.content);
+            ? _TeacherQuizCard(content: _generation.content)
+            : _StudentQuizCard(content: _generation.content);
       case 'exam':
         return _ExamCard(
-          content: widget.generation.content,
+          content: _generation.content,
           teacherMode: _mode == _ViewMode.teacher,
         );
       default:
-        return _RawJson(content: widget.generation.content);
+        return _RawJson(content: _generation.content);
     }
   }
 
@@ -204,7 +348,7 @@ class _GenerationViewerScreenState extends State<GenerationViewerScreen> {
   Future<void> _exportCurrentAsPdf(BuildContext context) async {
     try {
       final pdf = pw.Document();
-      final type = widget.generation.generationType;
+      final type = _generation.generationType;
       pdf.addPage(
         pw.MultiPage(
           margin: const pw.EdgeInsets.all(28),
@@ -242,7 +386,7 @@ class _GenerationViewerScreenState extends State<GenerationViewerScreen> {
 
   List<pw.Widget> _buildPdfBlocks(String type, {required bool teacherMode}) {
     final title = _title(type);
-    final content = widget.generation.content;
+    final content = _generation.content;
     final isTeacherCopy = teacherMode && (type == "quiz" || type == "exam");
     final header = <pw.Widget>[
       if (type == 'exam')
@@ -254,7 +398,7 @@ class _GenerationViewerScreenState extends State<GenerationViewerScreen> {
         ),
         pw.SizedBox(height: 4),
         pw.Text(
-          'Generated: ${widget.generation.createdAt.toLocal()}',
+          'Generated: ${_generation.createdAt.toLocal()}',
           style: const pw.TextStyle(fontSize: 10),
         ),
         pw.Divider(),
@@ -486,7 +630,7 @@ class _GenerationViewerScreenState extends State<GenerationViewerScreen> {
       ),
       pw.SizedBox(height: 8),
       pw.Text(
-        'Generated: ${widget.generation.createdAt.toLocal()}',
+        'Generated: ${_generation.createdAt.toLocal()}',
         style: const pw.TextStyle(fontSize: 9),
       ),
       pw.Divider(),
@@ -1199,3 +1343,5 @@ class _AppearState extends State<_Appear> {
     );
   }
 }
+
+

@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -374,7 +374,13 @@ class _JobsScreenState extends State<JobsScreen> with WidgetsBindingObserver {
       if (!mounted) return;
       await Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) => GenerationViewerScreen(generation: generation),
+          builder: (_) => GenerationViewerScreen(
+              generation: generation,
+              apiClient: widget.apiClient,
+              session: widget.session,
+              onSessionUpdated: widget.onSessionUpdated,
+              onSessionInvalid: widget.onSessionInvalid,
+            ),
         ),
       );
     } on ApiException catch (e) {
@@ -729,8 +735,8 @@ class _JobCard extends StatelessWidget {
                 ),
                 child: Text(
                   'ETA ~${_formatEta(liveRemainingSeconds!)}'
-                  '${job.queuePosition != null && job.status == 'queued' ? ' • Queue #${job.queuePosition}' : ''}'
-                  '${(job.etaConfidence ?? '').isNotEmpty ? ' • ${job.etaConfidence} confidence' : ''}',
+                  '${job.queuePosition != null && job.status == 'queued' ? ' â€¢ Queue #${job.queuePosition}' : ''}'
+                  '${(job.etaConfidence ?? '').isNotEmpty ? ' â€¢ ${job.etaConfidence} confidence' : ''}',
                   style: const TextStyle(
                     fontSize: 12,
                     color: AppColors.textMuted,
@@ -888,3 +894,4 @@ class _JobsBackground extends StatelessWidget {
     );
   }
 }
+

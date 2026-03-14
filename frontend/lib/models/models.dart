@@ -1,4 +1,4 @@
-class Session {
+﻿class Session {
   Session({
     required this.accessToken,
     required this.refreshToken,
@@ -220,6 +220,8 @@ class GenerationResponse {
     required this.content,
     required this.createdAt,
     this.consumedCreditBucket,
+    this.revisionCount,
+    this.revisionLimit,
   });
 
   final String id;
@@ -228,6 +230,8 @@ class GenerationResponse {
   final Map<String, dynamic> content;
   final DateTime createdAt;
   final String? consumedCreditBucket;
+  final int? revisionCount;
+  final int? revisionLimit;
 
   factory GenerationResponse.fromJson(Map<String, dynamic> json) {
     return GenerationResponse(
@@ -239,6 +243,8 @@ class GenerationResponse {
           DateTime.tryParse(json['created_at'] as String? ?? '') ??
           DateTime.now(),
       consumedCreditBucket: json['consumed_credit_bucket'] as String?,
+      revisionCount: (json['revision_count'] as num?)?.toInt(),
+      revisionLimit: (json['revision_limit'] as num?)?.toInt(),
     );
   }
 }
@@ -1218,3 +1224,7 @@ class AdminRuntimeSettings {
     );
   }
 }
+
+
+
+

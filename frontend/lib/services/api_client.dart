@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -337,6 +337,28 @@ class ApiClient {
     return GenerationResponse.fromJson(data);
   }
 
+
+  Future<GenerationResponse> reviseExamGeneration({
+    required String accessToken,
+    required String generationId,
+    required String instructions,
+  }) async {
+    final safeInstructions = instructions.trim();
+    if (safeInstructions.isEmpty) {
+      throw ApiException('Revision instructions are required.');
+    }
+    final response = await _sendRequest(
+      () => http
+          .post(
+            _uri('/generations/$generationId/revise'),
+            headers: _jsonHeaders(accessToken: accessToken),
+            body: jsonEncode({'instructions': safeInstructions}),
+          )
+          .timeout(_generationTimeout),
+    );
+    final data = _parseJson(response);
+    return GenerationResponse.fromJson(data as Map<String, dynamic>);
+  }
   Future<Map<String, dynamic>> getDashboardOverview({
     required String accessToken,
   }) async {
@@ -1570,3 +1592,4 @@ class ApiClient {
     }
   }
 }
+

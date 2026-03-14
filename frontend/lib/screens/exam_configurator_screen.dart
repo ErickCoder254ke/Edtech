@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 
 import 'package:flutter/material.dart';
 
@@ -143,11 +143,9 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
     _PromptTemplate(
       id: 'institution_header_custom',
       title: 'School + Term Header',
-      subtitle: 'Inject school name and exam title.',
+      subtitle: 'School name and term.',
       body:
-          'Use the school name "{{school_name}}" in the exam header. '
-          'Set exam title to "{{exam_title}}" and keep professional formatting. '
-          'Include class level, subject, total marks, and time allowed in header.',
+          'Use the school name "{{school_name}}" and term "{{exam_title}}" in the exam header.',
       requiresSchoolName: true,
       requiresExamTitle: true,
       recommendedFor: {'exam', 'quiz'},
@@ -565,7 +563,13 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
     if (latest == null) return;
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => GenerationViewerScreen(generation: latest),
+        builder: (_) => GenerationViewerScreen(
+              generation: latest,
+              apiClient: widget.apiClient,
+              session: widget.session,
+              onSessionUpdated: widget.onSessionUpdated,
+              onSessionInvalid: widget.onSessionInvalid,
+            ),
       ),
     );
   }
@@ -630,7 +634,7 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
               TextField(
                 controller: examTitleController,
                 decoration: const InputDecoration(
-                  labelText: 'Exam title',
+                  labelText: 'Term',
                   hintText: 'e.g. Mid Term or End Term',
                 ),
               ),
@@ -1000,7 +1004,7 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
                                   style: const TextStyle(fontSize: 13),
                                 ),
                                 subtitle: Text(
-                                  '${doc.fileType.toUpperCase()} • ${doc.totalChunks} chunks\n${_documentRetentionLabel(doc)}',
+                                  '${doc.fileType.toUpperCase()} â€¢ ${doc.totalChunks} chunks\n${_documentRetentionLabel(doc)}',
                                   style: const TextStyle(fontSize: 11),
                                 ),
                               ),
@@ -1764,3 +1768,5 @@ class _PromptTemplate {
   final bool requiresExamTitle;
   final Set<String> recommendedFor;
 }
+
+

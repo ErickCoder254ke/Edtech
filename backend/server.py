@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Form, Request, BackgroundTasks, WebSocket, WebSocketDisconnect
+﻿from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Form, Request, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
@@ -135,6 +135,7 @@ REFRESH_TOKEN_DAYS = int(os.environ.get("REFRESH_TOKEN_DAYS", "30"))
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", str(20 * 1024 * 1024)))
 EMBEDDING_CONCURRENCY = int(os.environ.get("EMBEDDING_CONCURRENCY", "8"))
 GEN_PER_MIN_LIMIT = int(os.environ.get("GEN_PER_MIN_LIMIT", "20"))
+EXAM_REVISION_PER_MIN_LIMIT = int(os.environ.get("EXAM_REVISION_PER_MIN_LIMIT", "6"))
 UPLOAD_PER_MIN_LIMIT = int(os.environ.get("UPLOAD_PER_MIN_LIMIT", "6"))
 AUTH_PER_MIN_LIMIT = int(os.environ.get("AUTH_PER_MIN_LIMIT", "20"))
 AUTH_USER_PER_MIN_LIMIT = int(os.environ.get("AUTH_USER_PER_MIN_LIMIT", "60"))
@@ -760,12 +761,19 @@ class GenerationRequest(BaseModel):
     additional_instructions: Optional[str] = None
 
 
+
+class ExamRevisionRequest(BaseModel):
+    instructions: str = Field(min_length=1, max_length=2000)
+
+
 class GenerationResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     user_id: str
     generation_type: str
     content: Dict[str, Any]
+    revision_count: Optional[int] = None
+    revision_limit: Optional[int] = None
     consumed_credit_bucket: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -7595,6 +7603,8 @@ async def run_generation_pipeline(
         user_id=user_id,
         generation_type=request.generation_type,
         content=content,
+        revision_count=0 if request.generation_type == "exam" else None,
+        revision_limit=2 if request.generation_type == "exam" else None,
         consumed_credit_bucket=(consumed_credit_bucket or "").strip().lower() or None,
     )
     gen_dict = generation.model_dump()
@@ -7930,6 +7940,96 @@ async def get_generation(generation_id: str, current_user: Dict[str, Any] = Depe
         raise HTTPException(status_code=404, detail="Generation not found")
     return GenerationResponse(**normalize_datetime_fields(gen, ["created_at"]))
 
+
+
+
+@api_router.post("/generations/{generation_id}/revise", response_model=GenerationResponse)
+async def revise_exam_generation(
+    generation_id: str,
+    payload: ExamRevisionRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    await ensure_rate_limit(current_user["id"], "exam_revision_user", EXAM_REVISION_PER_MIN_LIMIT)
+    generation = await db.generations.find_one(
+        {"id": generation_id, "user_id": current_user["id"]},
+        {"_id": 0},
+    )
+    if not generation:
+        raise HTTPException(status_code=404, detail="Generation not found")
+    if str(generation.get("generation_type") or "").strip().lower() != "exam":
+        raise HTTPException(status_code=400, detail="Only exam generations can be revised")
+
+    revision_limit = int(generation.get("revision_limit") or 2)
+    revision_count = int(generation.get("revision_count") or 0)
+    if revision_count >= revision_limit:
+        raise HTTPException(status_code=400, detail="Revision limit reached (2)")
+
+    existing_content = generation.get("content") or {}
+    instructions = (payload.instructions or "").strip()
+    if not instructions:
+        raise HTTPException(status_code=400, detail="Revision instructions are required")
+
+    system_msg = (
+        "You are an expert academic assistant. "
+        "Revise the provided exam strictly according to the user request. "
+        "Return ONLY valid JSON."
+    )
+    prompt = (
+        "You are given an exam paper in JSON format (EXAM_JSON).\\n\\n"
+        "EXAM_JSON:\\n" + json.dumps(existing_content, ensure_ascii=False) + "\\n\\n"
+        "USER_REVISION_REQUEST:\\n" + instructions + "\\n\\n"
+        "TASK:\\n"
+        "- Apply the user requested changes to the exam.\\n"
+        "- Keep the same overall JSON schema and keys as EXAM_JSON.\\n"
+        "- Preserve teacher fields (answer, mark_scheme) when present unless the user asks to remove them.\\n"
+        "- Keep subject/class_level/exam_title unless the user explicitly requests changing them.\\n"
+        "- Return ONLY valid JSON (no markdown, no commentary)."
+    )
+
+    try:
+        revised_text = await generate_with_llm(prompt, system_msg, generation_type="exam")
+    except HTTPException as exc:
+        logger.error(
+            "exam_revision_llm_failed user_id=%s generation_id=%s status=%s detail=%s",
+            current_user["id"],
+            generation_id,
+            exc.status_code,
+            exc.detail,
+        )
+        if exc.status_code == 429:
+            raise HTTPException(
+                status_code=429,
+                detail="Revision service is busy right now. Please retry in a moment.",
+            )
+        raise HTTPException(
+            status_code=502,
+            detail="Revision service is temporarily unavailable. Please retry.",
+        )
+
+    revision_request = GenerationRequest(generation_type="exam")
+    content = await _parse_and_validate_generation_output(revision_request, revised_text)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.generations.update_one(
+        {"id": generation_id, "user_id": current_user["id"]},
+        {
+            "$set": {
+                "content": content,
+                "revision_count": revision_count + 1,
+                "revision_limit": revision_limit,
+                "updated_at": now_iso,
+            }
+        },
+    )
+    await increment_usage_counter(current_user["id"], "exam_revisions_total", 1)
+
+    updated = await db.generations.find_one(
+        {"id": generation_id, "user_id": current_user["id"]},
+        {"_id": 0},
+    )
+    if not updated:
+        raise HTTPException(status_code=500, detail="Revised generation could not be loaded")
+    return GenerationResponse(**normalize_datetime_fields(updated, ["created_at"]))
 
 @api_router.delete("/generations/{generation_id}")
 async def delete_generation(generation_id: str, current_user: Dict[str, Any] = Depends(get_current_user)):
@@ -11185,3 +11285,5 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
