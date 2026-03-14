@@ -249,6 +249,61 @@ class GenerationResponse {
   }
 }
 
+
+class ChatMessage {
+  ChatMessage({required this.role, required this.content});
+
+  final String role;
+  final String content;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'role': role,
+      'content': content,
+    };
+  }
+}
+
+class ChatSource {
+  ChatSource({
+    required this.documentId,
+    required this.chunkIndex,
+    this.score,
+  });
+
+  final String documentId;
+  final int chunkIndex;
+  final double? score;
+
+  factory ChatSource.fromJson(Map<String, dynamic> json) {
+    return ChatSource(
+      documentId: json['document_id'] as String? ?? '',
+      chunkIndex: (json['chunk_index'] as num?)?.toInt() ?? 0,
+      score: (json['score'] as num?)?.toDouble(),
+    );
+  }
+}
+
+class ChatResponse {
+  ChatResponse({required this.answer, this.sources = const []});
+
+  final String answer;
+  final List<ChatSource> sources;
+
+  factory ChatResponse.fromJson(Map<String, dynamic> json) {
+    final rawSources = json['sources'];
+    final sources = rawSources is List
+        ? rawSources
+            .whereType<Map>()
+            .map((s) => ChatSource.fromJson(s.cast<String, dynamic>()))
+            .toList(growable: false)
+        : const <ChatSource>[];
+    return ChatResponse(
+      answer: json['answer'] as String? ?? '',
+      sources: sources,
+    );
+  }
+}
 class GenerationJobResponse {
   GenerationJobResponse({
     required this.jobId,
@@ -1224,6 +1279,8 @@ class AdminRuntimeSettings {
     );
   }
 }
+
+
 
 
 

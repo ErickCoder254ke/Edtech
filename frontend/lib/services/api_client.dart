@@ -359,6 +359,35 @@ class ApiClient {
     final data = _parseJson(response);
     return GenerationResponse.fromJson(data as Map<String, dynamic>);
   }
+
+  Future<ChatResponse> chatWithNotes({
+    required String accessToken,
+    required List<String> documentIds,
+    required List<String> cbcNoteIds,
+    required String message,
+    List<ChatMessage> history = const [],
+  }) async {
+    final safeMessage = message.trim();
+    if (safeMessage.isEmpty) {
+      throw ApiException('Message is required.');
+    }
+    final response = await _sendRequest(
+      () => http
+          .post(
+            _uri('/v1/chat'),
+            headers: _jsonHeaders(accessToken: accessToken),
+            body: jsonEncode({
+              'document_ids': documentIds,
+              'cbc_note_ids': cbcNoteIds,
+              'message': safeMessage,
+              'history': history.map((m) => m.toJson()).toList(),
+            }),
+          )
+          .timeout(_generationTimeout),
+    );
+    final data = _parseJson(response);
+    return ChatResponse.fromJson(data as Map<String, dynamic>);
+  }
   Future<Map<String, dynamic>> getDashboardOverview({
     required String accessToken,
   }) async {
@@ -1592,4 +1621,5 @@ class ApiClient {
     }
   }
 }
+
 

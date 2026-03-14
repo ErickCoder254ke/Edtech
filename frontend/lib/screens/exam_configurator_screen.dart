@@ -7,6 +7,7 @@ import '../services/api_client.dart';
 import '../theme/app_colors.dart';
 import '../widgets/glass_container.dart';
 import 'generation_viewer_screen.dart';
+import 'chat_with_notes_screen.dart';
 import 'jobs_screen.dart';
 import 'subscriptions_screen.dart';
 
@@ -55,6 +56,7 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
     'summary',
     'concepts',
     'examples',
+    'chat',
   ];
 
   String _generationType = 'exam';
@@ -301,7 +303,12 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
       return;
     }
 
-    final proceed = await _confirmPromptReview();
+
+    if (_generationType == 'chat') {
+      setState(() => _error = null);
+      _openChatWithNotes();
+      return;
+    }    final proceed = await _confirmPromptReview();
     if (!proceed) return;
 
     setState(() {
@@ -558,6 +565,21 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
     );
   }
 
+
+  void _openChatWithNotes() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ChatWithNotesScreen(
+          apiClient: widget.apiClient,
+          session: widget.session,
+          onSessionUpdated: widget.onSessionUpdated,
+          onSessionInvalid: widget.onSessionInvalid,
+          documentIds: _selectedDocumentIds.toList(),
+          cbcNoteIds: _selectedCbcNoteIds.toList(),
+        ),
+      ),
+    );
+  }
   void _openLatestGeneration() {
     final latest = _latestGeneration;
     if (latest == null) return;
@@ -1646,7 +1668,7 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
                                         color: Colors.white,
                                       ),
                                     )
-                                  : const Icon(Icons.bolt),
+                                  : Icon(_generationType == 'chat' ? Icons.chat_bubble_outline_rounded : Icons.bolt),
                               label: Text(
                                 _isGenerating
                                     ? 'Queueing...'
@@ -1768,5 +1790,6 @@ class _PromptTemplate {
   final bool requiresExamTitle;
   final Set<String> recommendedFor;
 }
+
 
 

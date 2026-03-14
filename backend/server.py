@@ -136,6 +136,7 @@ MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", str(20 * 1024 * 1024))
 EMBEDDING_CONCURRENCY = int(os.environ.get("EMBEDDING_CONCURRENCY", "8"))
 GEN_PER_MIN_LIMIT = int(os.environ.get("GEN_PER_MIN_LIMIT", "20"))
 EXAM_REVISION_PER_MIN_LIMIT = int(os.environ.get("EXAM_REVISION_PER_MIN_LIMIT", "6"))
+NOTES_CHAT_PER_MIN_LIMIT = int(os.environ.get("NOTES_CHAT_PER_MIN_LIMIT", "30"))
 UPLOAD_PER_MIN_LIMIT = int(os.environ.get("UPLOAD_PER_MIN_LIMIT", "6"))
 AUTH_PER_MIN_LIMIT = int(os.environ.get("AUTH_PER_MIN_LIMIT", "20"))
 AUTH_USER_PER_MIN_LIMIT = int(os.environ.get("AUTH_USER_PER_MIN_LIMIT", "60"))
@@ -764,6 +765,28 @@ class GenerationRequest(BaseModel):
 
 class ExamRevisionRequest(BaseModel):
     instructions: str = Field(min_length=1, max_length=2000)
+
+class NotesChatMessage(BaseModel):
+    role: str = Field(min_length=1, max_length=32)
+    content: str = Field(min_length=1, max_length=4000)
+
+
+class NotesChatRequest(BaseModel):
+    document_ids: List[str] = Field(default_factory=list)
+    cbc_note_ids: List[str] = Field(default_factory=list)
+    message: str = Field(min_length=1, max_length=2000)
+    history: List[NotesChatMessage] = Field(default_factory=list)
+
+
+class NotesChatSource(BaseModel):
+    document_id: str
+    chunk_index: int
+    score: Optional[float] = None
+
+
+class NotesChatResponse(BaseModel):
+    answer: str
+    sources: List[NotesChatSource] = Field(default_factory=list)
 
 
 class GenerationResponse(BaseModel):
@@ -7943,6 +7966,140 @@ async def get_generation(generation_id: str, current_user: Dict[str, Any] = Depe
 
 
 
+
+
+@api_router.post("/v1/chat", response_model=NotesChatResponse)
+async def chat_with_notes(
+    payload: NotesChatRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    await ensure_rate_limit(current_user["id"], "notes_chat_user", NOTES_CHAT_PER_MIN_LIMIT)
+
+    doc_ids = list(dict.fromkeys(payload.document_ids or []))
+    note_ids = list(dict.fromkeys(payload.cbc_note_ids or []))
+    message = (payload.message or "").strip()
+
+    if not message:
+        raise HTTPException(status_code=400, detail="Message is required")
+    if not doc_ids and not note_ids:
+        raise HTTPException(status_code=400, detail="Select at least one document or shared note")
+
+    if doc_ids:
+        docs = await db.documents.find(
+            {"id": {"$in": doc_ids}, "user_id": current_user["id"]},
+            {"_id": 0},
+        ).to_list(max(100, len(doc_ids)))
+        if len(docs) != len(doc_ids):
+            raise HTTPException(status_code=403, detail="Some documents not found or access denied")
+
+    note_docs: List[Dict[str, Any]] = []
+    if note_ids:
+        note_docs = await db.cbc_notes.find(
+            {"id": {"$in": note_ids}, "active": {"$ne": False}},
+            {"_id": 0},
+        ).to_list(max(100, len(note_ids)))
+        if len(note_docs) != len(note_ids):
+            raise HTTPException(status_code=404, detail="Some shared notes were not found")
+
+        usable_note_ids: List[str] = []
+        for note in note_docs:
+            try:
+                await ensure_cbc_note_chunks(note)
+                usable_note_ids.append(str(note.get("id") or ""))
+            except HTTPException as exc:
+                if exc.status_code == 424:
+                    logger.warning(
+                        "cbc_note_skipped_inaccessible user_id=%s note_id=%s detail=%s",
+                        current_user["id"],
+                        note.get("id"),
+                        exc.detail,
+                    )
+                    continue
+                raise
+        note_ids = [nid for nid in usable_note_ids if nid]
+        if not doc_ids and not note_ids:
+            raise HTTPException(
+                status_code=424,
+                detail="All selected shared notes are inaccessible. Please select another note.",
+            )
+
+    relevant_chunks: List[Dict[str, Any]] = []
+    if doc_ids:
+        relevant_chunks.extend(
+            await retrieve_relevant_chunks(
+                current_user["id"],
+                doc_ids,
+                message,
+                top_k=max(1, RETRIEVAL_TOP_K // (2 if note_ids else 1)),
+            )
+        )
+    if note_ids:
+        relevant_chunks.extend(
+            await retrieve_relevant_shared_note_chunks(
+                note_ids,
+                message,
+                top_k=max(1, RETRIEVAL_TOP_K // (2 if doc_ids else 1)),
+            )
+        )
+    if not relevant_chunks:
+        raise HTTPException(status_code=404, detail="No relevant chunks found for selected sources")
+
+    relevant_chunks.sort(key=lambda c: c.get("score", 0), reverse=True)
+    relevant_chunks = relevant_chunks[:RETRIEVAL_TOP_K]
+    context = assemble_context_with_budget(relevant_chunks, MAX_CONTEXT_TOKENS)
+
+    history_lines: List[str] = []
+    for item in (payload.history or [])[-8:]:
+        role = str(getattr(item, "role", "") or "").strip().lower()
+        content = str(getattr(item, "content", "") or "").strip()
+        if not content:
+            continue
+        if role not in {"user", "assistant"}:
+            continue
+        history_lines.append(f"{role.upper()}: {content}")
+    history_text = "\n".join(history_lines) if history_lines else "(none)"
+
+    system_msg = (
+        "You are an expert teacher and tutor. "
+        "Answer using only the provided NOTES_CONTEXT. "
+        "If the notes do not contain the answer, say so and suggest what to look for. "
+        "Return ONLY valid JSON."
+    )
+    prompt = (
+        "NOTES_CONTEXT:\n" + context + "\n\n"
+        "CHAT_HISTORY:\n" + history_text + "\n\n"
+        "QUESTION:\n" + message + "\n\n"
+        "Return JSON exactly like: {\"answer\": \"...\"}. "
+        "Do not include markdown or extra keys."
+    )
+
+    raw_text = await generate_with_llm(prompt, system_msg, generation_type="chat")
+    try:
+        parsed = parse_llm_json_output(raw_text)
+    except Exception:
+        parsed = await repair_json_with_llm(raw_text, "chat")
+
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=502, detail="Chat response was malformed")
+    answer = str(parsed.get("answer") or "").strip()
+    if not answer:
+        raise HTTPException(status_code=502, detail="Chat response was empty")
+
+    sources: List[NotesChatSource] = []
+    for item in relevant_chunks[: min(8, len(relevant_chunks))]:
+        doc_id = str(item.get("document_id") or "").strip()
+        if not doc_id:
+            continue
+        sources.append(
+            NotesChatSource(
+                document_id=doc_id,
+                chunk_index=int(item.get("chunk_index") or 0),
+                score=float(item.get("score") or 0.0),
+            )
+        )
+
+    return NotesChatResponse(answer=answer, sources=sources)
+
 @api_router.post("/generations/{generation_id}/revise", response_model=GenerationResponse)
 async def revise_exam_generation(
     generation_id: str,
@@ -11285,5 +11442,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 
