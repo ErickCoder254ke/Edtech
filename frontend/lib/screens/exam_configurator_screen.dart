@@ -1646,7 +1646,7 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
                           SizedBox(
                             width: double.infinity,
                             child: ElevatedButton.icon(
-                              onPressed: (_isGenerating || hasActiveJob)
+                              onPressed: (_isGenerating || (hasActiveJob && _generationType != 'chat'))
                                   ? null
                                   : _generate,
                               style: ElevatedButton.styleFrom(
@@ -1790,6 +1790,7 @@ class _PromptTemplate {
   final bool requiresExamTitle;
   final Set<String> recommendedFor;
 }
+
 
 
 

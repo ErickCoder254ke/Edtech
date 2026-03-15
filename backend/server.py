@@ -8046,7 +8046,18 @@ async def chat_with_notes(
 
     relevant_chunks.sort(key=lambda c: c.get("score", 0), reverse=True)
     relevant_chunks = relevant_chunks[:RETRIEVAL_TOP_K]
-    context = assemble_context_with_budget(relevant_chunks, MAX_CONTEXT_TOKENS)
+
+    numbered_context_parts: List[str] = []
+    for idx, chunk in enumerate(relevant_chunks[:8]):
+        doc_id = str(chunk.get("document_id") or "").strip() or "document"
+        chunk_idx = int(chunk.get("chunk_index") or 0)
+        text = str(chunk.get("text") or "").strip()
+        numbered_context_parts.append(
+            f"[SOURCE {idx + 1} | {doc_id} | chunk {chunk_idx}] {text}"
+        )
+    context = assemble_context_with_budget(
+        [{"text": part} for part in numbered_context_parts], MAX_CONTEXT_TOKENS
+    )
 
     history_lines: List[str] = []
     for item in (payload.history or [])[-8:]:
@@ -8060,17 +8071,19 @@ async def chat_with_notes(
     history_text = "\n".join(history_lines) if history_lines else "(none)"
 
     system_msg = (
-        "You are an expert teacher and tutor. "
-        "Answer using only the provided NOTES_CONTEXT. "
-        "If the notes do not contain the answer, say so and suggest what to look for. "
+        "You are an expert teacher. Answer ONLY from the provided notes. "
+        "If the notes do not contain the answer, say so. Keep answers concise (2-4 sentences). "
         "Return ONLY valid JSON."
     )
     prompt = (
         "NOTES_CONTEXT:\n" + context + "\n\n"
         "CHAT_HISTORY:\n" + history_text + "\n\n"
         "QUESTION:\n" + message + "\n\n"
-        "Return JSON exactly like: {\"answer\": \"...\"}. "
-        "Do not include markdown or extra keys."
+        "Rules:\n"
+        "- Use ONLY the NOTES_CONTEXT.\n"
+        "- If the answer is not in NOTES_CONTEXT, reply with \"I could not find that in the selected notes.\".\n"
+        "- Do NOT repeat yourself.\n"
+        "- Respond as JSON exactly like {\\\"answer\\\":\\\"...\\\"} with no other keys and no markdown."
     )
 
     raw_text = await generate_with_llm(prompt, system_msg, generation_type="chat")
@@ -11442,6 +11455,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
 
 
 

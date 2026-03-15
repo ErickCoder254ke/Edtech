@@ -313,6 +313,25 @@ class _ChatWithNotesScreenState extends State<ChatWithNotesScreen> {
         ),
         child: Column(
           children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+              child: GlassContainer(
+                borderRadius: 14,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                child: Row(
+                  children: [
+                    const Icon(Icons.shield_outlined, size: 18, color: AppColors.accent),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Answers come only from your selected notes. If it is not in the notes, the assistant will say so.',
+                        style: const TextStyle(fontSize: 12, color: Colors.white70, height: 1.3),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
             Expanded(
               child: ListView.builder(
                 controller: _scrollController,
@@ -405,7 +424,26 @@ class _ChatWithNotesScreenState extends State<ChatWithNotesScreen> {
                 padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
                 child: Row(
                   children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+              child: GlassContainer(
+                borderRadius: 14,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                child: Row(
+                  children: [
+                    const Icon(Icons.shield_outlined, size: 18, color: AppColors.accent),
+                    const SizedBox(width: 10),
                     Expanded(
+                      child: Text(
+                        'Answers come only from your selected notes. If it is not in the notes, the assistant will say so.',
+                        style: const TextStyle(fontSize: 12, color: Colors.white70, height: 1.3),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Expanded(
                       child: TextField(
                         controller: _controller,
                         minLines: 1,
@@ -446,3 +484,4 @@ class _ChatTurn {
   factory _ChatTurn.assistant(String content, {List<ChatSource> sources = const []}) =>
       _ChatTurn(role: 'assistant', content: content, sources: sources);
 }
+

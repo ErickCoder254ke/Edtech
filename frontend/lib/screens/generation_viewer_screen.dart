@@ -44,7 +44,7 @@ class _GenerationViewerScreenState extends State<GenerationViewerScreen> {
   @override
   void initState() {
     super.initState();
-    _generation = _generation;
+    _generation = widget.generation;
     _session = widget.session;
   }
 
@@ -1343,5 +1343,6 @@ class _AppearState extends State<_Appear> {
     );
   }
 }
+
 
 
