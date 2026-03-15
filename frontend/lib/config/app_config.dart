@@ -1,7 +1,7 @@
 ﻿class AppConfig {
   static const String apiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'https://api.examos.app',
+    defaultValue: 'https://examos.cloudcrow.top',
   );
   static const String apiPrefix = '/api';
   static const String supportEmailFallback = 'examos254@gmail.com';
@@ -14,5 +14,6 @@
     return '$trimmed$apiPrefix';
   }
 }
+
 
 

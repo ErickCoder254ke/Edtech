@@ -303,12 +303,12 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
       return;
     }
 
-
     if (_generationType == 'chat') {
       setState(() => _error = null);
       _openChatWithNotes();
       return;
-    }    final proceed = await _confirmPromptReview();
+    }
+    final proceed = await _confirmPromptReview();
     if (!proceed) return;
 
     setState(() {
@@ -567,6 +567,11 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
 
 
   void _openChatWithNotes() {
+    if (_selectedDocumentIds.isEmpty && _selectedCbcNoteIds.isEmpty) {
+      setState(() => _error = 'Select at least one document or shared note.');
+      return;
+    }
+    setState(() => _error = null);
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => ChatWithNotesScreen(
@@ -962,12 +967,17 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
                               return ChoiceChip(
                                 label: Text(type.toUpperCase()),
                                 selected: active,
-                                onSelected: (_) => setState(() {
-                                  _generationType = type;
-                                  if (type != 'exam') {
-                                    _examSectionMode = 'mixed';
+                                onSelected: (_) {
+                                  setState(() {
+                                    _generationType = type;
+                                    if (type != 'exam') {
+                                      _examSectionMode = 'mixed';
+                                    }
+                                  });
+                                  if (type == 'chat') {
+                                    _openChatWithNotes();
                                   }
-                                }),
+                                },
                                 selectedColor: AppColors.primary.withValues(
                                   alpha: 0.25,
                                 ),

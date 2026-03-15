@@ -313,25 +313,6 @@ class _ChatWithNotesScreenState extends State<ChatWithNotesScreen> {
         ),
         child: Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-              child: GlassContainer(
-                borderRadius: 14,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                child: Row(
-                  children: [
-                    const Icon(Icons.shield_outlined, size: 18, color: AppColors.accent),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        'Answers come only from your selected notes. If it is not in the notes, the assistant will say so.',
-                        style: const TextStyle(fontSize: 12, color: Colors.white70, height: 1.3),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
             Expanded(
               child: ListView.builder(
                 controller: _scrollController,
@@ -379,28 +360,33 @@ class _ChatWithNotesScreenState extends State<ChatWithNotesScreen> {
                                 ),
                                 if (!isUser && turn.sources.isNotEmpty) ...[
                                   const SizedBox(height: 10),
-                                  Row(
-                                    children: [
-                                      const Icon(
-                                        Icons.source_outlined,
-                                        size: 16,
-                                        color: AppColors.accent,
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        '${turn.sources.length} source(s)',
-                                        style: const TextStyle(
-                                          color: AppColors.textMuted,
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                      const Spacer(),
-                                      TextButton(
-                                        onPressed: () => _showSourcesSheet(turn.sources),
-                                        child: const Text('View'),
-                                      ),
-                                    ],
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 6,
+                                    children: turn.sources
+                                        .map(
+                                          (s) => GestureDetector(
+                                            onTap: () => _showSourcesSheet(turn.sources),
+                                            child: Chip(
+                                              avatar: const Icon(
+                                                Icons.source_outlined,
+                                                size: 14,
+                                                color: AppColors.accent,
+                                              ),
+                                              label: Text(
+                                                _sourceTitle(s),
+                                                style: const TextStyle(fontSize: 11),
+                                              ),
+                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                              backgroundColor: Colors.white.withValues(alpha: 0.05),
+                                              shape: RoundedRectangleBorder(
+                                                side: BorderSide(color: AppColors.glassBorder),
+                                                borderRadius: BorderRadius.circular(12),
+                                              ),
+                                            ),
+                                          ),
+                                        )
+                                        .toList(),
                                   ),
                                 ],
                               ],
