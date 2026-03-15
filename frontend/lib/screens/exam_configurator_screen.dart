@@ -298,6 +298,9 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
   }
 
   Future<void> _generate() async {
+    // Hide keyboard when user starts generation.
+    FocusScope.of(context).unfocus();
+
     if (_selectedDocumentIds.isEmpty && _selectedCbcNoteIds.isEmpty) {
       setState(() => _error = 'Select at least one document or shared note.');
       return;

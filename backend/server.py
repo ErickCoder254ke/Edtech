@@ -4285,6 +4285,7 @@ def enforce_assessment_output_quality(
     payload: Dict[str, Any],
     *,
     request: Optional[GenerationRequest] = None,
+    skip_strict_exam_checks: bool = False,
 ) -> Dict[str, Any]:
     if generation_type == "quiz":
         quiz_items = payload.get("quiz")
@@ -4319,7 +4320,10 @@ def enforce_assessment_output_quality(
     if generation_type == "exam":
         sections = payload.get("sections")
         if not isinstance(sections, list) or not sections:
-            raise HTTPException(status_code=502, detail="Exam output must contain at least one section.")
+            raise HTTPException(
+                status_code=422 if skip_strict_exam_checks else 502,
+                detail="Exam output must contain at least one section.",
+            )
         target_total_marks = int(payload.get("total_marks") or (request.marks if request else 0) or 0)
         subject_hint = _infer_exam_subject_hint(
             (request.topic if request else None),
@@ -4333,12 +4337,14 @@ def enforce_assessment_output_quality(
         )
 
         all_questions_flat: List[Dict[str, Any]] = []
+        normalized_sections: List[Dict[str, Any]] = []
         for section in sections:
             if not isinstance(section, dict):
                 continue
             questions = section.get("questions")
             if not isinstance(questions, list):
                 continue
+            normalized_questions: List[Dict[str, Any]] = []
             for question in questions:
                 if not isinstance(question, dict):
                     continue
@@ -4376,38 +4382,50 @@ def enforce_assessment_output_quality(
                             else None
                         ),
                     )
+                normalized_questions.append(normalized_question)
                 all_questions_flat.append(normalized_question)
+            if normalized_questions:
+                normalized_sections.append(
+                    {
+                        "section_name": section.get("section_name") or section.get("title") or section.get("name") or "SECTION",
+                        "questions": normalized_questions,
+                    }
+                )
         total_questions = len(all_questions_flat)
         if total_questions <= 0:
-            raise HTTPException(status_code=502, detail="Exam output did not include valid questions.")
-
-        minimum_questions = _exam_target_question_count(
-            target_total_marks,
-            int(request.num_questions or 0) if request else 0,
-            inferred_variant,
-        )
-        if total_questions < minimum_questions:
             raise HTTPException(
-                status_code=502,
-                detail=(
-                    "Generated exam is incomplete for the requested Kenyan exam structure. "
-                    f"Expected at least {minimum_questions} total questions but got {total_questions}."
-                ),
+                status_code=422 if skip_strict_exam_checks else 502,
+                detail="Exam output did not include valid questions.",
             )
 
-        normalized_sections = _rebalance_exam_sections(all_questions_flat, total_questions)
-
-        section_a_count = len(normalized_sections[0]["questions"])
-        section_b_count = len(normalized_sections[1]["questions"])
-        section_c_count = len(normalized_sections[2]["questions"])
-        if section_a_count < 10 or section_b_count < 5 or section_c_count < 2:
-            raise HTTPException(
-                status_code=502,
-                detail=(
-                    "Generated exam failed Kenyan section blueprint validation. "
-                    f"Counts were A={section_a_count}, B={section_b_count}, C={section_c_count}."
-                ),
+        if not skip_strict_exam_checks:
+            minimum_questions = _exam_target_question_count(
+                target_total_marks,
+                int(request.num_questions or 0) if request else 0,
+                inferred_variant,
             )
+            if total_questions < minimum_questions:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        "Generated exam is incomplete for the requested Kenyan exam structure. "
+                        f"Expected at least {minimum_questions} total questions but got {total_questions}."
+                    ),
+                )
+
+            normalized_sections = _rebalance_exam_sections(all_questions_flat, total_questions)
+
+            section_a_count = len(normalized_sections[0]["questions"])
+            section_b_count = len(normalized_sections[1]["questions"])
+            section_c_count = len(normalized_sections[2]["questions"])
+            if section_a_count < 10 or section_b_count < 5 or section_c_count < 2:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        "Generated exam failed Kenyan section blueprint validation. "
+                        f"Counts were A={section_a_count}, B={section_b_count}, C={section_c_count}."
+                    ),
+                )
 
         for sec_idx, section in enumerate(normalized_sections):
             for q_idx, question in enumerate(section.get("questions", []), start=1):
@@ -7427,6 +7445,8 @@ def apply_exam_constraints(
 async def _parse_and_validate_generation_output(
     request: GenerationRequest,
     generated_text: str,
+    *,
+    skip_strict_exam_checks: bool = False,
 ) -> Dict[str, Any]:
     try:
         raw_content = coerce_generation_payload(
@@ -7456,7 +7476,7 @@ async def _parse_and_validate_generation_output(
                 repair_exc,
             )
             raise HTTPException(
-                status_code=502,
+                status_code=422 if skip_strict_exam_checks else 502,
                 detail="Generated content was malformed and could not be repaired. Please retry.",
             )
 
@@ -7465,7 +7485,12 @@ async def _parse_and_validate_generation_output(
     content = validate_structured_output(request.generation_type, raw_content)
     content = validate_structured_output(
         request.generation_type,
-        enforce_assessment_output_quality(request.generation_type, content, request=request),
+        enforce_assessment_output_quality(
+            request.generation_type,
+            content,
+            request=request,
+            skip_strict_exam_checks=skip_strict_exam_checks,
+        ),
     )
     return content
 
@@ -8177,7 +8202,39 @@ async def revise_exam_generation(
         )
 
     revision_request = GenerationRequest(generation_type="exam")
-    content = await _parse_and_validate_generation_output(revision_request, revised_text)
+    try:
+        try:
+            content = await _parse_and_validate_generation_output(
+                revision_request,
+                revised_text,
+                skip_strict_exam_checks=True,
+            )
+        except HTTPException as exc:
+            # Retry once with explicit repair instruction when validation fails.
+            if exc.status_code in {422, 502}:
+                repair_prompt = (
+                    prompt
+                    + "\n\nREVISION FIX:\n"
+                    + f"The previous revision failed validation because: {exc.detail}\n"
+                    "Add or adjust questions to satisfy the user request without removing existing valid content. "
+                    "Return ONLY corrected JSON."
+                )
+                repaired_text = await generate_with_llm(
+                    repair_prompt,
+                    system_msg,
+                    generation_type="exam",
+                )
+                content = await _parse_and_validate_generation_output(
+                    revision_request,
+                    repaired_text,
+                    skip_strict_exam_checks=True,
+                )
+            else:
+                raise
+    except HTTPException as exc:
+        if exc.status_code == 429:
+            raise
+        raise HTTPException(status_code=422, detail=str(exc.detail))
 
     now_iso = datetime.now(timezone.utc).isoformat()
     await db.generations.update_one(

@@ -410,38 +410,27 @@ class _ChatWithNotesScreenState extends State<ChatWithNotesScreen> {
                 padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
                 child: Row(
                   children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-              child: GlassContainer(
-                borderRadius: 14,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                child: Row(
-                  children: [
-                    const Icon(Icons.shield_outlined, size: 18, color: AppColors.accent),
-                    const SizedBox(width: 10),
                     Expanded(
-                      child: Text(
-                        'Answers come only from your selected notes. If it is not in the notes, the assistant will say so.',
-                        style: const TextStyle(fontSize: 12, color: Colors.white70, height: 1.3),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            Expanded(
-                      child: TextField(
-                        controller: _controller,
-                        minLines: 1,
-                        maxLines: 4,
-                        textInputAction: TextInputAction.send,
-                        onSubmitted: (_) => _send(),
-                        decoration: const InputDecoration(
-                          hintText: 'Ask about a concept from the selected notes...',
+                      child: GlassContainer(
+                        borderRadius: 14,
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                        child: TextField(
+                          controller: _controller,
+                          minLines: 1,
+                          maxLines: 4,
+                          style: const TextStyle(color: Colors.white),
+                          cursorColor: AppColors.accent,
+                          textInputAction: TextInputAction.send,
+                          onSubmitted: (_) => _send(),
+                          decoration: const InputDecoration(
+                            border: InputBorder.none,
+                            hintText: 'Ask about a concept from the selected notes...',
+                            hintStyle: TextStyle(color: Colors.white54),
+                          ),
                         ),
                       ),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 12),
                     FilledButton.icon(
                       onPressed: _sending ? null : _send,
                       icon: const Icon(Icons.send_rounded, size: 18),
