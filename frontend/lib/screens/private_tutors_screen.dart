@@ -26,6 +26,7 @@ class PrivateTutorsScreen extends StatefulWidget {
 
 class _PrivateTutorsScreenState extends State<PrivateTutorsScreen> {
   bool _loading = true;
+  bool _refreshing = false;
   String? _error;
   String _city = '';
   final _cityController = TextEditingController();
@@ -64,8 +65,10 @@ class _PrivateTutorsScreenState extends State<PrivateTutorsScreen> {
   }
 
   Future<void> _load() async {
+    final hasData = _items.isNotEmpty;
     setState(() {
-      _loading = true;
+      _loading = !hasData;
+      _refreshing = hasData;
       _error = null;
     });
     try {
@@ -80,12 +83,25 @@ class _PrivateTutorsScreenState extends State<PrivateTutorsScreen> {
       setState(() => _items = tutors);
     } on ApiException catch (e) {
       if (!mounted) return;
-      setState(() => _error = e.message);
+      setState(() {
+        _error = _items.isEmpty
+            ? e.message
+            : 'Unable to refresh. Showing last results.';
+      });
     } catch (_) {
       if (!mounted) return;
-      setState(() => _error = 'Unable to load tutor directory.');
+      setState(() {
+        _error = _items.isEmpty
+            ? 'Unable to load tutor directory.'
+            : 'Unable to refresh. Showing last results.';
+      });
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _refreshing = false;
+        });
+      }
     }
   }
 
@@ -190,9 +206,36 @@ class _PrivateTutorsScreenState extends State<PrivateTutorsScreen> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  if (_loading)
+                  if (_refreshing)
+                    const GlassContainer(
+                      borderRadius: 16,
+                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          SizedBox(width: 10),
+                          Text('Refreshing tutors...', style: TextStyle(fontSize: 12)),
+                        ],
+                      ),
+                    ),
+                  if (_refreshing) const SizedBox(height: 8),
+                  if (_error != null && _items.isNotEmpty)
+                    GlassContainer(
+                      borderRadius: 14,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      child: Text(
+                        _error!,
+                        style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+                      ),
+                    ),
+                  if (_error != null && _items.isNotEmpty) const SizedBox(height: 8),
+                  if (_loading && _items.isEmpty)
                     const _LoadingTile()
-                  else if (_error != null)
+                  else if (_error != null && _items.isEmpty)
                     _ErrorTile(
                       message: _error!,
                       onRetry: _load,

@@ -37,13 +37,10 @@ class _ChatWithNotesScreenState extends State<ChatWithNotesScreen> {
   bool _sending = false;
   late Session _session;
 
-  final Map<String, String> _docTitles = <String, String>{};
-
   @override
   void initState() {
     super.initState();
     _session = widget.session;
-    _primeDocTitles();
   }
 
   @override
@@ -70,28 +67,6 @@ class _ChatWithNotesScreenState extends State<ChatWithNotesScreen> {
         widget.onSessionInvalid();
         rethrow;
       }
-    }
-  }
-
-  Future<void> _primeDocTitles() async {
-    if (widget.documentIds.isEmpty) return;
-    try {
-      final docs = await _runWithAuthRetry((token) => widget.apiClient.listDocuments(token));
-      final wanted = widget.documentIds.toSet();
-      final nextMap = <String, String>{};
-      for (final doc in docs) {
-        if (wanted.contains(doc.id)) {
-          nextMap[doc.id] = doc.filename;
-        }
-      }
-      if (!mounted) return;
-      setState(() {
-        _docTitles
-          ..clear()
-          ..addAll(nextMap);
-      });
-    } catch (_) {
-      // Non-fatal; sources will show ids.
     }
   }
 
@@ -159,94 +134,6 @@ class _ChatWithNotesScreenState extends State<ChatWithNotesScreen> {
         curve: Curves.easeOut,
       );
     });
-  }
-
-  String _sourceTitle(ChatSource source) {
-    final docId = source.documentId.trim();
-    if (docId.startsWith('note:')) {
-      final id = docId.substring(5);
-      return 'Shared note $id';
-    }
-    return _docTitles[docId] ?? 'Document $docId';
-  }
-
-  String _sourceSubtitle(ChatSource source) {
-    final score = source.score;
-    final scoreText = score == null ? '' : ' • score ${score.toStringAsFixed(2)}';
-    return 'Chunk ${source.chunkIndex}$scoreText';
-  }
-
-  void _showSourcesSheet(List<ChatSource> sources) {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (ctx) => SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-          child: GlassContainer(
-            borderRadius: 22,
-            padding: const EdgeInsets.all(14),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxHeight: MediaQuery.of(ctx).size.height * 0.65,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.source_rounded, color: AppColors.accent),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Sources (${sources.length})',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 14,
-                        ),
-                      ),
-                      const Spacer(),
-                      IconButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        icon: const Icon(Icons.close_rounded),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'These are the note/document chunks used to answer your question.',
-                    style: TextStyle(color: AppColors.textMuted, fontSize: 12),
-                  ),
-                  const SizedBox(height: 10),
-                  Expanded(
-                    child: ListView.separated(
-                      itemCount: sources.length,
-                      separatorBuilder: (_, __) => const Divider(height: 14),
-                      itemBuilder: (context, index) {
-                        final s = sources[index];
-                        return ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: const Icon(Icons.description_outlined, color: Colors.white70),
-                          title: Text(
-                            _sourceTitle(s),
-                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-                          ),
-                          subtitle: Text(
-                            _sourceSubtitle(s),
-                            style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
   }
 
   Widget _introCard() {
@@ -358,37 +245,6 @@ class _ChatWithNotesScreenState extends State<ChatWithNotesScreen> {
                                     height: 1.35,
                                   ),
                                 ),
-                                if (!isUser && turn.sources.isNotEmpty) ...[
-                                  const SizedBox(height: 10),
-                                  Wrap(
-                                    spacing: 8,
-                                    runSpacing: 6,
-                                    children: turn.sources
-                                        .map(
-                                          (s) => GestureDetector(
-                                            onTap: () => _showSourcesSheet(turn.sources),
-                                            child: Chip(
-                                              avatar: const Icon(
-                                                Icons.source_outlined,
-                                                size: 14,
-                                                color: AppColors.accent,
-                                              ),
-                                              label: Text(
-                                                _sourceTitle(s),
-                                                style: const TextStyle(fontSize: 11),
-                                              ),
-                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                              backgroundColor: Colors.white.withValues(alpha: 0.05),
-                                              shape: RoundedRectangleBorder(
-                                                side: BorderSide(color: AppColors.glassBorder),
-                                                borderRadius: BorderRadius.circular(12),
-                                              ),
-                                            ),
-                                          ),
-                                        )
-                                        .toList(),
-                                  ),
-                                ],
                               ],
                             ),
                           ),

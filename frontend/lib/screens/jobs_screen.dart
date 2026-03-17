@@ -38,6 +38,7 @@ class _JobsScreenState extends State<JobsScreen> with WidgetsBindingObserver {
   static const Duration _pollResumeDelay = Duration(seconds: 1);
 
   bool _loading = true;
+  bool _refreshing = false;
   String? _error;
   String _statusFilter = 'all';
   List<JobStatusResponse> _jobs = [];
@@ -267,8 +268,10 @@ class _JobsScreenState extends State<JobsScreen> with WidgetsBindingObserver {
 
   Future<void> _loadJobs({bool silent = false}) async {
     if (!silent) {
+      final hasData = _jobs.isNotEmpty;
       setState(() {
-        _loading = true;
+        _loading = !hasData;
+        _refreshing = hasData;
         _error = null;
       });
     }
@@ -289,15 +292,28 @@ class _JobsScreenState extends State<JobsScreen> with WidgetsBindingObserver {
     } on ApiException catch (e) {
       if (!mounted) return;
       if (!silent) {
-        setState(() => _error = e.message);
+        setState(() {
+          _error = _jobs.isEmpty
+              ? e.message
+              : 'Unable to refresh. Showing last results.';
+        });
       }
     } catch (_) {
       if (!mounted) return;
       if (!silent) {
-        setState(() => _error = 'Unable to load jobs.');
+        setState(() {
+          _error = _jobs.isEmpty
+              ? 'Unable to load jobs.'
+              : 'Unable to refresh. Showing last results.';
+        });
       }
     } finally {
-      if (mounted && !silent) setState(() => _loading = false);
+      if (mounted && !silent) {
+        setState(() {
+          _loading = false;
+          _refreshing = false;
+        });
+      }
     }
   }
 
@@ -401,6 +417,7 @@ class _JobsScreenState extends State<JobsScreen> with WidgetsBindingObserver {
         (counts['queued'] ?? 0) +
         (counts['processing'] ?? 0) +
         (counts['retrying'] ?? 0);
+    final canPop = Navigator.of(context).canPop();
     return Scaffold(
       body: Stack(
         children: [
@@ -418,6 +435,12 @@ class _JobsScreenState extends State<JobsScreen> with WidgetsBindingObserver {
                 children: [
                   Row(
                     children: [
+                      if (canPop)
+                        IconButton(
+                          onPressed: () => Navigator.of(context).maybePop(),
+                          icon: const Icon(Icons.arrow_back_rounded),
+                        ),
+                      if (canPop) const SizedBox(width: 4),
                       const Text(
                         'My Jobs',
                         style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
@@ -430,6 +453,33 @@ class _JobsScreenState extends State<JobsScreen> with WidgetsBindingObserver {
                     ],
                   ),
                   const SizedBox(height: 10),
+                  if (_refreshing)
+                    const GlassContainer(
+                      borderRadius: 16,
+                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          SizedBox(width: 10),
+                          Text('Refreshing jobs...', style: TextStyle(fontSize: 12)),
+                        ],
+                      ),
+                    ),
+                  if (_refreshing) const SizedBox(height: 8),
+                  if (_error != null && _jobs.isNotEmpty)
+                    GlassContainer(
+                      borderRadius: 14,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      child: Text(
+                        _error!,
+                        style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+                      ),
+                    ),
+                  if (_error != null && _jobs.isNotEmpty) const SizedBox(height: 8),
                   Container(
                     margin: const EdgeInsets.only(bottom: 10),
                     padding: const EdgeInsets.symmetric(
@@ -539,9 +589,9 @@ class _JobsScreenState extends State<JobsScreen> with WidgetsBindingObserver {
                     ),
                   ],
                   const SizedBox(height: 12),
-                  if (_loading)
+                  if (_loading && _jobs.isEmpty)
                     const _LoadingCard()
-                  else if (_error != null)
+                  else if (_error != null && _jobs.isEmpty)
                     _ErrorCard(message: _error!)
                   else if (_jobs.isEmpty)
                     const _EmptyCard()

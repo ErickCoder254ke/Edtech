@@ -187,6 +187,7 @@ class _ExamOsAppState extends State<ExamOsApp> {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
       themeMode: ThemeMode.dark,
+      scrollBehavior: const _AppScrollBehavior(),
       home: _booting
           ? const _BootScreen()
           : !_onboardingCompleted
@@ -207,6 +208,24 @@ class _ExamOsAppState extends State<ExamOsApp> {
         return child ?? const SizedBox.shrink();
       },
     );
+  }
+}
+
+class _AppScrollBehavior extends MaterialScrollBehavior {
+  const _AppScrollBehavior();
+
+  @override
+  ScrollPhysics getScrollPhysics(BuildContext context) {
+    return const ClampingScrollPhysics(parent: AlwaysScrollableScrollPhysics());
+  }
+
+  @override
+  Widget buildOverscrollIndicator(
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) {
+    return child;
   }
 }
 

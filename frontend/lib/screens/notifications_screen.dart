@@ -27,6 +27,7 @@ class NotificationsScreen extends StatefulWidget {
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
   bool _loading = true;
+  bool _refreshing = false;
   bool _testingPush = false;
   bool _unreadOnly = false;
   String? _error;
@@ -72,8 +73,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Future<void> _loadNotifications() async {
+    final hasData = _items.isNotEmpty;
     setState(() {
-      _loading = true;
+      _loading = !hasData;
+      _refreshing = hasData;
       _error = null;
     });
     try {
@@ -88,12 +91,25 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       setState(() => _items = items);
     } on ApiException catch (e) {
       if (!mounted) return;
-      setState(() => _error = e.message);
+      setState(() {
+        _error = _items.isEmpty
+            ? e.message
+            : 'Unable to refresh. Showing last results.';
+      });
     } catch (_) {
       if (!mounted) return;
-      setState(() => _error = 'Unable to load notifications.');
+      setState(() {
+        _error = _items.isEmpty
+            ? 'Unable to load notifications.'
+            : 'Unable to refresh. Showing last results.';
+      });
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _refreshing = false;
+        });
+      }
     }
   }
 
@@ -276,9 +292,36 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  if (_loading)
+                  if (_refreshing)
+                    const GlassContainer(
+                      borderRadius: 16,
+                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          SizedBox(width: 10),
+                          Text('Refreshing notifications...', style: TextStyle(fontSize: 12)),
+                        ],
+                      ),
+                    ),
+                  if (_refreshing) const SizedBox(height: 8),
+                  if (_error != null && _items.isNotEmpty)
+                    GlassContainer(
+                      borderRadius: 14,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      child: Text(
+                        _error!,
+                        style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+                      ),
+                    ),
+                  if (_error != null && _items.isNotEmpty) const SizedBox(height: 8),
+                  if (_loading && _items.isEmpty)
                     const _LoadingCard()
-                  else if (_error != null)
+                  else if (_error != null && _items.isEmpty)
                     _ErrorCard(message: _error!)
                   else if (_items.isEmpty)
                     const _EmptyCard()

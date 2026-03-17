@@ -35,6 +35,7 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   bool _loading = true;
+  bool _refreshing = false;
   String? _error;
   User? _user;
   List<DocumentMetadata> _documents = [];
@@ -76,8 +77,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _loadDashboard() async {
+    final hasData = _user != null || _documents.isNotEmpty || _entitlement != null;
     setState(() {
-      _loading = true;
+      _loading = !hasData;
+      _refreshing = hasData;
       _error = null;
     });
     try {
@@ -106,23 +109,34 @@ class _DashboardScreenState extends State<DashboardScreen> {
       });
     } on ApiException catch (e) {
       if (!mounted) return;
-      setState(() => _error = e.message);
-      UiSnackbar.show(
-        context,
-        message: e.message,
-        type: UiSnackType.error,
-      );
+      setState(() {
+        _error = hasData ? 'Unable to refresh. Showing last results.' : e.message;
+      });
+      if (!hasData) {
+        UiSnackbar.show(
+          context,
+          message: e.message,
+          type: UiSnackType.error,
+        );
+      }
     } catch (_) {
       if (!mounted) return;
-      setState(() => _error = 'Failed to load dashboard.');
-      UiSnackbar.show(
-        context,
-        message: 'Failed to load dashboard.',
-        type: UiSnackType.error,
-      );
+      setState(() {
+        _error = hasData ? 'Unable to refresh. Showing last results.' : 'Failed to load dashboard.';
+      });
+      if (!hasData) {
+        UiSnackbar.show(
+          context,
+          message: 'Failed to load dashboard.',
+          type: UiSnackType.error,
+        );
+      }
     } finally {
       if (mounted) {
-        setState(() => _loading = false);
+        setState(() {
+          _loading = false;
+          _refreshing = false;
+        });
       }
     }
   }
@@ -133,19 +147,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final docsCount = _documentsCount;
     final gensCount = _generationsCount;
     final generationLimit = (_entitlement?['generation_limit'] as num?)?.toInt() ?? 2;
-    final generationUsed = (_entitlement?['generation_used_lifetime'] as num?)?.toInt() ??
-        (_entitlement?['generation_used'] as num?)?.toInt() ??
-        gensCount;
-    final generationRemaining =
-        max(0, (_entitlement?['generation_remaining'] as num?)?.toInt() ?? (generationLimit - generationUsed));
+    final entitlementRemaining = (_entitlement?['generation_remaining'] as num?)?.toInt();
+    final entitlementUsed = (_entitlement?['generation_used_lifetime'] as num?)?.toInt() ??
+        (_entitlement?['generation_used'] as num?)?.toInt();
+    final generationUsed = entitlementRemaining != null
+        ? max(0, generationLimit - entitlementRemaining)
+        : (entitlementUsed ?? gensCount);
+    final generationRemaining = max(
+      0,
+      entitlementRemaining ?? (generationLimit - generationUsed),
+    );
     final planName = (_entitlement?['plan_name'] as String?) ?? 'Free';
     final examLimit = (_entitlement?['exam_limit'] as num?)?.toInt();
     final examRemaining = (_entitlement?['exam_remaining'] as num?)?.toInt();
     final taskLimit = (_entitlement?['task_limit'] as num?)?.toInt();
     final taskRemaining = (_entitlement?['task_remaining'] as num?)?.toInt();
-    final completionPct = generationLimit <= 0
-        ? 0
-        : ((generationUsed / generationLimit).clamp(0, 1) * 100).round();
+    final combinedLimit = (examLimit ?? 0) + (taskLimit ?? 0);
+    final combinedRemaining = (examRemaining ?? 0) + (taskRemaining ?? 0);
+    final combinedUsed = max(0, combinedLimit - combinedRemaining);
+    final completionPct = combinedLimit <= 0
+        ? (generationLimit <= 0
+              ? 0
+              : ((generationUsed / generationLimit).clamp(0, 1) * 100).round())
+        : ((combinedUsed / combinedLimit).clamp(0, 1) * 100).round();
+    final hasData = _user != null || _documents.isNotEmpty || _entitlement != null;
 
     return Scaffold(
       body: Stack(
@@ -162,7 +187,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   AppTokens.spaceXl * 3.5,
                 ),
                 children: [
-                  if (_loading)
+                  if (_loading && !hasData)
                     const _DashboardSkeleton()
                   else
                     _BrandingTile(
@@ -170,8 +195,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     docsCount: docsCount,
                     generationsCount: gensCount,
                     completionPct: completionPct,
-                    generationRemaining: generationRemaining,
-                    generationLimit: generationLimit,
+                    generationUsed: combinedLimit > 0 ? combinedUsed : generationUsed,
+                    generationRemaining: combinedLimit > 0 ? combinedRemaining : generationRemaining,
+                    generationLimit: combinedLimit > 0 ? combinedLimit : generationLimit,
                     planName: planName,
                     examLimit: examLimit,
                     examRemaining: examRemaining,
@@ -179,11 +205,32 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     taskRemaining: taskRemaining,
                   ),
                   const SizedBox(height: 14),
-                  if (_error != null) ...[
+                  if (_refreshing)
+                    const GlassContainer(
+                      borderRadius: 16,
+                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          SizedBox(width: 10),
+                          Text('Refreshing dashboard...', style: TextStyle(fontSize: 12)),
+                        ],
+                      ),
+                    ),
+                  if (_refreshing) const SizedBox(height: 8),
+                  if (_error != null && hasData) ...[
+                    Text(_error!, style: const TextStyle(color: AppColors.textMuted)),
+                    const SizedBox(height: 12),
+                  ],
+                  if (_error != null && !hasData) ...[
                     const SizedBox(height: 12),
                     Text(_error!, style: const TextStyle(color: Colors.redAccent)),
                   ],
-                  if (_loading) ...[
+                  if (_loading && !hasData) ...[
                     const SizedBox(height: 14),
                     const _DashboardSkeletonStats(),
                     const SizedBox(height: 24),
@@ -197,7 +244,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     gensCount: gensCount,
                     role: currentUser.role.toUpperCase(),
                     completionPct: completionPct,
-                    generationRemaining: generationRemaining,
+                    generationUsed: combinedLimit > 0 ? combinedUsed : generationUsed,
+                    generationLimit: combinedLimit > 0 ? combinedLimit : generationLimit,
+                    generationRemaining: combinedLimit > 0 ? combinedRemaining : generationRemaining,
                   ),
                   const SizedBox(height: 24),
                   if (!_loading && _documentsCount == 0) ...[
@@ -247,6 +296,7 @@ class _BrandingTile extends StatelessWidget {
     required this.docsCount,
     required this.generationsCount,
     required this.completionPct,
+    required this.generationUsed,
     required this.generationRemaining,
     required this.generationLimit,
     required this.planName,
@@ -260,6 +310,7 @@ class _BrandingTile extends StatelessWidget {
   final int docsCount;
   final int generationsCount;
   final int completionPct;
+  final int generationUsed;
   final int generationRemaining;
   final int generationLimit;
   final String planName;
@@ -401,7 +452,7 @@ class _BrandingTile extends StatelessWidget {
               ),
               const SizedBox(width: 10),
               Text(
-                '$completionPct%',
+                generationLimit > 0 ? '$generationUsed/$generationLimit' : '$completionPct%',
                 style: const TextStyle(
                   fontWeight: FontWeight.w800,
                   color: AppColors.textPrimary,
@@ -474,6 +525,8 @@ class _StatsGrid extends StatelessWidget {
     required this.gensCount,
     required this.role,
     required this.completionPct,
+    required this.generationUsed,
+    required this.generationLimit,
     required this.generationRemaining,
   });
 
@@ -481,6 +534,8 @@ class _StatsGrid extends StatelessWidget {
   final int gensCount;
   final String role;
   final int completionPct;
+  final int generationUsed;
+  final int generationLimit;
   final int generationRemaining;
 
   @override
@@ -507,8 +562,8 @@ class _StatsGrid extends StatelessWidget {
         icon: Icons.hourglass_bottom_rounded,
       ),
       _MetricCardData(
-        title: 'Progress',
-        value: '$completionPct%',
+        title: 'Exams + Tasks',
+        value: generationLimit > 0 ? '$generationUsed/$generationLimit' : '$completionPct%',
         icon: Icons.track_changes_rounded,
       ),
     ];

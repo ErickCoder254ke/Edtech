@@ -1222,13 +1222,33 @@ class _StudentActionBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Expanded(
-          child: Text(
-            categoryAtCapacity
-                ? 'Category full. Upvote to signal demand.'
-                : 'Got an idea? Add a topic.',
-            style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                categoryAtCapacity
+                    ? 'Category full. Upvote to signal demand.'
+                    : 'Got an idea? Add a topic.',
+                style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: const [
+                  Icon(Icons.pan_tool_alt_rounded, size: 14, color: AppColors.accent),
+                  SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      'Tap the arrow to upvote topics you want taught.',
+                      style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
         const SizedBox(width: 8),
@@ -1348,6 +1368,17 @@ class _TopicCard extends StatelessWidget {
                   '${item.upvoteCount}',
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
+                if (canUpvote) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    alreadyVoted ? 'Voted' : 'Upvote',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: alreadyVoted ? AppColors.accent : AppColors.textMuted,
+                    ),
+                  ),
+                ],
               ],
             ),
             const SizedBox(width: 8),
@@ -1380,7 +1411,7 @@ class _TopicCard extends StatelessWidget {
                       if ((classFeeLabel ?? '').isNotEmpty)
                         _TinyChip(text: classFeeLabel!, tone: _ChipTone.info),
                       _TinyChip(text: _dateLabel(item.createdAt)),
-                      if (alreadyVoted) const _TinyChip(text: 'Voted'),
+                      if (alreadyVoted) const _TinyChip(text: 'Upvoted'),
                     ],
                   ),
                   // Hidden helper for tests expecting class_created status after preview.

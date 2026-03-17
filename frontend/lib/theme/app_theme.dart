@@ -1,4 +1,5 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import 'app_colors.dart';
@@ -99,6 +100,30 @@ class AppTheme {
         side: const BorderSide(color: AppColors.glassBorder),
       ),
     ),
+    pageTransitionsTheme: const PageTransitionsTheme(
+      builders: {
+        TargetPlatform.android: _InstantPageTransitionsBuilder(),
+        TargetPlatform.iOS: _InstantPageTransitionsBuilder(),
+        TargetPlatform.linux: _InstantPageTransitionsBuilder(),
+        TargetPlatform.macOS: _InstantPageTransitionsBuilder(),
+        TargetPlatform.windows: _InstantPageTransitionsBuilder(),
+      },
+    ),
     useMaterial3: true,
   );
+}
+
+class _InstantPageTransitionsBuilder extends PageTransitionsBuilder {
+  const _InstantPageTransitionsBuilder();
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    return child;
+  }
 }

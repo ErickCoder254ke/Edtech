@@ -41,6 +41,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
   DateTime? _startAt;
   DateTime? _endAt;
   bool _loading = true;
+  bool _refreshing = false;
   bool _saving = false;
   bool _createClassExpanded = false;
   String _statusFilter = 'upcoming';
@@ -246,8 +247,10 @@ class _ClassesScreenState extends State<ClassesScreen> {
   }
 
   Future<void> _loadClasses() async {
+    final hasData = _classes.isNotEmpty || _allClasses.isNotEmpty;
     setState(() {
-      _loading = true;
+      _loading = !hasData;
+      _refreshing = hasData;
       _error = null;
     });
     try {
@@ -285,12 +288,25 @@ class _ClassesScreenState extends State<ClassesScreen> {
       _applyFiltersFromCache();
     } on ApiException catch (e) {
       if (!mounted) return;
-      setState(() => _error = e.message);
+      setState(() {
+        _error = _allClasses.isEmpty
+            ? e.message
+            : 'Unable to refresh. Showing last results.';
+      });
     } catch (_) {
       if (!mounted) return;
-      setState(() => _error = 'Failed to load classes.');
+      setState(() {
+        _error = _allClasses.isEmpty
+            ? 'Failed to load classes.'
+            : 'Unable to refresh. Showing last results.';
+      });
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _refreshing = false;
+        });
+      }
     }
   }
 
@@ -1305,9 +1321,36 @@ class _ClassesScreenState extends State<ClassesScreen> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  if (_loading)
+                  if (_refreshing)
+                    const GlassContainer(
+                      borderRadius: 16,
+                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          SizedBox(width: 10),
+                          Text('Refreshing classes...', style: TextStyle(fontSize: 12)),
+                        ],
+                      ),
+                    ),
+                  if (_refreshing) const SizedBox(height: 8),
+                  if (_error != null && _classes.isNotEmpty)
+                    GlassContainer(
+                      borderRadius: 14,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      child: Text(
+                        _error!,
+                        style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+                      ),
+                    ),
+                  if (_error != null && _classes.isNotEmpty) const SizedBox(height: 8),
+                  if (_loading && _classes.isEmpty)
                     const _LoadingTile()
-                  else if (_error != null)
+                  else if (_error != null && _classes.isEmpty)
                     _ErrorTile(message: _error!)
                   else if (_classes.isEmpty)
                     _EmptyTile(

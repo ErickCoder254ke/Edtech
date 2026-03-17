@@ -38,6 +38,7 @@ class _GenerationViewerScreenState extends State<GenerationViewerScreen> {
   late GenerationResponse _generation;
   late Session _session;
   bool _isRevising = false;
+  bool _readingMode = false;
 
   _ViewMode _mode = _ViewMode.student;
 
@@ -182,6 +183,13 @@ class _GenerationViewerScreenState extends State<GenerationViewerScreen> {
         title: Text(_title(type)),
         actions: [
           IconButton(
+            tooltip: _readingMode ? 'Reading mode on' : 'Reading mode off',
+            onPressed: () => setState(() => _readingMode = !_readingMode),
+            icon: Icon(
+              _readingMode ? Icons.chrome_reader_mode_rounded : Icons.chrome_reader_mode_outlined,
+            ),
+          ),
+          IconButton(
             tooltip: 'Export PDF',
             onPressed: () => _exportCurrentAsPdf(context),
             icon: const Icon(Icons.picture_as_pdf_rounded),
@@ -210,9 +218,14 @@ class _GenerationViewerScreenState extends State<GenerationViewerScreen> {
         ],
       ),
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [AppColors.backgroundDeep, AppColors.backgroundDark],
+            colors: _readingMode
+                ? [
+                    AppColors.surfaceDark.withValues(alpha: 0.98),
+                    AppColors.backgroundDark,
+                  ]
+                : const [AppColors.backgroundDeep, AppColors.backgroundDark],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),
@@ -307,7 +320,13 @@ class _GenerationViewerScreenState extends State<GenerationViewerScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            _Appear(delayMs: 120, child: _bodyForType(type)),
+            _Appear(
+              delayMs: 120,
+              child: _ReadingSurface(
+                readingMode: _readingMode,
+                child: _bodyForType(type),
+              ),
+            ),
           ],
         ),
       ),
@@ -1339,6 +1358,38 @@ class _AppearState extends State<_Appear> {
         offset: visible ? Offset.zero : const Offset(0, .04),
         duration: const Duration(milliseconds: 280),
         child: widget.child,
+      ),
+    );
+  }
+}
+
+class _ReadingSurface extends StatelessWidget {
+  const _ReadingSurface({
+    required this.child,
+    required this.readingMode,
+  });
+
+  final Widget child;
+  final bool readingMode;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 720),
+        child: SelectionArea(
+          child: DefaultTextStyle.merge(
+            style: TextStyle(
+              fontSize: readingMode ? 16 : 15,
+              height: readingMode ? 1.75 : 1.6,
+              color: AppColors.textPrimary,
+            ),
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: readingMode ? 2 : 0),
+              child: child,
+            ),
+          ),
+        ),
       ),
     );
   }

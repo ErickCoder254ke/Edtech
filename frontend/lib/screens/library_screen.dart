@@ -868,6 +868,7 @@ class _GlowBlob extends StatelessWidget {
 
 class _LibraryScreenState extends State<LibraryScreen> {
   bool _loading = true;
+  bool _refreshing = false;
   bool _openingGeneration = false;
   String? _error;
   List<DocumentMetadata> _documents = [];
@@ -912,8 +913,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _loadData() async {
+    final hasData = _documents.isNotEmpty || _generations.isNotEmpty;
     setState(() {
-      _loading = true;
+      _loading = !hasData;
+      _refreshing = hasData;
       _error = null;
     });
     try {
@@ -932,12 +935,23 @@ class _LibraryScreenState extends State<LibraryScreen> {
         _generations = gens;
       });
     } on ApiException catch (error) {
-      setState(() => _error = error.message);
+      setState(() {
+        _error = (_documents.isEmpty && _generations.isEmpty)
+            ? error.message
+            : 'Unable to refresh. Showing last results.';
+      });
     } catch (_) {
-      setState(() => _error = 'Unable to load library data.');
+      setState(() {
+        _error = (_documents.isEmpty && _generations.isEmpty)
+            ? 'Unable to load library data.'
+            : 'Unable to refresh. Showing last results.';
+      });
     } finally {
       if (mounted) {
-        setState(() => _loading = false);
+        setState(() {
+          _loading = false;
+          _refreshing = false;
+        });
       }
     }
   }
@@ -1139,8 +1153,38 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     onChanged: (next) => setState(() => _section = next),
                   ),
                   const SizedBox(height: 12),
-                  if (_loading) const _LoadingCard(),
-                  if (_error != null && !_loading) _ErrorCard(message: _error!),
+                  if (_refreshing)
+                    const GlassContainer(
+                      borderRadius: 16,
+                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          SizedBox(width: 10),
+                          Text('Refreshing library...', style: TextStyle(fontSize: 12)),
+                        ],
+                      ),
+                    ),
+                  if (_refreshing) const SizedBox(height: 8),
+                  if (_error != null && (_documents.isNotEmpty || _generations.isNotEmpty))
+                    GlassContainer(
+                      borderRadius: 14,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      child: Text(
+                        _error!,
+                        style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+                      ),
+                    ),
+                  if (_error != null && (_documents.isNotEmpty || _generations.isNotEmpty))
+                    const SizedBox(height: 8),
+                  if (_loading && _documents.isEmpty && _generations.isEmpty)
+                    const _LoadingCard(),
+                  if (_error != null && _documents.isEmpty && _generations.isEmpty)
+                    _ErrorCard(message: _error!),
                   if (!_loading && _error == null) ...[
                     if (showDocs) ...[
                       _SectionTitle(label: 'Documents', count: filteredDocs.length),

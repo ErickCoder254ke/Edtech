@@ -280,6 +280,19 @@ class _NotesCatalogScreenState extends State<NotesCatalogScreen> {
                             style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
                           ),
                         ],
+                        const SizedBox(height: 8),
+                        Row(
+                          children: const [
+                            Icon(Icons.pan_tool_alt_rounded, size: 14, color: AppColors.accent),
+                            SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                'Tap to generate an exam from this note.',
+                                style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+                              ),
+                            ),
+                          ],
+                        ),
                         const SizedBox(height: 10),
                         Row(
                           children: [
@@ -287,7 +300,7 @@ class _NotesCatalogScreenState extends State<NotesCatalogScreen> {
                               child: FilledButton.icon(
                                 onPressed: () => _openGeneratorForNote(note),
                                 icon: const Icon(Icons.auto_awesome_rounded),
-                                label: const Text('Generate From Note'),
+                                label: const Text('Generate exam'),
                               ),
                             ),
                           ],
