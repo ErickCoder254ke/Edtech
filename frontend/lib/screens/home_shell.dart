@@ -1,10 +1,11 @@
-import 'dart:async';
+﻿import 'dart:async';
 
 import 'package:flutter/material.dart';
 
 import '../models/models.dart';
 import '../services/api_client.dart';
 import '../theme/app_colors.dart';
+import '../theme/tokens.dart';
 import 'dashboard_screen.dart';
 import 'classes_screen.dart';
 import 'admin_dashboard_screen.dart';
@@ -563,7 +564,9 @@ class _HomeShellState extends State<HomeShell> {
 
     return Stack(
       children: [
+        const _ShellBackground(),
         Scaffold(
+          backgroundColor: Colors.transparent,
           key: _scaffoldKey,
           drawer: Drawer(
             width: 338,
@@ -579,14 +582,14 @@ class _HomeShellState extends State<HomeShell> {
                 ),
                 gradient: LinearGradient(
                   colors: [
-                    const Color(0xFF101D34).withValues(alpha: 0.98),
-                    const Color(0xFF0A1325).withValues(alpha: 0.98),
-                    const Color(0xFF090F1C).withValues(alpha: 0.98),
+                    AppColors.surfaceDark.withValues(alpha: 0.96),
+                    AppColors.backgroundDark.withValues(alpha: 0.96),
+                    AppColors.backgroundDeep.withValues(alpha: 0.96),
                   ],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
-                border: Border.all(color: Colors.white12),
+                border: Border.all(color: AppColors.glassBorder),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.35),
@@ -977,61 +980,102 @@ class _HomeShellState extends State<HomeShell> {
           ),
           bottomNavigationBar: Container(
             padding: EdgeInsets.fromLTRB(
-              16,
-              10,
-              16,
-              10 + MediaQuery.of(context).padding.bottom,
+              AppTokens.spaceLg,
+              AppTokens.spaceSm + 2,
+              AppTokens.spaceLg,
+              AppTokens.spaceSm + MediaQuery.of(context).padding.bottom,
             ),
             decoration: BoxDecoration(
-              color: AppColors.surfaceDark.withValues(alpha: 0.85),
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(24),
+              gradient: LinearGradient(
+                colors: [
+                  AppColors.surfaceDark.withValues(alpha: 0.86),
+                  AppColors.backgroundDeep.withValues(alpha: 0.94),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
               ),
-              border: Border(
-                top: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+              borderRadius: BorderRadius.vertical(
+                top: Radius.circular(AppTokens.radiusLg + 6),
               ),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.primary.withValues(alpha: 0.14),
+                  blurRadius: AppTokens.shadowBlur,
+                  offset: const Offset(0, -2),
+                ),
+              ],
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            child: Stack(
+              alignment: Alignment.center,
+              clipBehavior: Clip.none,
               children: [
-                Expanded(
-                  child: _NavItem(
-                    label: 'Dash',
-                    icon: Icons.grid_view_rounded,
-                    active: _index == 0,
-                    onTap: () => setState(() => _index = 0),
-                  ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: _NavItem(
+                        label: 'Dash',
+                        icon: Icons.grid_view_rounded,
+                        active: _index == 0,
+                        onTap: () => setState(() => _index = 0),
+                      ),
+                    ),
+                    Expanded(
+                      child: _NavItem(
+                        label: 'Library',
+                        icon: Icons.menu_book_rounded,
+                        active: _index == 1,
+                        onTap: () => setState(() => _index = 1),
+                      ),
+                    ),
+                    const SizedBox(width: AppTokens.spaceXl + 32),
+                    Expanded(
+                      child: _NavItem(
+                        label: 'Upload',
+                        icon: Icons.upload_file_rounded,
+                        active: _index == 2,
+                        onTap: () => setState(() => _index = 2),
+                      ),
+                    ),
+                    Expanded(
+                      child: _NavItem(
+                        label: 'Topics',
+                        icon: Icons.forum_rounded,
+                        active: _index == 4,
+                        onTap: () => setState(() => _index = 4),
+                      ),
+                    ),
+                  ],
                 ),
-                Expanded(
-                  child: _NavItem(
-                    label: 'Library',
-                    icon: Icons.menu_book_rounded,
-                    active: _index == 1,
-                    onTap: () => setState(() => _index = 1),
-                  ),
-                ),
-                Expanded(
-                  child: _NavItem(
-                    label: 'Upload',
-                    icon: Icons.upload_file_rounded,
-                    active: _index == 2,
-                    onTap: () => setState(() => _index = 2),
-                  ),
-                ),
-                Expanded(
-                  child: _NavItem(
-                    label: 'Exam',
-                    icon: Icons.auto_awesome_rounded,
-                    active: _index == 3,
+                Positioned(
+                  top: -AppTokens.spaceSm,
+                  child: GestureDetector(
                     onTap: () => setState(() => _index = 3),
-                  ),
-                ),
-                Expanded(
-                  child: _NavItem(
-                    label: 'Topics',
-                    icon: Icons.forum_rounded,
-                    active: _index == 4,
-                    onTap: () => setState(() => _index = 4),
+                    child: Container(
+                      height: 64,
+                      width: 64,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [AppColors.primary, AppColors.accent],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primary.withValues(alpha: 0.35),
+                            blurRadius: AppTokens.shadowBlur,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                      child: const Icon(
+                        Icons.auto_awesome_rounded,
+                        color: Colors.white,
+                        size: 28,
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -1259,6 +1303,68 @@ class _GenerationCoachOverlayState extends State<_GenerationCoachOverlay>
   }
 }
 
+class _ShellBackground extends StatelessWidget {
+  const _ShellBackground();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [AppColors.backgroundDeep, AppColors.backgroundDark],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ),
+      ),
+      child: Stack(
+        children: const [
+          Positioned(
+            top: -80,
+            left: -60,
+            child: _BackdropBlob(color: AppColors.primary, size: 260),
+          ),
+          Positioned(
+            bottom: -60,
+            right: -60,
+            child: _BackdropBlob(color: AppColors.accent, size: 240),
+          ),
+          Positioned(
+            bottom: 120,
+            left: 80,
+            child: _BackdropBlob(color: AppColors.electric, size: 180),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BackdropBlob extends StatelessWidget {
+  const _BackdropBlob({required this.color, required this.size});
+
+  final Color color;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: size,
+      width: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: color.withValues(alpha: 0.06),
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: 0.16),
+            blurRadius: size / 2,
+            spreadRadius: size / 4,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _NavItem extends StatelessWidget {
   const _NavItem({
     required this.label,
@@ -1274,26 +1380,47 @@ class _NavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = active ? AppColors.primary : AppColors.textMuted;
+    final color = active ? Colors.white : AppColors.textMuted;
     return GestureDetector(
       onTap: onTap,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Container(
-            height: 44,
-            width: 44,
+          AnimatedContainer(
+            duration: AppTokens.motionFast,
+            height: 48,
+            width: 48,
             decoration: BoxDecoration(
-              color: active
-                  ? AppColors.primary.withValues(alpha: 0.18)
-                  : Colors.transparent,
-              borderRadius: BorderRadius.circular(14),
+              gradient: LinearGradient(
+                colors: active
+                    ? [
+                        AppColors.primary.withValues(alpha: 0.9),
+                        AppColors.electric.withValues(alpha: 0.78),
+                      ]
+                    : [
+                        Colors.white.withValues(alpha: 0.05),
+                        Colors.white.withValues(alpha: 0.03),
+                      ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(16),
               border: Border.all(
                 color: active
-                    ? AppColors.primary.withValues(alpha: 0.4)
-                    : Colors.transparent,
+                    ? AppColors.primary.withValues(alpha: 0.55)
+                    : Colors.white.withValues(alpha: 0.08),
               ),
+              boxShadow: active
+                  ? [
+                      BoxShadow(
+                        color: AppColors.primary.withValues(alpha: 0.25),
+                        blurRadius: 14,
+                        spreadRadius: 1,
+                        offset: const Offset(0, 6),
+                      ),
+                    ]
+                  : [],
             ),
             child: Icon(icon, color: color),
           ),
@@ -1301,12 +1428,12 @@ class _NavItem extends StatelessWidget {
           FittedBox(
             fit: BoxFit.scaleDown,
             child: Text(
-              label.toUpperCase(),
+              label,
               style: TextStyle(
                 color: color,
-                fontSize: 9,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 1.0,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.4,
               ),
             ),
           ),
@@ -1688,3 +1815,4 @@ class _MenuNavTile extends StatelessWidget {
     );
   }
 }
+

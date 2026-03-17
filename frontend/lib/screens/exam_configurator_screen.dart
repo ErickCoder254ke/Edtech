@@ -5,7 +5,9 @@ import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../services/api_client.dart';
 import '../theme/app_colors.dart';
+import '../theme/tokens.dart';
 import '../widgets/glass_container.dart';
+import '../widgets/ui_snackbar.dart';
 import 'generation_viewer_screen.dart';
 import 'chat_with_notes_screen.dart';
 import 'jobs_screen.dart';
@@ -806,13 +808,10 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
     var nextPaper = paper;
     if (paper == 'PP3' && !_isPracticalSubject(_selectedSubject)) {
       nextPaper = 'PP2';
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'PP3 is for practical subjects. Switched to PP2 for this subject.',
-          ),
-          duration: Duration(milliseconds: 1400),
-        ),
+      UiSnackbar.show(
+        context,
+        message: 'PP3 is for practical subjects. Switched to PP2 for this subject.',
+        type: UiSnackType.info,
       );
     }
     setState(() => _selectedPaper = nextPaper);
@@ -898,11 +897,10 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
 
   void _showTemplateToast(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        duration: const Duration(milliseconds: 1300),
-      ),
+    UiSnackbar.show(
+      context,
+      message: message,
+      type: UiSnackType.info,
     );
   }
 
@@ -958,7 +956,12 @@ class _ExamConfiguratorScreenState extends State<ExamConfiguratorScreen> {
                   children: [
                     Expanded(
                       child: ListView(
-                        padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
+                        padding: const EdgeInsets.fromLTRB(
+                          AppTokens.spaceMd,
+                          AppTokens.spaceMd + 2,
+                          AppTokens.spaceMd,
+                          AppTokens.spaceMd,
+                        ),
                         children: [
                           _SectionTitle('Generation Type'),
                           const SizedBox(height: 8),
@@ -1737,27 +1740,28 @@ class _ExamBackground extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: const BoxDecoration(
-        gradient: RadialGradient(
-          colors: [Color(0xFF0B1220), Color(0xFF020617)],
-          radius: 1.2,
-          center: Alignment(0.4, -0.6),
+        gradient: LinearGradient(
+          colors: [AppColors.backgroundDeep, AppColors.backgroundDark],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
         ),
       ),
       child: Stack(
         children: [
           Positioned(
-            top: -120,
-            right: -100,
-            child: _GlowCircle(
-              color: AppColors.primary.withValues(alpha: 0.12),
-            ),
+            top: -80,
+            right: -60,
+            child: _GlowCircle(color: AppColors.primary.withValues(alpha: 0.12), size: 260),
           ),
           Positioned(
-            bottom: -140,
-            left: -120,
-            child: _GlowCircle(
-              color: Colors.blueAccent.withValues(alpha: 0.08),
-            ),
+            bottom: -100,
+            left: -80,
+            child: _GlowCircle(color: AppColors.accent.withValues(alpha: 0.1), size: 240),
+          ),
+          Positioned(
+            bottom: 140,
+            left: 40,
+            child: _GlowCircle(color: AppColors.electric.withValues(alpha: 0.08), size: 180),
           ),
         ],
       ),
@@ -1766,19 +1770,26 @@ class _ExamBackground extends StatelessWidget {
 }
 
 class _GlowCircle extends StatelessWidget {
-  const _GlowCircle({required this.color});
+  const _GlowCircle({required this.color, required this.size});
 
   final Color color;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 260,
-      width: 260,
+      height: size,
+      width: size,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: color,
-        boxShadow: [BoxShadow(color: color, blurRadius: 120, spreadRadius: 20)],
+        boxShadow: [
+          BoxShadow(
+            color: color,
+            blurRadius: size / 2,
+            spreadRadius: size / 5,
+          ),
+        ],
       ),
     );
   }

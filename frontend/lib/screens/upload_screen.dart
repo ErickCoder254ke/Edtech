@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +8,7 @@ import '../services/api_client.dart';
 import '../theme/app_colors.dart';
 import '../widgets/glass_container.dart';
 import '../widgets/gradient_button.dart';
+import '../widgets/ui_snackbar.dart';
 import 'subscriptions_screen.dart';
 
 class UploadScreen extends StatefulWidget {
@@ -131,23 +132,39 @@ class _UploadScreenState extends State<UploadScreen> {
       final retentionText = doc.retentionDays != null
           ? ' Auto-delete policy: ${doc.retentionDays} day(s).'
           : '';
+      final successMessage =
+          'Uploaded ${doc.filename} (${doc.totalChunks} chunks).$retentionText';
       setState(() {
         _processingProgress = 1.0;
-        _uploadStatus =
-            'Uploaded ${doc.filename} (${doc.totalChunks} chunks).$retentionText';
+        _uploadStatus = successMessage;
         _detectedKeywords = doc.keywords;
         _lastUploadedDoc = doc;
       });
+      UiSnackbar.show(
+        context,
+        message: successMessage,
+        type: UiSnackType.success,
+      );
       widget.onUploadCompleted(doc.filename);
     } on ApiException catch (error) {
       if (!mounted) return;
       setState(() => _uploadStatus = error.message);
+      UiSnackbar.show(
+        context,
+        message: error.message,
+        type: UiSnackType.error,
+      );
       if (error.statusCode == 402) {
         _showSubscriptionPrompt(error.message);
       }
     } catch (_) {
       if (!mounted) return;
       setState(() => _uploadStatus = 'Upload failed. Try again.');
+      UiSnackbar.show(
+        context,
+        message: 'Upload failed. Try again.',
+        type: UiSnackType.error,
+      );
     } finally {
       _progressTimer?.cancel();
       if (mounted) {
@@ -617,7 +634,7 @@ class _UploadBackground extends StatelessWidget {
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
-          colors: [Color(0xFF0B101B), AppColors.surfaceDark],
+          colors: [AppColors.backgroundDeep, AppColors.backgroundDark],
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
         ),
@@ -625,14 +642,28 @@ class _UploadBackground extends StatelessWidget {
       child: Stack(
         children: [
           Positioned(
-            bottom: -60,
-            right: -40,
-            child: _GlowOrb(color: AppColors.primary.withValues(alpha: 0.2)),
+            bottom: -70,
+            right: -60,
+            child: _GlowOrb(
+              color: AppColors.primary.withValues(alpha: 0.14),
+              size: 240,
+            ),
           ),
           Positioned(
-            top: 120,
-            left: -40,
-            child: _GlowOrb(color: AppColors.primary.withValues(alpha: 0.08)),
+            top: -40,
+            left: -60,
+            child: _GlowOrb(
+              color: AppColors.accent.withValues(alpha: 0.12),
+              size: 220,
+            ),
+          ),
+          Positioned(
+            bottom: 140,
+            left: 40,
+            child: _GlowOrb(
+              color: AppColors.electric.withValues(alpha: 0.1),
+              size: 160,
+            ),
           ),
         ],
       ),
@@ -641,26 +672,28 @@ class _UploadBackground extends StatelessWidget {
 }
 
 class _GlowOrb extends StatelessWidget {
-  const _GlowOrb({required this.color});
+  const _GlowOrb({required this.color, required this.size});
 
   final Color color;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 180,
-      width: 180,
+      height: size,
+      width: size,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: color,
         boxShadow: [
           BoxShadow(
             color: color,
-            blurRadius: 120,
-            spreadRadius: 30,
+            blurRadius: size / 1.5,
+            spreadRadius: size / 4,
           ),
         ],
       ),
     );
   }
 }
+

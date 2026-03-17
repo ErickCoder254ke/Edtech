@@ -6,6 +6,7 @@ import '../models/models.dart';
 import '../services/api_client.dart';
 import '../theme/app_colors.dart';
 import '../widgets/glass_container.dart';
+import '../widgets/ui_snackbar.dart';
 
 class TeacherVerificationScreen extends StatefulWidget {
   const TeacherVerificationScreen({
@@ -79,8 +80,10 @@ class _TeacherVerificationScreenState extends State<TeacherVerificationScreen> {
       });
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Unable to load verification status.')),
+      UiSnackbar.show(
+        context,
+        message: 'Unable to load verification status.',
+        type: UiSnackType.error,
       );
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -114,8 +117,10 @@ class _TeacherVerificationScreenState extends State<TeacherVerificationScreen> {
     final hasId = _idDoc != null || hasExistingId;
     final hasTsc = _tscCert != null || hasExistingTsc;
     if (tsc.isEmpty || !hasId || !hasTsc) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Provide TSC number, ID and TSC certificate.')),
+      UiSnackbar.show(
+        context,
+        message: 'Provide TSC number, ID and TSC certificate.',
+        type: UiSnackType.error,
       );
       return;
     }
@@ -135,13 +140,19 @@ class _TeacherVerificationScreenState extends State<TeacherVerificationScreen> {
         _idDoc = null;
         _tscCert = null;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Verification submitted for admin review.')),
+      UiSnackbar.show(
+        context,
+        message: 'Verification submitted for admin review.',
+        type: UiSnackType.success,
       );
       await _load();
     } on ApiException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      UiSnackbar.show(
+        context,
+        message: e.message,
+        type: UiSnackType.error,
+      );
     } finally {
       if (mounted) setState(() => _submitting = false);
     }

@@ -5,6 +5,7 @@ import '../models/models.dart';
 import '../services/api_client.dart';
 import '../theme/app_colors.dart';
 import '../widgets/glass_container.dart';
+import '../widgets/ui_snackbar.dart';
 import 'teacher_verification_screen.dart';
 
 class ClassesScreen extends StatefulWidget {
@@ -344,30 +345,34 @@ class _ClassesScreenState extends State<ClassesScreen> {
     final link = _meetingController.text.trim();
     final feeKes = int.tryParse(_feeController.text.trim()) ?? -1;
     if (title.isEmpty || link.isEmpty || _startAt == null || _endAt == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Fill title, link, and schedule.')),
+      UiSnackbar.show(
+        context,
+        message: 'Fill title, link, and schedule.',
+        type: UiSnackType.error,
       );
       return;
     }
     if (feeKes < 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter a valid fee amount in KES.')),
+      UiSnackbar.show(
+        context,
+        message: 'Enter a valid fee amount in KES.',
+        type: UiSnackType.error,
       );
       return;
     }
     if (feeKes > 0 && feeKes < _classMinFeeKes) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Fee must be at least KES $_classMinFeeKes or 0 for free class.',
-          ),
-        ),
+      UiSnackbar.show(
+        context,
+        message: 'Fee must be at least KES $_classMinFeeKes or 0 for free class.',
+        type: UiSnackType.error,
       );
       return;
     }
     if (feeKes > _classMaxFeeKes) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Fee must not exceed KES $_classMaxFeeKes.')),
+      UiSnackbar.show(
+        context,
+        message: 'Fee must not exceed KES $_classMaxFeeKes.',
+        type: UiSnackType.error,
       );
       return;
     }
@@ -393,8 +398,10 @@ class _ClassesScreenState extends State<ClassesScreen> {
         _startAt = null;
         _endAt = null;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Class created and students alerted.')),
+      UiSnackbar.show(
+        context,
+        message: 'Class created and students alerted.',
+        type: UiSnackType.success,
       );
       await _loadClasses();
     } on ApiException catch (e) {
@@ -453,9 +460,11 @@ class _ClassesScreenState extends State<ClassesScreen> {
       await _loadClasses();
     } on ApiException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
+      UiSnackbar.show(
         context,
-      ).showSnackBar(SnackBar(content: Text(e.message)));
+        message: e.message,
+        type: UiSnackType.error,
+      );
     } finally {
       if (mounted) setState(() => _busyClassIds.remove(classId));
     }

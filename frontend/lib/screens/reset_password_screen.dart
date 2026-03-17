@@ -4,6 +4,7 @@ import '../services/api_client.dart';
 import '../theme/app_colors.dart';
 import '../widgets/glass_container.dart';
 import '../widgets/gradient_button.dart';
+import '../widgets/ui_snackbar.dart';
 
 class ResetPasswordScreen extends StatefulWidget {
   const ResetPasswordScreen({
@@ -59,8 +60,10 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
         newPassword: newPassword,
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Password reset successful. Please sign in.')),
+      UiSnackbar.show(
+        context,
+        message: 'Password reset successful. Please sign in.',
+        type: UiSnackType.success,
       );
       await widget.onPasswordResetSuccess?.call();
       if (!mounted) return;
@@ -71,6 +74,11 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
     } catch (_) {
       if (!mounted) return;
       setState(() => _error = 'Could not reset password. Please retry.');
+      UiSnackbar.show(
+        context,
+        message: 'Could not reset password. Please retry.',
+        type: UiSnackType.error,
+      );
     } finally {
       if (mounted) {
         setState(() => _submitting = false);

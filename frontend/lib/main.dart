@@ -252,7 +252,7 @@ class _BootAnimationState extends State<_BootAnimation>
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
-          colors: [Color(0xFF060A14), Color(0xFF0B1325)],
+          colors: [Color(0xFF0F0906), Color(0xFF1A0F0C)],
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
         ),

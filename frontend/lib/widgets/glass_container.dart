@@ -1,14 +1,15 @@
-import 'dart:ui';
+﻿import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
 import '../theme/app_colors.dart';
+import '../theme/tokens.dart';
 
 class GlassContainer extends StatelessWidget {
   const GlassContainer({
     super.key,
     required this.child,
-    this.borderRadius = 20,
+    this.borderRadius = AppTokens.radiusLg,
     this.padding,
   });
 
@@ -21,14 +22,17 @@ class GlassContainer extends StatelessWidget {
     return ClipRRect(
       borderRadius: BorderRadius.circular(borderRadius),
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        filter: ImageFilter.blur(
+          sigmaX: AppTokens.blurGlass,
+          sigmaY: AppTokens.blurGlass,
+        ),
         child: Container(
           padding: padding,
           decoration: BoxDecoration(
             gradient: LinearGradient(
               colors: [
-                AppColors.surfaceElevated.withValues(alpha: 0.88),
-                AppColors.surfaceDark.withValues(alpha: 0.82),
+                Colors.white.withValues(alpha: 0.06),
+                AppColors.surfaceElevated.withValues(alpha: 0.9),
               ],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
@@ -37,9 +41,10 @@ class GlassContainer extends StatelessWidget {
             border: Border.all(color: AppColors.glassBorder),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.18),
-                blurRadius: 20,
-                offset: const Offset(0, 8),
+                color: AppColors.primary.withValues(alpha: 0.12),
+                blurRadius: AppTokens.shadowBlur,
+                spreadRadius: 2,
+                offset: const Offset(0, 12),
               ),
             ],
           ),

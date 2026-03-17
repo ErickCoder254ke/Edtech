@@ -8,7 +8,10 @@ import '../config/app_config.dart';
 import '../models/models.dart';
 import '../services/api_client.dart';
 import '../theme/app_colors.dart';
+import '../theme/tokens.dart';
 import '../widgets/glass_container.dart';
+import '../widgets/skeleton_box.dart';
+import '../widgets/ui_mesh_background.dart';
 import 'generation_viewer_screen.dart';
 
 class JobsScreen extends StatefulWidget {
@@ -399,29 +402,39 @@ class _JobsScreenState extends State<JobsScreen> with WidgetsBindingObserver {
         (counts['processing'] ?? 0) +
         (counts['retrying'] ?? 0);
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('My Jobs'),
-        actions: [
-          IconButton(
-            onPressed: _loadJobs,
-            icon: const Icon(Icons.refresh_rounded),
-          ),
-        ],
-      ),
       body: Stack(
         children: [
-          const _JobsBackground(),
+          const UiMeshBackground(),
           SafeArea(
             child: RefreshIndicator(
               onRefresh: _loadJobs,
               child: ListView(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+                padding: const EdgeInsets.fromLTRB(
+                  AppTokens.spaceLg,
+                  AppTokens.spaceMd,
+                  AppTokens.spaceLg,
+                  AppTokens.spaceXl * 2.5,
+                ),
                 children: [
+                  Row(
+                    children: [
+                      const Text(
+                        'My Jobs',
+                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        onPressed: _loadJobs,
+                        icon: const Icon(Icons.refresh_rounded),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
                   Container(
                     margin: const EdgeInsets.only(bottom: 10),
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 8,
+                      horizontal: AppTokens.spaceMd,
+                      vertical: AppTokens.spaceSm,
                     ),
                     decoration: BoxDecoration(
                       color: _wsConnected
@@ -811,19 +824,26 @@ class _LoadingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const GlassContainer(
-      borderRadius: 16,
-      padding: EdgeInsets.all(14),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 18,
-            height: 18,
-            child: CircularProgressIndicator(strokeWidth: 2),
+    return Column(
+      children: List.generate(
+        3,
+        (_) => Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: GlassContainer(
+            borderRadius: 16,
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                SkeletonBox(height: 12, width: 90),
+                SizedBox(height: 10),
+                SkeletonBox(height: 16, width: 180),
+                SizedBox(height: 8),
+                SkeletonBox(height: 10, width: 120),
+              ],
+            ),
           ),
-          SizedBox(width: 10),
-          Text('Loading jobs...'),
-        ],
+        ),
       ),
     );
   }
@@ -848,6 +868,40 @@ class _ErrorCard extends StatelessWidget {
               message,
               style: const TextStyle(color: Colors.redAccent),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatChip extends StatelessWidget {
+  const _StatChip({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label.toUpperCase(),
+            style: const TextStyle(fontSize: 10, letterSpacing: 1, color: AppColors.textMuted),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
           ),
         ],
       ),

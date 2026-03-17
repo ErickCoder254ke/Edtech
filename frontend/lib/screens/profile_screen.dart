@@ -4,6 +4,7 @@ import '../models/models.dart';
 import '../services/api_client.dart';
 import '../theme/app_colors.dart';
 import '../widgets/glass_container.dart';
+import '../widgets/ui_snackbar.dart';
 import '../widgets/gradient_button.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -88,13 +89,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final updatedSession = widget.session.copyWith(user: user);
       widget.onSessionUpdated(updatedSession);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Profile updated successfully')),
+      UiSnackbar.show(
+        context,
+        message: 'Profile updated successfully',
+        type: UiSnackType.success,
       );
     } on ApiException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message)),
+      UiSnackbar.show(
+        context,
+        message: e.message,
+        type: UiSnackType.error,
       );
     } finally {
       if (mounted) setState(() => _savingProfile = false);
@@ -106,8 +111,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final next = _newPasswordController.text;
     final confirm = _confirmPasswordController.text;
     if (next != confirm) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('New password and confirm password must match')),
+      UiSnackbar.show(
+        context,
+        message: 'New password and confirm password must match',
+        type: UiSnackType.error,
       );
       return;
     }
@@ -125,13 +132,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _newPasswordController.clear();
       _confirmPasswordController.clear();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Password updated. Use new password next login.')),
+      UiSnackbar.show(
+        context,
+        message: 'Password updated. Use new password next login.',
+        type: UiSnackType.success,
       );
     } on ApiException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message)),
+      UiSnackbar.show(
+        context,
+        message: e.message,
+        type: UiSnackType.error,
       );
     } finally {
       if (mounted) setState(() => _changingPassword = false);
@@ -141,8 +152,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _deleteAccount() async {
     final password = _deletePasswordController.text.trim();
     if (password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter your password to delete account')),
+      UiSnackbar.show(
+        context,
+        message: 'Enter your password to delete account',
+        type: UiSnackType.error,
       );
       return;
     }

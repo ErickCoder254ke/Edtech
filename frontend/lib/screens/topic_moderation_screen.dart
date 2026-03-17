@@ -1,9 +1,10 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 
 import '../models/models.dart';
 import '../services/api_client.dart';
 import '../theme/app_colors.dart';
 import '../widgets/glass_container.dart';
+import '../widgets/ui_snackbar.dart';
 
 class TopicModerationScreen extends StatefulWidget {
   const TopicModerationScreen({
@@ -196,7 +197,7 @@ class _TopicModerationScreenState extends State<TopicModerationScreen>
                                       Text(item.title, style: const TextStyle(fontWeight: FontWeight.w800)),
                                       const SizedBox(height: 6),
                                       Text(
-                                        '${item.categoryLabel} • ${item.upvoteCount} votes',
+                                        '${item.categoryLabel} â€¢ ${item.upvoteCount} votes',
                                         style: const TextStyle(color: AppColors.textMuted),
                                       ),
                                       if (item.fraudSpikeFlaggedAt != null) ...[
@@ -288,3 +289,4 @@ class _TopicModerationScreenState extends State<TopicModerationScreen>
     );
   }
 }
+

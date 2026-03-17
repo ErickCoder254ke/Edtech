@@ -5,6 +5,7 @@ import '../models/models.dart';
 import '../services/api_client.dart';
 import '../theme/app_colors.dart';
 import '../widgets/glass_container.dart';
+import '../widgets/ui_snackbar.dart';
 
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({
@@ -129,9 +130,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       });
     } on ApiException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
+      UiSnackbar.show(
         context,
-      ).showSnackBar(SnackBar(content: Text(e.message)));
+        message: e.message,
+        type: UiSnackType.error,
+      );
     } finally {
       if (mounted) setState(() => _markingRead.remove(item.id));
     }
@@ -161,7 +164,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       });
     } on ApiException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      UiSnackbar.show(
+        context,
+        message: e.message,
+        type: UiSnackType.error,
+      );
     } finally {
       if (mounted) setState(() => _deleting.remove(item.id));
     }
@@ -182,8 +189,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             'firebase_enabled=${health['firebase_enabled']} '
             'firebase_ready=${health['firebase_ready']} '
             'has_registered_token=${health['has_registered_token']}';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Push not ready: $detail')),
+        UiSnackbar.show(
+          context,
+          message: 'Push not ready: $detail',
+          type: UiSnackType.error,
         );
         return;
       }
@@ -191,12 +200,18 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         (token) => widget.apiClient.sendTestPush(accessToken: token),
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Test push sent. Check your device notification tray.')),
+      UiSnackbar.show(
+        context,
+        message: 'Test push sent. Check your device notification tray.',
+        type: UiSnackType.info,
       );
     } on ApiException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      UiSnackbar.show(
+        context,
+        message: e.message,
+        type: UiSnackType.error,
+      );
     } finally {
       if (mounted) setState(() => _testingPush = false);
     }

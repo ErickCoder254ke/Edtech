@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#ec5b13",
+                        "secondary": "#8b5cf6",
+                        "background-light": "#f8f6f6",
+                        "background-dark": "#1a0f0a",
+                    },
+                    fontFamily: {
+                        "display": ["Public Sans"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        .mesh-gradient {
+            background-color: #f8f6f6;
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(236, 91, 19, 0.15) 0px, transparent 50%),
+                radial-gradient(at 100% 0%, rgba(139, 92, 246, 0.15) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(236, 91, 19, 0.1) 0px, transparent 50%),
+                radial-gradient(at 0% 100%, rgba(139, 92, 246, 0.1) 0px, transparent 50%);
+        }
+        .dark .mesh-gradient {
+            background-color: #1a0f0a;
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(236, 91, 19, 0.2) 0px, transparent 50%),
+                radial-gradient(at 100% 0%, rgba(139, 92, 246, 0.2) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(236, 91, 19, 0.15) 0px, transparent 50%),
+                radial-gradient(at 0% 100%, rgba(139, 92, 246, 0.15) 0px, transparent 50%);
+        }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(236, 91, 19, 0.2);
+        }
+        .dark .glass-card {
+            background: rgba(40, 24, 18, 0.6);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(236, 91, 19, 0.3);
+        }
+        .glow-border:hover {
+            box-shadow: 0 0 15px rgba(236, 91, 19, 0.3);
+            border-color: rgba(236, 91, 19, 0.5);
+        }
+        .scrollbar-hide::-webkit-scrollbar {
+            display: none;
+        }
+        .scrollbar-hide {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+<style>
+        body {
+            min-height: max(884px, 100dvh);
+        }
+    </style>
+</head>
+<body class="font-display mesh-gradient min-h-screen text-slate-900 dark:text-slate-100">
+<div class="max-w-3xl mx-auto flex flex-col min-h-screen pb-20">
+<!-- Header -->
+<header class="sticky top-0 z-10 px-6 py-4 flex items-center justify-between glass-card mb-4 rounded-b-xl border-t-0">
+<h1 class="text-2xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-primary to-secondary">Student Requests</h1>
+<button class="bg-primary hover:bg-primary/90 text-white px-5 py-2 rounded-full font-semibold flex items-center gap-2 transition-all shadow-lg shadow-primary/20">
+<span class="material-symbols-outlined text-sm">add</span>
+            Create Post
+        </button>
+</header>
+<!-- Tabs -->
+<div class="px-6 mb-4 flex gap-4 overflow-x-auto pb-2 scrollbar-hide">
+<button class="px-4 py-1.5 rounded-full bg-primary text-white font-medium text-sm whitespace-nowrap">Trending</button>
+<button class="px-4 py-1.5 rounded-full bg-primary/10 dark:bg-primary/20 text-primary font-medium text-sm hover:bg-primary/20 whitespace-nowrap">New</button>
+<button class="px-4 py-1.5 rounded-full bg-primary/10 dark:bg-primary/20 text-primary font-medium text-sm hover:bg-primary/20 whitespace-nowrap">Top</button>
+<button class="px-4 py-1.5 rounded-full bg-primary/10 dark:bg-primary/20 text-primary font-medium text-sm hover:bg-primary/20 whitespace-nowrap">My Requests</button>
+</div>
+<!-- Grade Category Bar -->
+<div class="px-6 mb-6">
+<div class="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+<button class="px-4 py-2 rounded-xl bg-white/50 dark:bg-white/5 border border-primary/20 text-slate-700 dark:text-slate-200 font-semibold text-xs whitespace-nowrap flex items-center gap-2 hover:border-primary transition-colors">
+<span class="w-2 h-2 rounded-full bg-yellow-400"></span>
+                Grade 1-5
+            </button>
+<button class="px-4 py-2 rounded-xl bg-white/50 dark:bg-white/5 border border-primary/20 text-slate-700 dark:text-slate-200 font-semibold text-xs whitespace-nowrap flex items-center gap-2 hover:border-primary transition-colors">
+<span class="w-2 h-2 rounded-full bg-orange-400"></span>
+                Grade 6-7
+            </button>
+<button class="px-4 py-2 rounded-xl bg-white/50 dark:bg-white/5 border border-primary/20 text-slate-700 dark:text-slate-200 font-semibold text-xs whitespace-nowrap flex items-center gap-2 hover:border-primary transition-colors">
+<span class="w-2 h-2 rounded-full bg-secondary"></span>
+                Junior Secondary
+            </button>
+<button class="px-4 py-2 rounded-xl bg-white/50 dark:bg-white/5 border border-primary/20 text-slate-700 dark:text-slate-200 font-semibold text-xs whitespace-nowrap flex items-center gap-2 hover:border-primary transition-colors">
+<span class="w-2 h-2 rounded-full bg-primary"></span>
+                Senior School
+            </button>
+</div>
+</div>
+<!-- Feed -->
+<main class="px-6 space-y-4 flex-grow">
+<!-- Request Card 1 -->
+<div class="glass-card rounded-xl p-4 flex gap-4 glow-border transition-all">
+<!-- Vote Controls -->
+<div class="flex flex-col items-center gap-1 bg-primary/5 dark:bg-primary/10 rounded-lg p-2 h-fit">
+<button class="text-primary hover:scale-110 transition-transform">
+<span class="material-symbols-outlined">arrow_upward</span>
+</button>
+<span class="text-xs font-bold text-primary">1.2k</span>
+<button class="text-slate-400 hover:scale-110 transition-transform">
+<span class="material-symbols-outlined">arrow_downward</span>
+</button>
+</div>
+<!-- Content -->
+<div class="flex-grow space-y-3">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="px-2 py-0.5 rounded bg-secondary/20 text-secondary text-[10px] font-bold uppercase tracking-wider">Physics</span>
+<span class="text-[11px] text-slate-500 dark:text-slate-400">Alex J. • 2h ago</span>
+</div>
+<span class="px-2 py-0.5 rounded-full bg-orange-500/10 text-orange-500 border border-orange-500/30 text-[10px] font-bold">Reviewing</span>
+</div>
+<h2 class="text-lg font-bold leading-snug">Deep dive into Quantum Entanglement</h2>
+<div class="flex items-center gap-6 pt-2">
+<button class="flex items-center gap-1.5 text-slate-500 hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-xl">chat_bubble</span>
+<span class="text-xs font-semibold">45 Comments</span>
+</button>
+<button class="flex items-center gap-1.5 text-slate-500 hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-xl">share</span>
+<span class="text-xs font-semibold">Share</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Request Card 2 -->
+<div class="glass-card rounded-xl p-4 flex gap-4 glow-border transition-all">
+<div class="flex flex-col items-center gap-1 bg-primary/5 dark:bg-primary/10 rounded-lg p-2 h-fit">
+<button class="text-primary hover:scale-110 transition-transform">
+<span class="material-symbols-outlined">arrow_upward</span>
+</button>
+<span class="text-xs font-bold text-primary">856</span>
+<button class="text-slate-400 hover:scale-110 transition-transform">
+<span class="material-symbols-outlined">arrow_downward</span>
+</button>
+</div>
+<div class="flex-grow space-y-3">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold uppercase tracking-wider">Biology</span>
+<span class="text-[11px] text-slate-500 dark:text-slate-400">Sarah M. • 5h ago</span>
+</div>
+<span class="px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-500 border border-blue-500/30 text-[10px] font-bold">Exam Generating</span>
+</div>
+<h2 class="text-lg font-bold leading-snug">Cellular Respiration and ATP Cycle Mock Exam</h2>
+<div class="flex items-center gap-6 pt-2">
+<button class="flex items-center gap-1.5 text-slate-500 hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-xl">chat_bubble</span>
+<span class="text-xs font-semibold">12 Comments</span>
+</button>
+<button class="flex items-center gap-1.5 text-slate-500 hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-xl">share</span>
+<span class="text-xs font-semibold">Share</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Request Card 3 -->
+<div class="glass-card rounded-xl p-4 flex gap-4 glow-border transition-all">
+<div class="flex flex-col items-center gap-1 bg-primary/5 dark:bg-primary/10 rounded-lg p-2 h-fit">
+<button class="text-slate-400 hover:scale-110 transition-transform">
+<span class="material-symbols-outlined">arrow_upward</span>
+</button>
+<span class="text-xs font-bold text-slate-600 dark:text-slate-300">3.4k</span>
+<button class="text-slate-400 hover:scale-110 transition-transform">
+<span class="material-symbols-outlined">arrow_downward</span>
+</button>
+</div>
+<div class="flex-grow space-y-3">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="px-2 py-0.5 rounded bg-primary/20 text-primary text-[10px] font-bold uppercase tracking-wider">History</span>
+<span class="text-[11px] text-slate-500 dark:text-slate-400">Marcus T. • 1d ago</span>
+</div>
+<span class="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/30 text-[10px] font-bold">Completed</span>
+</div>
+<h2 class="text-lg font-bold leading-snug">The Industrial Revolution: Social and Economic Impacts</h2>
+<div class="flex items-center gap-6 pt-2">
+<button class="flex items-center gap-1.5 text-primary transition-colors font-bold">
+<span class="material-symbols-outlined text-xl">quiz</span>
+<span class="text-xs">Take Exam Now</span>
+</button>
+<button class="flex items-center gap-1.5 text-slate-500 hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-xl">chat_bubble</span>
+<span class="text-xs font-semibold">128 Comments</span>
+</button>
+</div>
+</div>
+</div>
+</main>
+<!-- Bottom Navigation -->
+<nav class="fixed bottom-0 left-0 right-0 z-20 glass-card rounded-t-2xl border-b-0 px-6 py-3 flex justify-between items-center max-w-3xl mx-auto">
+<a class="flex flex-col items-center gap-1 text-slate-400" href="#">
+<span class="material-symbols-outlined">home</span>
+<span class="text-[10px] font-medium">Home</span>
+</a>
+<a class="flex flex-col items-center gap-1 text-primary" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1">forum</span>
+<span class="text-[10px] font-bold">Requests</span>
+</a>
+<div class="relative -top-6">
+<button class="w-14 h-14 rounded-full bg-gradient-to-br from-primary to-secondary shadow-xl shadow-primary/40 flex items-center justify-center text-white">
+<span class="material-symbols-outlined text-3xl">smart_toy</span>
+</button>
+</div>
+<a class="flex flex-col items-center gap-1 text-slate-400" href="#">
+<span class="material-symbols-outlined">school</span>
+<span class="text-[10px] font-medium">Tutor</span>
+</a>
+<a class="flex flex-col items-center gap-1 text-slate-400" href="#">
+<span class="material-symbols-outlined">person</span>
+<span class="text-[10px] font-medium">Profile</span>
+</a>
+</nav>
+</div>
+</body></html>

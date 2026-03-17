@@ -5,6 +5,7 @@ import '../config/app_config.dart';
 import '../services/api_client.dart';
 import '../theme/app_colors.dart';
 import '../widgets/glass_container.dart';
+import '../widgets/ui_snackbar.dart';
 
 class SupportCenterScreen extends StatefulWidget {
   const SupportCenterScreen({
@@ -283,8 +284,10 @@ class _ContactTab extends StatelessWidget {
     final uri = Uri.parse('https://wa.me/$number?text=$text');
     final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!launched && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open WhatsApp on this device.')),
+      UiSnackbar.show(
+        context,
+        message: 'Could not open WhatsApp on this device.',
+        type: UiSnackType.error,
       );
     }
   }
@@ -301,8 +304,10 @@ class _ContactTab extends StatelessWidget {
     );
     final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!launched && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open email app on this device.')),
+      UiSnackbar.show(
+        context,
+        message: 'Could not open email app on this device.',
+        type: UiSnackType.error,
       );
     }
   }

@@ -5,7 +5,11 @@ import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../services/api_client.dart';
 import '../theme/app_colors.dart';
+import '../theme/tokens.dart';
 import '../widgets/glass_container.dart';
+import '../widgets/ui_snackbar.dart';
+import '../widgets/ui_mesh_background.dart';
+import '../widgets/skeleton_box.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({
@@ -103,9 +107,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() => _error = e.message);
+      UiSnackbar.show(
+        context,
+        message: e.message,
+        type: UiSnackType.error,
+      );
     } catch (_) {
       if (!mounted) return;
       setState(() => _error = 'Failed to load dashboard.');
+      UiSnackbar.show(
+        context,
+        message: 'Failed to load dashboard.',
+        type: UiSnackType.error,
+      );
     } finally {
       if (mounted) {
         setState(() => _loading = false);
@@ -136,14 +150,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return Scaffold(
       body: Stack(
         children: [
-          const _DashboardBackground(),
+          const UiMeshBackground(),
           SafeArea(
             child: RefreshIndicator(
               onRefresh: _loadDashboard,
               child: ListView(
-                padding: const EdgeInsets.fromLTRB(20, 18, 20, 120),
+                padding: const EdgeInsets.fromLTRB(
+                  AppTokens.spaceLg,
+                  AppTokens.spaceMd,
+                  AppTokens.spaceLg,
+                  AppTokens.spaceXl * 3.5,
+                ),
                 children: [
-                  _BrandingTile(
+                  if (_loading)
+                    const _DashboardSkeleton()
+                  else
+                    _BrandingTile(
                     user: currentUser,
                     docsCount: docsCount,
                     generationsCount: gensCount,
@@ -157,11 +179,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     taskRemaining: taskRemaining,
                   ),
                   const SizedBox(height: 14),
-                  if (_loading) const LinearProgressIndicator(minHeight: 3),
                   if (_error != null) ...[
                     const SizedBox(height: 12),
                     Text(_error!, style: const TextStyle(color: Colors.redAccent)),
                   ],
+                  if (_loading) ...[
+                    const SizedBox(height: 14),
+                    const _DashboardSkeletonStats(),
+                    const SizedBox(height: 24),
+                    const _DashboardSkeletonList(),
+                  ] else ...[
                   const SizedBox(height: 18),
                   const _SectionTitle('Overview'),
                   const SizedBox(height: 12),
@@ -203,6 +230,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             child: _RecentDocumentTile(doc: doc),
                           ),
                         ),
+                ],
                 ],
               ),
             ),
@@ -253,8 +281,27 @@ class _BrandingTile extends StatelessWidget {
             .join()
             .toUpperCase();
 
-    return GlassContainer(
-      borderRadius: 22,
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            AppColors.surfaceDark.withValues(alpha: 0.9),
+            AppColors.indigo.withValues(alpha: 0.85),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withValues(alpha: 0.18),
+            blurRadius: 22,
+            spreadRadius: 1,
+            offset: const Offset(0, 14),
+          ),
+        ],
+      ),
       padding: const EdgeInsets.all(18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -270,7 +317,7 @@ class _BrandingTile extends StatelessWidget {
                   gradient: LinearGradient(
                     colors: [
                       AppColors.primary.withValues(alpha: 0.95),
-                      AppColors.accent.withValues(alpha: 0.8),
+                      AppColors.electric.withValues(alpha: 0.8),
                     ],
                   ),
                 ),
@@ -286,7 +333,11 @@ class _BrandingTile extends StatelessWidget {
                   children: [
                     const Text(
                       'Exam OS',
-                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                      style: TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 18,
+                        letterSpacing: -0.2,
+                      ),
                     ),
                     const SizedBox(height: 2),
                     Row(
@@ -334,15 +385,29 @@ class _BrandingTile extends StatelessWidget {
                 ),
             ],
           ),
-          const SizedBox(height: 12),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: LinearProgressIndicator(
-              value: (completionPct / 100).clamp(0, 1),
-              minHeight: 8,
-              backgroundColor: Colors.white10,
-              valueColor: const AlwaysStoppedAnimation(AppColors.primary),
-            ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: LinearProgressIndicator(
+                    value: (completionPct / 100).clamp(0, 1),
+                    minHeight: 10,
+                    backgroundColor: Colors.white.withValues(alpha: 0.06),
+                    valueColor: const AlwaysStoppedAnimation(AppColors.primary),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                '$completionPct%',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -359,18 +424,25 @@ class _BrandTag extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: AppColors.surfaceDark.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.glassBorder),
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: AppColors.accent),
-          const SizedBox(width: 6),
-          Text(text, style: const TextStyle(fontSize: 12)),
+          Icon(icon, size: 16, color: AppColors.primary),
+          const SizedBox(width: 8),
+          Text(
+            text,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+            ),
+          ),
         ],
       ),
     );
@@ -556,29 +628,7 @@ class _DashboardBackground extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [AppColors.backgroundDark, Color(0xFF0F172A)],
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-        ),
-      ),
-      child: Stack(
-        children: [
-          Positioned(
-            top: 100,
-            right: -110,
-            child: _GlowCircle(color: AppColors.primary.withValues(alpha: 0.14)),
-          ),
-          Positioned(
-            bottom: 150,
-            left: -100,
-            child: _GlowCircle(color: AppColors.accent.withValues(alpha: 0.1)),
-          ),
-        ],
-      ),
-    );
+    return const SizedBox.shrink();
   }
 }
 
@@ -696,21 +746,120 @@ class _FirstGenerationCoachCard extends StatelessWidget {
 }
 
 class _GlowCircle extends StatelessWidget {
-  const _GlowCircle({required this.color});
+  const _GlowCircle({required this.color, required this.size});
 
   final Color color;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 240,
-      width: 240,
+      height: size,
+      width: size,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: color,
         boxShadow: [
-          BoxShadow(color: color, blurRadius: 120, spreadRadius: 16),
+          BoxShadow(
+            color: color,
+            blurRadius: size / 2,
+            spreadRadius: size / 5,
+          ),
         ],
+      ),
+    );
+  }
+}
+
+class _DashboardSkeleton extends StatelessWidget {
+  const _DashboardSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        GlassContainer(
+          borderRadius: 22,
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              SkeletonBox(height: 18, width: 120),
+              SizedBox(height: 10),
+              SkeletonBox(height: 12, width: 200),
+              SizedBox(height: 14),
+              SkeletonBox(height: 32, width: 180),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _DashboardSkeletonStats extends StatelessWidget {
+  const _DashboardSkeletonStats();
+
+  @override
+  Widget build(BuildContext context) {
+    return GridView.count(
+      physics: const NeverScrollableScrollPhysics(),
+      shrinkWrap: true,
+      crossAxisCount: 2,
+      crossAxisSpacing: 12,
+      mainAxisSpacing: 12,
+      childAspectRatio: 1.5,
+      children: List.generate(
+        4,
+        (_) => GlassContainer(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: const [
+              SkeletonBox(height: 16, width: 42),
+              SkeletonBox(height: 22, width: 80),
+              SkeletonBox(height: 12, width: 60),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DashboardSkeletonList extends StatelessWidget {
+  const _DashboardSkeletonList();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: List.generate(
+        3,
+        (_) => Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: GlassContainer(
+            borderRadius: 16,
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: const [
+                SkeletonBox(height: 42, width: 42, borderRadius: 12),
+                SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SkeletonBox(height: 14, width: 180),
+                      SizedBox(height: 6),
+                      SkeletonBox(height: 12, width: 120),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
